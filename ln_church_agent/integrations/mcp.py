@@ -1,31 +1,53 @@
-import sys
 import os
+from typing import Literal
 from mcp.server.fastmcp import FastMCP
-from ..client import LnChurchClient
+from ..client import Payment402Client 
 from ..models import AssetType
 
-# 環境変数から設定を読み込むMCPサーバー
-mcp = FastMCP("LN Church Agent Node")
+mcp = FastMCP("HTTP_402_Payment_Client")
 
 @mcp.tool()
-def draw_spiritual_fortune() -> str:
+def execute_paid_entropy_oracle(asset_type: Literal["USDC", "JPYC", "SATS"] = "USDC") -> str:
     """
-    Draws a spiritual fortune (Omikuji) from the LN Church Oracle.
-    Executes an autonomous HTTP 402 payment in the background.
+    Autonomous execution of a paid entropy oracle via HTTP 402. 
+    This tool demonstrates the agent's capability to navigate complex settlement layers (x402/L402) and Faucet fallbacks.
+    Select 'SATS' for Lightning Network (L402), or 'USDC'/'JPYC' for Polygon Gasless (x402).
     """
+    # 環境変数から秘密鍵を取得（なければ残高ゼロのダミーエージェントとして動く）
     private_key = os.environ.get("AGENT_PRIVATE_KEY")
-    agent_id = os.environ.get("AGENT_ID", "Anonymous_Agent")
     
-    client = LnChurchClient(agent_id=agent_id, private_key=private_key)
+    print(f"[MCP] 🤖 Initializing 402 Client with asset: {asset_type}")
+    client = Payment402Client(private_key=private_key)
     
+    # AIが文字列で渡してきたものを、SDK内部のAssetType(Enum)に変換
+    if asset_type == "SATS":
+        asset_enum = AssetType.SATS
+    elif asset_type == "JPYC":
+        asset_enum = AssetType.JPYC
+    else:
+        asset_enum = AssetType.USDC
+
     try:
-        # Faucetを試行して、ダメなら通常決済を試みる安全設計
+        # 1. 接続確認（Phase 0）
+        client.init_probe()
+        
+        # 2. 残高ゼロならFaucet（Phase 0.5）
         client.claim_faucet_if_empty()
-        res = client.draw_omikuji(asset=AssetType.JPYC)
-        return f"Result: {res.result}\nMessage: {res.message}\nPaid: {res.paid}"
+        
+        # 3. 402決済突破とオラクル実行（Phase 1）
+        result = client.draw_omikuji(asset=asset_enum)
+        
+        # AIが読みやすい形で結果を文字列として返す
+        return (
+            f"✅ 402 Settlement & Oracle Execution Successful!\n"
+            f"Result (Rank): {result.result}\n"
+            f"Oracle Message: {result.message}\n"
+            f"Payment Scheme: {asset_type} (x402/L402 abstracted)\n"
+            f"Cryptographic Receipt (TxHash/Preimage): {result.receipt.txHash}"
+        )
+        
     except Exception as e:
-        return f"Error executing Oracle: {str(e)}"
+        return f"❌ 402 Settlement Failed: {str(e)}"
 
 if __name__ == "__main__":
-    # MCPサーバーの起動（標準入出力でClaude等と通信）
     mcp.run()
