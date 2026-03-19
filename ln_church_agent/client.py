@@ -12,10 +12,10 @@ class LnChurchClient:
         agent_id: Optional[str] = None, 
         private_key: Optional[str] = None, 
         lnbits_url: Optional[str] = None,
-        lnbits_key: Optional[str] = None
+        lnbits_key: Optional[str] = None,
+        base_url: str = "https://kari.mayim-mayim.com/api/agent" # 引数に追加し、デフォルト値を設定
     ):
         self.private_key = private_key
-        # EVMの秘密鍵がある場合は、そこからagentIdを自動抽出
         if private_key and not agent_id:
             self.agent_id = Account.from_key(private_key).address
         else:
@@ -23,7 +23,7 @@ class LnChurchClient:
             
         self.lnbits_url = lnbits_url
         self.lnbits_key = lnbits_key
-        self.base_url = "https://kari.mayim-mayim.com/api/agent"
+        self.base_url = base_url.rstrip('/') # 末尾のスラッシュを削除して正規化
         self.probe_token = None
         self.faucet_token = None
 
