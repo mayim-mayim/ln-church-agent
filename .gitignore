@@ -1,0 +1,17 @@
+# Pythonキャッシュ
+__pycache__/
+*.py[cod]
+*$py.class
+
+# パッケージビルドの痕跡
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# OSのシステムファイル
+.DS_Store
+Thumbs.db
+
+# 環境変数（絶対に公開してはいけない秘密鍵など）
+.env
