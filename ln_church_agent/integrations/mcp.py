@@ -1,7 +1,7 @@
 import os
 from typing import Literal
 from mcp.server.fastmcp import FastMCP
-from ..client import Payment402Client 
+from ..client import LnChurchClient  # 👈 修正1: Payment402Client から LnChurchClient に変更
 from ..models import AssetType
 
 mcp = FastMCP("HTTP_402_Payment_Client")
@@ -17,7 +17,9 @@ def execute_paid_entropy_oracle(asset_type: Literal["USDC", "JPYC", "SATS"] = "U
     private_key = os.environ.get("AGENT_PRIVATE_KEY")
     
     print(f"[MCP] 🤖 Initializing 402 Client with asset: {asset_type}")
-    client = Payment402Client(private_key=private_key)
+    
+    # 👈 修正2: LnChurchClient (アダプター) をインスタンス化する
+    client = LnChurchClient(private_key=private_key) 
     
     # AIが文字列で渡してきたものを、SDK内部のAssetType(Enum)に変換
     if asset_type == "SATS":

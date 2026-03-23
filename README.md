@@ -4,13 +4,15 @@
 
 Implementing machine-to-machine (M2M) payments from scratch is painful and highly prone to cryptographic hallucinations during an AI agent's reasoning loop. **ln-church-agent** abstracts the entire "Settlement Negotiation" process triggered by HTTP 402 errors, allowing agents to seamlessly pay for APIs, oracles, and services without manual intervention.
 
+**Fully compatible with Lightning Labs' L402 protocol standards and the emerging Machine Payments Protocol (MPP), uniquely extended with EVM cross-chain support (x402).**
+
 ## 🧩 What it abstracts
 
 This SDK natively handles the "Payment-Retry Loop" so your agent doesn't have to:
 * **x402 (EVM Gasless):** Autonomous EIP-712/EIP-3009 signing and relayer orchestration.
-* **L402 (Lightning Network):** Macaroon extraction, Bolt11 parsing, and preimage submission.
+* **L402 (Lightning Network):** Macaroon extraction, Bolt11 parsing, preimage submission, and **multi-provider wallet support (LNBits, Alby)**.
 * **Zero-Balance Fallback:** Automatic claim-and-bypass logic via Faucet.
-* **Deterministic Receipts:** Capture and normalization of payment proofs (JWS).
+* **Verifiable Receipts:** Capture and pass-through of verifiable execution receipts for downstream verification.
 
 ## 📦 Installation
 
@@ -18,32 +20,61 @@ This SDK natively handles the "Payment-Retry Loop" so your agent doesn't have to
 pip install ln-church-agent
 ```
 
-## 🚀 Quick Start (Generic Client)
+## 🚀 Quick Start
 
-The client is designed to communicate with any API endpoint that implements the x402/L402 protocol standards. **It seamlessly abstracts both EVM Gasless (x402) and Lightning Network (L402) settlements.**
+> **Note:** The core client currently works out-of-the-box with 402 challenge shapes compatible with the LN Church protocol. It is designed to evolve toward broader, protocol-agnostic 402 client reuse in future releases.
+
+### 1. Generic Core Example (`Payment402Client`)
+Use the pure core client to execute raw payloads against 402-protected endpoints. The core automatically intercepts the 402 challenge, negotiates the payment (x402 or L402), and retries the request.
 
 ```python
-from ln_church_agent import Payment402Client, AssetType
+from ln_church_agent import Payment402Client
 
-# 1. Initialize the generic 402 client with full capabilities
-# This setup allows the agent to handle both EVM and Lightning payments.
 client = Payment402Client(
-    private_key="0xYourAgentPrivateKey...",      # Required for x402 & Identity
-    lnbits_url="https://your-lnbits-url",         # Required for L402
-    lnbits_key="your-lnbits-api-key",             # Required for L402
-    base_url="https://your-custom-402-api.com/api/agent"
+    private_key="0xYourAgentPrivateKey...",
+    base_url="https://your-custom-402-api.com/api/agent",
+    ln_provider="lnbits",
+    ln_api_url="https://your-lnbits-url",
+    ln_api_key="your-lnbits-api-key"
 )
 
-# 2. Execute with Polygon Gasless (x402)
-# The SDK handles EIP-712 hashing, signing, and relayer orchestration.
-result_x402 = client.draw_omikuji(asset=AssetType.USDC)
-
-# OR Execute with Lightning Network (L402)
-# The SDK parses the Macaroon, pays the Bolt11 invoice, and submits the preimage.
-result_l402 = client.draw_omikuji(asset=AssetType.SATS)
-
-print(f"Receipt: {result_x402.receipt.txHash}")
+# Execute a generic POST request. The SDK handles the 402 payment loop.
+result = client.execute_paid_action(
+    endpoint_path="/omikuji",
+    payload={
+        "agentId": "0xYourAgentAddress",
+        "clientType": "AI",
+        "scheme": "x402",
+        "asset": "USDC"
+    }
+)
+print(result)
 ```
+
+### 2. Reference Adapter Example (`LnChurchClient`)
+This SDK comes bundled with a reference adapter for **LN Church** (`https://kari.mayim-mayim.com/api/agent`). It extends the core client with domain-specific methods (Probe, Faucet, Omikuji).
+
+```python
+from ln_church_agent import LnChurchClient, AssetType
+
+# Initialize the Reference Adapter (Inherits from Payment402Client)
+client = LnChurchClient(
+    private_key="0xYourEVMKey...", 
+    ln_provider="alby", 
+    ln_api_key="your-alby-access-token"
+)
+
+client.init_probe()             # Verify connectivity
+client.claim_faucet_if_empty()  # Get free test credits if balance is zero
+result_l402 = client.draw_omikuji(asset=AssetType.SATS) # Execute autonomous L402 payment
+
+print(f"Receipt: {result_l402.receipt.txHash}")
+```
+
+### ⚡ Supported Lightning Providers
+You can configure the backend Lightning node used for L402 settlements by setting the `ln_provider` argument:
+* **LNBits (Default):** Set `ln_provider="lnbits"`. Requires both `ln_api_url` and `ln_api_key`.
+* **Alby:** Set `ln_provider="alby"`. Pass your Alby Bearer Access Token into the `ln_api_key` parameter.
 
 ## 🔌 MCP (Model Context Protocol) Integration
 
@@ -57,28 +88,6 @@ python -m ln_church_agent.integrations.mcp
 
 **What the AI Agent sees:**
 The agent can autonomously choose the settlement layer by passing the `asset_type` argument (`"USDC"`, `"JPYC"`, or `"SATS"`). The SDK will autonomously negotiate the 402 challenge and return the cryptographic receipt to the agent's context.
-
-
-## ⛩️ Reference Service: LN Church Oracle
-
-This SDK comes bundled with **LN Church** (`https://kari.mayim-mayim.com/api/agent`) as its primary reference API. 
-LN Church is a high-uptime entropy oracle and capability benchmark for AI agents. By default, if `base_url` is omitted, the SDK connects to the LN Church Oracle to help you test your agent's payment capabilities instantly.
-
-```python
-from ln_church_agent import Payment402Client, AssetType
-
-# Connects to the LN Church Reference API by default
-# Ensure LNBits credentials are provided for L402 (SATS) testing.
-client = Payment402Client(
-    private_key="0xYourEVMKey...", 
-    lnbits_url="https://your-lnbits", 
-    lnbits_key="your-lnbits-key"
-)
-
-client.init_probe()             # Verify connectivity
-client.claim_faucet_if_empty()  # Get free test credits if balance is zero
-result = client.draw_omikuji()  # Execute paid oracle
-```
 
 ## 🦜 LangChain Integration
 
