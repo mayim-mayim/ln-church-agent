@@ -22,7 +22,11 @@ pip install ln-church-agent
 
 ## 🚀 Quick Start
 
-> **Note:** The core client currently works out-of-the-box with 402 challenge shapes compatible with the LN Church protocol. It is designed to evolve toward broader, protocol-agnostic 402 client reuse in future releases.
+**Note:** The core client currently works out-of-the-box with 402 challenge shapes compatible with the LN Church protocol. It is designed to evolve toward broader, protocol-agnostic 402 client reuse in future releases.
+ 
+**Identity & Keys:** Depending on the settlement layer, your `private_key` and `agentId` requirements may vary:
+* For **x402 (EVM)**: Requires a standard `0x`-prefixed EVM private key and wallet address.
+* For **L402 (Lightning)**: You can often use any generic unique identifier or secure string, unless the specific endpoint strictly enforces EVM identities for all requests.
 
 ### 1. Generic Core Example (`Payment402Client`)
 Use the pure core client to execute raw payloads against 402-protected endpoints. The core automatically intercepts the 402 challenge, negotiates the payment (x402 or L402), and retries the request.
@@ -31,7 +35,7 @@ Use the pure core client to execute raw payloads against 402-protected endpoints
 from ln_church_agent import Payment402Client
 
 client = Payment402Client(
-    private_key="0xYourAgentPrivateKey...",
+    private_key="your-agent-private-key", # e.g., 0x... EVM key if using x402
     base_url="https://your-custom-402-api.com/api/agent",
     ln_provider="lnbits",
     ln_api_url="https://your-lnbits-url",
@@ -42,7 +46,7 @@ client = Payment402Client(
 result = client.execute_paid_action(
     endpoint_path="/omikuji",
     payload={
-        "agentId": "0xYourAgentAddress",
+        "agentId": "your-unique-agent-id", # e.g., 0x... address if using x402
         "clientType": "AI",
         "scheme": "x402",
         "asset": "USDC"
@@ -59,7 +63,7 @@ from ln_church_agent import LnChurchClient, AssetType
 
 # Initialize the Reference Adapter (Inherits from Payment402Client)
 client = LnChurchClient(
-    private_key="0xYourEVMKey...", 
+    private_key="your-agent-private-key", # Provide your agent's signing key
     ln_provider="alby", 
     ln_api_key="your-alby-access-token"
 )
@@ -82,7 +86,7 @@ You can instantly equip any MCP-compatible agent (like Claude Desktop) with cros
 
 Run the MCP server:
 ```bash
-# Requires AGENT_PRIVATE_KEY in your environment variables
+# Requires AGENT_PRIVATE_KEY in your environment variables (e.g., 0x... for EVM)
 python -m ln_church_agent.integrations.mcp
 ```
 
@@ -96,12 +100,10 @@ Easily integrate the client into your LangChain agent's toolset:
 ```python
 from ln_church_agent.integrations.langchain import LNChurchOracleTool
 
-tools = [LNChurchOracleTool(private_key="0x...")]
+tools = [LNChurchOracleTool(private_key="your-agent-private-key")]
 # Pass this tool to your LangChain AgentExecutor
 ```
 
 ## License
 MIT
-```
 
----
