@@ -148,24 +148,24 @@ class LnChurchClient(Payment402Client):
             print("[System] Faucet Claimed.")
 
     def draw_omikuji(self, asset: AssetType = AssetType.USDC) -> OmikujiResponse:
-        scheme = "L402" if asset == AssetType.SATS else "x402"
-        if self.faucet_token:
-            scheme = "faucet"
+        base_scheme = "L402" if asset == AssetType.SATS else "x402"
 
         payload = {
             "agentId": self.agent_id,
             "clientType": "AI",
-            "scheme": scheme,
+            "scheme": base_scheme,
             "asset": asset.value if hasattr(asset, 'value') else asset
         }
         
         if self.faucet_token:
-            payload["paymentAuth"] = {"scheme": "faucet", "proof": self.faucet_token}
+            payload["paymentOverride"] = {
+                "type": "faucet",
+                "proof": self.faucet_token,
+                "asset": "FAUCET_CREDIT"
+            }
 
-        # アダプター専用のヘッダー（probe_token）を注入
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
 
-        # 🌟 親クラスの抽象化されたコアメソッドを利用！
         raw_response = self.execute_paid_action("/omikuji", payload, headers)
         
         self.issue_identity()

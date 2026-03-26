@@ -12,7 +12,7 @@ class SchemeType(str, Enum):
     x402 = "x402"
     x402_direct = "x402-direct"
     L402 = "L402"
-    faucet = "faucet"
+    MPP = "MPP"
 
 class PaymentAuth(BaseModel):
     scheme: SchemeType

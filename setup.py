@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="0.6.2",
+    version="0.6.3",
     packages=['ln_church_agent', 'ln_church_agent.crypto', 'ln_church_agent.integrations'],
     install_requires=[
         "requests>=2.31.0",
@@ -19,7 +19,7 @@ setup(
         "mcp>=1.0.0"
     ],
     author="LN Church",
-    description="A Python reference client for HTTP 402 settlement across x402, L402, and fallback flows.",
+    description="A Python reference client for HTTP 402 settlement across x402, L402, MPP, and fallback flows.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://kari.mayim-mayim.com/",
