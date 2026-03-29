@@ -1,13 +1,20 @@
 import requests
 import re
-from typing import Optional
+import time
+import warnings
+from typing import Optional, Dict, Any
 from eth_account import Account
-from .models import AssetType, OmikujiResponse, AgentIdentity
+from .models import (
+    AssetType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
+    HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
+    HateoasErrorResponse
+)
+from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 from .crypto.evm import execute_x402_gasless_payment
 from .crypto.lightning import pay_lightning_invoice
 
 # ==========================================
-# 🌟 CORE: 汎用的な402決済処理クラス
+# 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
 # ==========================================
 class Payment402Client:
     def __init__(
@@ -16,32 +23,90 @@ class Payment402Client:
         ln_api_url: Optional[str] = None,
         ln_api_key: Optional[str] = None,
         ln_provider: str = "lnbits",
-        base_url: str = ""
+        base_url: str = "",
+        # --- 🛡️ HATEOAS Guardrails ---
+        auto_navigate: bool = False,
+        max_hops: int = 2,
+        allow_unsafe_navigate: bool = False,
+        max_payment_retries: int = 2        
     ):
         self.private_key = private_key
         self.ln_api_url = ln_api_url
         self.ln_api_key = ln_api_key
         self.ln_provider = ln_provider
         self.base_url = base_url.rstrip('/') if base_url else ""
+        
+        self.auto_navigate = auto_navigate
+        self.max_hops = max_hops
+        self.allow_unsafe_navigate = allow_unsafe_navigate
+        self.max_payment_retries = max_payment_retries
 
     def execute_paid_action(self, endpoint_path: str, payload: dict, headers: Optional[dict] = None) -> dict:
-        """Generic HTTP 402 Client: 任意のエンドポイントに対して決済を伴うPOSTリクエストを実行します。"""
-        url = f"{self.base_url}{endpoint_path}" if self.base_url else endpoint_path
+        """[Deprecated] 後方互換性(v0.6.3以前)のためのラッパー。内部で execute_request を呼び出します。"""
+        warnings.warn("execute_paid_action() is deprecated and will be removed in future versions. Please use execute_request(method='POST', ...) instead.", DeprecationWarning, stacklevel=2)
+        return self.execute_request("POST", endpoint_path, payload, headers)
+
+    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+        """HATEOASナビゲーションと402決済を統合した汎用リクエストエンジン"""
+        url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = headers or {}
+        payload = payload or {}
+        method_upper = method.upper()
 
-        # 1. 初回リクエスト
-        res = requests.post(url, json=payload, headers=headers)
+        # GETの場合は payload をクエリパラメータ (params) として送信する
+        is_get = method_upper == "GET"
+        req_kwargs = {
+            "json": None if is_get else payload,
+            "params": payload if is_get else None,
+            "headers": headers
+        }
 
-        # 2. 402 Payment Required のインターセプト
-        if res.status_code == 402:
-            return self._handle_402_challenge(res, payload, headers, url)
-            
-        elif res.status_code == 200:
+        # 1. APIリクエスト実行
+        res = requests.request(method_upper, url, **req_kwargs)
+
+        # 2. 正常終了 (2xx 全般を成功として扱う)
+        if 200 <= res.status_code < 300:
+            # 204 No Content 対策
+            if not res.content:
+                return {"status": "success", "message": "No content returned"}
             return res.json()
-        else:
-            raise Exception(f"API Error: {res.text}")
 
-    def _handle_402_challenge(self, response, payload, headers, url) -> dict:
+        # 3. 402 Payment Required のインターセプトと決済ループ
+        if res.status_code == 402:
+            if _payment_retry_count >= self.max_payment_retries:
+                raise PaymentExecutionError("Max 402 retries exceeded")
+            return self._handle_402_challenge(res, payload, headers, url, method_upper, _current_hop, _payment_retry_count)
+
+        # 4. HATEOAS エラーの自動修復 (4xx, 5xx)
+        try:
+            error_data = res.json()
+            error_obj = HateoasErrorResponse(**error_data)
+            next_action = error_obj.next_action
+        except Exception:
+            raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
+
+        if self.auto_navigate and next_action and _current_hop < self.max_hops:
+            next_url = next_action.url
+            next_method = (next_action.method or "GET").upper()
+            
+            # 安全性ガードレール (GET以外は allow_unsafe_navigate=True が必要)
+            if next_method != "GET" and not self.allow_unsafe_navigate:
+                raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
+            elif next_url and next_method != "NONE":
+                print(f"[{res.status_code} Intercepted] HATEOAS Auto-Navigating to: {next_method} {next_url}")
+                print(f"   Instruction: {next_action.instruction_for_agent}")
+                
+                # Payload と Header のマージ (サーバーからのサジェストを優先)
+                merged_payload = {**payload, **(next_action.suggested_payload or {})}
+                merged_headers = {**headers, **(next_action.suggested_headers or {})}
+                
+                time.sleep(1) # スロットル対策
+                return self.execute_request(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
+
+        # 自動追従を諦めた場合、または無効な場合は例外をスロー
+        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)} | Next Action: {next_action}")
+
+    def _handle_402_challenge(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
         scheme = challenge.get("scheme")
@@ -49,66 +114,38 @@ class Payment402Client:
 
         print(f"[402 Intercepted] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
 
-        # ==========================================
-        # 1. Polygon Gasless (x402)
-        # ==========================================
-        if scheme == "x402":
+        # --- 決済ロジック ---
+        if scheme == "x402" or scheme == "x402-direct":
             tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount)
-            payload["paymentAuth"] = {"scheme": "x402", "proof": tx_hash}
+            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
             
-        # ==========================================
-        # 2. Lightning Network (L402)
-        # ==========================================
-        elif scheme == "L402":
+        elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
-            invoice = challenge.get("parameters", {}).get("invoice")
             
-            macaroon_match = re.search(r'macaroon="([^"]+)"', auth_header)
-            if not macaroon_match: raise Exception("Macaroon not found in challenge")
-            macaroon = macaroon_match.group(1)
-            
-            preimage = pay_lightning_invoice(invoice, self.ln_api_url, self.ln_api_key, self.ln_provider)
-            headers["Authorization"] = f"L402 {macaroon}:{preimage}"
+            # 🛡️ 安全な正規表現の抽出 (group(1)の直叩きを回避)
+            def safe_extract(pattern, text, fallback):
+                match = re.search(pattern, text)
+                return match.group(1) if match else fallback
 
-        # ==========================================
-        # 3. Machine Payments Protocol (MPP / Stripe)
-        # ==========================================
-        elif scheme == "Payment" or scheme == "MPP":
-            auth_header = response.headers.get("WWW-Authenticate", "")
-            
-            # インボイスの抽出 (JSONまたはヘッダーから)
-            invoice = challenge.get("parameters", {}).get("invoice")
+            invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
             if not invoice:
-                invoice_match = re.search(r'invoice="([^"]+)"', auth_header)
-                if not invoice_match: raise Exception("Invoice not found in MPP challenge")
-                invoice = invoice_match.group(1)
-                
-            # Stripe/Tempo特有の Charge Intent ID を抽出
-            charge_id = challenge.get("parameters", {}).get("charge")
-            if not charge_id:
-                charge_match = re.search(r'charge="([^"]+)"', auth_header)
-                charge_id = charge_match.group(1) if charge_match else "unknown_charge"
+                raise InvoiceParseError("Invoice not found in 402 challenge header.")
 
-            print(f"[MPP] Initiating Machine Payments Protocol for Charge: {charge_id}")
-            
-            # 既存のLightning抽象化モジュールをそのまま再利用！
             preimage = pay_lightning_invoice(invoice, self.ln_api_url, self.ln_api_key, self.ln_provider)
             
-            # MPP規格のAuthorizationヘッダーを構築 (ChargeID : Preimage)
-            headers["Authorization"] = f"Payment {charge_id}:{preimage}"
+            if scheme == "L402":
+                macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
+                if not macaroon:
+                    raise InvoiceParseError("Macaroon not found in 402 L402 challenge.")
+                headers["Authorization"] = f"L402 {macaroon}:{preimage}"
+            else:
+                charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
+                headers["Authorization"] = f"Payment {charge_id}:{preimage}"
 
-        # ==========================================
-        # 決済証明付きで再リクエスト
-        # ==========================================
-        final_res = requests.post(url, json=payload, headers=headers)
-        
-        if final_res.status_code == 200:
-            return final_res.json()
-        else:
-            raise Exception(f"Settlement failed: {final_res.text}")
+        return self.execute_request(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
 
 # ==========================================
-# ⛩️ ADAPTER: LN Church 専用拡張クラス (Coreを継承)
+# ⛩️ ADAPTER: LN Church 専用拡張クラス
 # ==========================================
 class LnChurchClient(Payment402Client):
     def __init__(
@@ -118,10 +155,12 @@ class LnChurchClient(Payment402Client):
         ln_api_url: Optional[str] = None,
         ln_api_key: Optional[str] = None,
         ln_provider: str = "lnbits",
-        base_url: str = "https://kari.mayim-mayim.com/api/agent" 
+        base_url: str = "https://kari.mayim-mayim.com",
+        auto_navigate: bool = True, # LN教アダプターではデフォルトTrue推奨
+        max_hops: int = 3,
+        allow_unsafe_navigate: bool = False
     ):
-        # 親クラス(Core)の初期化を呼び出す
-        super().__init__(private_key, ln_api_url, ln_api_key, ln_provider, base_url)
+        super().__init__(private_key, ln_api_url, ln_api_key, ln_provider, base_url, auto_navigate, max_hops, allow_unsafe_navigate)
 
         if private_key and not agent_id:
             self.agent_id = Account.from_key(private_key).address
@@ -131,46 +170,72 @@ class LnChurchClient(Payment402Client):
         self.probe_token = None
         self.faucet_token = None
 
+    # --- Phase 0 & 1: 既存機能の型対応 ---
     def init_probe(self):
-        res1 = requests.get(f"{self.base_url}/probe", params={"agentId": self.agent_id, "src": "sdk"})
-        if not res1.ok: raise Exception(f"Probe failed: {res1.text}")
-        token = res1.json().get("probe_token")
-        
-        res2 = requests.get(f"{self.base_url}/probe/next", params={"agentId": self.agent_id, "token": token})
-        if res2.ok:
-            self.probe_token = token
-            print("[System] Probe Completed.")
+        # 内部で auto_navigate=True なら /probe -> /probe/next まで勝手に追従して完了する
+        res = self.execute_request("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk")
+        self.probe_token = res.get("capability_receipt", {}).get("token") or res.get("probe_token")
+        print("[System] Probe Completed.")
 
     def claim_faucet_if_empty(self):
-        res = requests.post(f"{self.base_url}/faucet", json={"agentId": self.agent_id})
-        if res.ok:
-            self.faucet_token = res.json().get("grant_token")
+        try:
+            res = self.execute_request("POST", "/api/agent/faucet", {"agentId": self.agent_id})
+            self.faucet_token = res.get("grant_token")
             print("[System] Faucet Claimed.")
+        except Exception as e:
+            print(f"[System] Faucet skipped or failed: {str(e)}")
 
     def draw_omikuji(self, asset: AssetType = AssetType.USDC) -> OmikujiResponse:
-        base_scheme = "L402" if asset == AssetType.SATS else "x402"
+        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+        if self.faucet_token:
+            payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
+        headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
+        return OmikujiResponse(**self.execute_request("POST", "/api/agent/omikuji", payload, headers))
 
+    # --- 🆕 Phase 2: Confession & Hono ---
+    def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None) -> ConfessionResponse:
+        """エージェントのログを正規化して奉納"""
+        payload = {
+            "agentId": self.agent_id,
+            "raw_message": raw_message,
+            "context": context or {},
+            "scheme": "L402" if asset == AssetType.SATS else "x402",
+            "asset": asset.value
+        }
+        return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
+
+    def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS) -> HonoResponse:
+        """任意の寄付を実行 (MPP推奨)"""
         payload = {
             "agentId": self.agent_id,
             "clientType": "AI",
-            "scheme": base_scheme,
-            "asset": asset.value if hasattr(asset, 'value') else asset
+            "scheme": "MPP" if asset == AssetType.SATS else "x402-direct",
+            "asset": asset.value,
+            "amount": amount
         }
-        
-        if self.faucet_token:
-            payload["paymentOverride"] = {
-                "type": "faucet",
-                "proof": self.faucet_token,
-                "asset": "FAUCET_CREDIT"
-            }
+        return HonoResponse(**self.execute_request("POST", "/api/agent/hono", payload))
 
-        headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
+    # --- 🆕 Phase 3: Identity & Benchmark ---
+    def issue_identity(self) -> AgentIdentity:
+        """パスポート(写身証)の発行"""
+        res = self.execute_request("POST", "/api/agent/identity/issue", {"agentId": self.agent_id})
+        return AgentIdentity(status=res["status"], public_profile_url=res["public_profile_url"], agent_id=self.agent_id)
 
-        raw_response = self.execute_paid_action("/omikuji", payload, headers)
-        
-        self.issue_identity()
-        return OmikujiResponse(**raw_response)
+    def resolve_identity(self, target_agent_id: str = None) -> dict:
+        """エージェントの公開プロフィールを取得 (GETなので決済不要)"""
+        target_id = target_agent_id or self.agent_id
+        return self.execute_request("GET", f"/api/agent/identity/{target_id}")
 
-    def issue_identity(self) -> Optional[AgentIdentity]:
-        res = requests.post(f"{self.base_url}/identity/issue", json={"agentId": self.agent_id})
-        return AgentIdentity(**res.json()) if res.ok else None
+    def get_benchmark_overview(self) -> BenchmarkOverviewResponse:
+        """ベンチマーク結果のサマリーを取得"""
+        return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}"))
+
+    def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS) -> CompareResponse:
+        """トップランカーとのパフォーマンス比較 (402有料)"""
+        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+        return CompareResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload))
+
+    def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS) -> AggregateResponse:
+        """即時集計(Fast Pass)の実行 (402有料)"""
+        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+        return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/agent/{self.agent_id}/aggregate", payload))
