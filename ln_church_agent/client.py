@@ -238,4 +238,4 @@ class LnChurchClient(Payment402Client):
     def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS) -> AggregateResponse:
         """即時集計(Fast Pass)の実行 (402有料)"""
         payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
-        return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/agent/{self.agent_id}/aggregate", payload))
+        return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
