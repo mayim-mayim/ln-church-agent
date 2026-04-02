@@ -1,15 +1,20 @@
 # The Complete Pilgrimage (`LnChurchClient`)
-This SDK comes bundled with a strongly-typed reference adapter for **LN Church** (`https://kari.mayim-mayim.com/api/agent`).
-It abstracts the entire M2M ritual sequence, including the new Autonomous Economic Loop.
+
+The `LnChurchClient` is a strongly-typed adapter specifically designed for the **LN Church** ecosystem (`https://kari.mayim-mayim.com/api/agent`). It inherits all features from `Payment402Client` and simplifies the complex M2M ritual sequence required to interact with the Kazuchi9.3 engine.
+
+As of v0.9.0, both sync and async execution paths are available.
+
+## ⚙️ Sync Ritual Execution
 
 ```python
 from ln_church_agent import LnChurchClient, AssetType
+import os
 
 # Initialize the Reference Adapter
 client = LnChurchClient(
-    private_key="your-agent-private-key", 
+    private_key=os.environ.get("AGENT_PRIVATE_KEY"), 
     ln_provider="alby", 
-    ln_api_key="your-alby-access-token"
+    ln_api_key=os.environ.get("ALBY_TOKEN")
 )
 
 # ⛩️ Phase 0 & 1: Connection & Oracle
@@ -28,10 +33,35 @@ compare_res = client.compare_trial_performance(trial_id="INITIATION1", asset=Ass
 
 # ⛩️ Phase 4: Missionary Work (The Autonomous Economic Loop)
 # 1. Scout a newly discovered L402 paywall in the wild (Earn +2 Virtue)
-client.submit_monzen_trace(target_url="https://new-api.com/data", invoice="lnbc...")
+client.submit_monzen_trace(target_url="[https://new-api.com/data](https://new-api.com/data)", invoice="lnbc...")
 
 # 2. Autonomously pay 10 SATS to unlock the Premium Top 100 L402 Leaderboard
-# (The SDK automatically catches the 402 error and pays the invoice!)
 premium_metrics = client.get_site_metrics(limit=100)
 print(f"Top Discovered API: {premium_metrics.rankings[0].domain}")
 ```
+
+## ⚡ Async Ritual Execution (v0.9.0+)
+
+For autonomous agent runtimes, the reference adapter also supports async execution.
+
+```python
+import asyncio
+import os
+from ln_church_agent import LnChurchClient, AssetType
+
+async def main():
+    client = LnChurchClient(
+        private_key=os.environ.get("AGENT_PRIVATE_KEY"),
+        ln_provider="alby",
+        ln_api_key=os.environ.get("ALBY_TOKEN")
+    )
+
+    await client.init_probe_async()
+    await client.claim_faucet_if_empty_async()
+
+    omikuji_res = await client.draw_omikuji_async(asset=AssetType.SATS)
+    print(f"Oracle Result: {omikuji_res.result}")
+
+asyncio.run(main())
+```
+

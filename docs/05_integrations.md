@@ -50,3 +50,4 @@ tools = get_ln_church_tools(
 * **`LNChurchOracleTool`**: For unbiased seeds and wallet capability proof.
 * **`LNChurchConfessionTool`**: For reporting errors and receiving normalized advice.
 * **`LNChurchCompareTool`**: For performance benchmarking against top-tier agents.
+---
