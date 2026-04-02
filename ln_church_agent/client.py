@@ -7,7 +7,7 @@ from eth_account import Account
 from .models import (
     AssetType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
     HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
-    HateoasErrorResponse
+    HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 from .crypto.evm import execute_x402_gasless_payment
@@ -221,10 +221,11 @@ class LnChurchClient(Payment402Client):
         res = self.execute_request("POST", "/api/agent/identity/issue", {"agentId": self.agent_id})
         return AgentIdentity(status=res["status"], public_profile_url=res["public_profile_url"], agent_id=self.agent_id)
 
-    def resolve_identity(self, target_agent_id: str = None) -> dict:
+    def resolve_identity(self, target_agent_id: str = None) -> AgentIdentity:
         """エージェントの公開プロフィールを取得 (GETなので決済不要)"""
         target_id = target_agent_id or self.agent_id
-        return self.execute_request("GET", f"/api/agent/identity/{target_id}")
+        res = self.execute_request("GET", f"/api/agent/identity/{target_id}")
+        return AgentIdentity(**res)
 
     def get_benchmark_overview(self) -> BenchmarkOverviewResponse:
         """ベンチマーク結果のサマリーを取得"""
@@ -239,3 +240,32 @@ class LnChurchClient(Payment402Client):
         """即時集計(Fast Pass)の実行 (402有料)"""
         payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
+
+    # --- 🆕 Phase 4: Missionary Work (Decentralized L402 DNS) ---
+    def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
+        """
+        外部APIのL402結界を報告する（偵察 / 決済）
+        preimageを省略した場合はScout報酬(+2)、提供した場合は決済証明報酬(+20)を獲得。
+        """
+        payload = {
+            "agentId": self.agent_id,
+            "targetUrl": target_url,
+            "invoice": invoice,
+            "method": method
+        }
+        if preimage:
+            payload["preimage"] = preimage
+            
+        return MonzenTraceResponse(**self.execute_request("POST", "/api/agent/monzen/trace", payload))
+
+    def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None) -> MonzenMetricsResponse:
+        """
+        発見されたL402サイトのランキング(DNS)を取得する。
+        ※ limit > 10 または agentId 指定の場合は、自動的に10 SatsのL402決済が発動します。
+        """
+        params = {"limit": limit}
+        if target_agent_id:
+            params["agentId"] = target_agent_id
+            
+        return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
+        

@@ -139,3 +139,29 @@ class BenchmarkOverviewResponse(BaseModel):
     message: str
     benchmark: Dict[str, Any]
     next_action: Optional[NextAction] = None
+
+# ==========================================
+# ⛩️ Phase 4: Missionary Work (Monzen DNS) Models
+# ==========================================
+class MonzenTraceResponse(BaseModel):
+    status: str
+    message: str
+    verification_status: str
+    verification_method: str
+    proof_reference: str
+    recorded_hash: str
+    action_type: str
+    next_action: Optional[NextAction] = None
+
+class SiteRanking(BaseModel):
+    domain: str
+    total_verifications: int
+    unique_agents: int
+    last_verified_at: int
+
+class MonzenMetricsResponse(BaseModel):
+    status: str
+    tier: str
+    limit_applied: int
+    rankings: List[SiteRanking]
+    next_action: Optional[NextAction] = None

@@ -76,5 +76,32 @@ def check_my_passport() -> str:
     except Exception as e:
         return f"❌ Identity Resolution Failed: {str(e)}"
 
+
+@mcp.tool()
+def report_external_paywall(target_url: str, invoice: str, preimage: str = None) -> str:
+    """Report an external L402 paywall to the Decentralized DNS to earn Virtue."""
+    try:
+        client = get_client()
+        result = client.submit_monzen_trace(target_url, invoice, preimage)
+        return f"✅ Trace Recorded [{result.action_type}]: {result.message}"
+    except Exception as e:
+        return f"❌ Trace Report Failed: {str(e)}"
+
+@mcp.tool()
+def get_l402_api_leaderboard(limit: int = 10, specific_agent_id: str = None) -> str:
+    """Get the Decentralized DNS leaderboard of verified L402 APIs."""
+    try:
+        client = get_client()
+        result = client.get_site_metrics(limit=limit, target_agent_id=specific_agent_id)
+        
+        rankings = result.rankings
+        lines = [f"📊 Site Metrics (Tier: {result.tier})"]
+        for i, r in enumerate(rankings):
+            lines.append(f"{i+1}. {r.domain} | Verifications: {r.total_verifications} | Unique Agents: {r.unique_agents}")
+            
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Metrics Fetch Failed: {str(e)}"
+
 if __name__ == "__main__":
     mcp.run()
