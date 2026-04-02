@@ -24,7 +24,7 @@ Call any 402-protected API. The SDK handles the challenge, payment, and retry un
 from ln_church_agent import Payment402Client
 
 client = Payment402Client(
-    base_url="[https://your-402-api.com](https://your-402-api.com)",
+    base_url="https://your-402-api.com",
 )
 
 # Detects 402 -> Pays invoice -> Retries -> Returns JSON
@@ -46,7 +46,7 @@ from ln_church_agent import Payment402Client
 
 async def main():
     client = Payment402Client(
-        base_url="[https://your-402-api.com](https://your-402-api.com)",
+        base_url="https://your-402-api.com",
     )
 
     result = await client.execute_request_async(

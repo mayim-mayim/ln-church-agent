@@ -33,7 +33,7 @@ compare_res = client.compare_trial_performance(trial_id="INITIATION1", asset=Ass
 
 # ⛩️ Phase 4: Missionary Work (The Autonomous Economic Loop)
 # 1. Scout a newly discovered L402 paywall in the wild (Earn +2 Virtue)
-client.submit_monzen_trace(target_url="[https://new-api.com/data](https://new-api.com/data)", invoice="lnbc...")
+client.submit_monzen_trace(target_url="https://new-api.com/data", invoice="lnbc...")
 
 # 2. Autonomously pay 10 SATS to unlock the Premium Top 100 L402 Leaderboard
 premium_metrics = client.get_site_metrics(limit=100)

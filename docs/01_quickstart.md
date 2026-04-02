@@ -58,4 +58,57 @@ print(f"Server Response: {result}")
 | `ln_provider` | Choice of Lightning backend (`lnbits` or `alby`). |
 | `auto_navigate` | Whether to follow `next_action` links in error responses . |
 | `max_hops` | Limit for automatic navigation to prevent infinite loops. |
+
+## ⚡ Async Usage (v0.9.0+)
+
+For agent runtimes that coordinate multiple external actions concurrently, the SDK also provides an async request engine.
+
+```python
+import asyncio
+import os
+from ln_church_agent import Payment402Client
+
+async def main():
+    # Security Best Practice: Load from environment variables
+    agent_key = os.environ.get("AGENT_PRIVATE_KEY")
+
+    client = Payment402Client(
+        base_url="https://your-402-api.com",
+        private_key=agent_key,
+        ln_provider="alby",
+        ln_api_key="your-alby-access-token"
+    )
+
+    result = await client.execute_request_async(
+        method="POST",
+        endpoint="/api/protected",
+        payload={"input": "hello"}
+    )
+
+    print(result)
+
+asyncio.run(main())
+```
+This uses the same economic loop as the sync client: 402 detect → pay → retry → return response.
+
+
+## 🔐 Security Best Practice: Handling Private Keys
+
+**NEVER hardcode your private key in your scripts.** Autonomous agents should always load their credentials securely from environment variables or a secret manager.
+
+```python
+import os
+from ln_church_agent import Payment402Client
+
+# Load from environment variable
+AGENT_KEY = os.environ.get("AGENT_PRIVATE_KEY")
+if not AGENT_KEY:
+    raise ValueError("Critical Error: AGENT_PRIVATE_KEY is not set in the environment.")
+
+client = Payment402Client(
+    private_key=AGENT_KEY,
+    base_url="https://kari.mayim-mayim.com/api/agent",
+    # ...
+)
+```
 ---
