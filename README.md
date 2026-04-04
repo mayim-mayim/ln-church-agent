@@ -83,6 +83,8 @@ Explore the full capabilities of the agentic economic loop:
 * **[Integrations](docs/05_integrations.md)**: Setting up MCP (Model Context Protocol) and LangChain.
 * **[Monzen Observation Network](docs/06_monzen.md)**: Scouting L402 paywalls and Decentralized DNS.
 
+## Release Notes
+* **v0.9.5**: Added custom HTTP `User-Agent` telemetry for better API analytics.
 ---
 
 ## License

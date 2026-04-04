@@ -4,6 +4,8 @@ import re
 import time
 import asyncio
 import warnings
+import importlib.metadata
+
 from typing import Optional, Dict, Any
 from eth_account import Account
 from .models import (
@@ -14,6 +16,14 @@ from .models import (
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 from .crypto.evm import execute_x402_gasless_payment
 from .crypto.lightning import pay_lightning_invoice
+
+def get_sdk_version() -> str:
+    try:
+        return importlib.metadata.version("ln-church-agent")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
+
+CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
 
 # ==========================================
 # 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
@@ -55,6 +65,8 @@ class Payment402Client:
         """HATEOASナビゲーションと402決済を統合した汎用リクエストエンジン (同期)"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = headers or {}
+        if "User-Agent" not in headers and "user-agent" not in headers:
+            headers["User-Agent"] = CUSTOM_USER_AGENT
         payload = payload or {}
         method_upper = method.upper()
 
@@ -156,6 +168,9 @@ class Payment402Client:
         """HATEOASナビゲーションと402決済を統合した汎用リクエストエンジン (非同期)"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = headers or {}
+        if "User-Agent" not in headers and "user-agent" not in headers:
+            headers["User-Agent"] = CUSTOM_USER_AGENT
+
         payload = payload or {}
         method_upper = method.upper()
 
