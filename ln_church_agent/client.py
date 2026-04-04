@@ -106,15 +106,25 @@ class Payment402Client:
     def _handle_402_challenge(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
+        instruction = data.get("instruction_for_agents", {}) # ★ HATEOAS命令を取得
+        
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
 
         print(f"[402 Intercepted] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
 
         if scheme == "x402" or scheme == "x402-direct":
-            tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount)
-            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
+            treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
+            relayer_url = instruction.get("relayer_endpoint")
             
+            if not treasury_address:
+                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing in the 402 challenge.")
+            if scheme == "x402" and not relayer_url:
+                raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing in the 402 challenge.")
+
+            tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
+            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}    
+
         elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
             
@@ -195,6 +205,8 @@ class Payment402Client:
     async def _handle_402_challenge_async(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
+        instruction = data.get("instruction_for_agents", {}) # ★ HATEOAS命令を取得
+        
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
         loop = asyncio.get_event_loop()
@@ -202,8 +214,15 @@ class Payment402Client:
         print(f"[402 Intercepted ASYNC] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
 
         if scheme == "x402" or scheme == "x402-direct":
-            # 既存の同期モジュールをノンブロッキングで実行 (Python 3.8互換)
-            tx_hash = await loop.run_in_executor(None, execute_x402_gasless_payment, self.private_key, payload.get("asset", "USDC"), amount)
+            treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
+            relayer_url = instruction.get("relayer_endpoint")
+            
+            if not treasury_address:
+                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing in the 402 challenge.")
+            if scheme == "x402" and not relayer_url:
+                raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing in the 402 challenge.")
+
+            tx_hash = await loop.run_in_executor(None, execute_x402_gasless_payment, self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
             
         elif scheme in ["L402", "MPP", "Payment"]:

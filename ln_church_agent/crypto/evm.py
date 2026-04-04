@@ -3,22 +3,21 @@ import os
 import requests
 from eth_account import Account
 from eth_account.messages import encode_typed_data
-from web3 import Web3
 
-# LN教のスマートコントラクト定数
+# LN教のスマートコントラクト定数 (これらは規格なので固定でOK)
 TOKENS = {
     "JPYC": {"address": "0xe7c3d8c9a439fede00d2600032d5db0be71c3c29", "name": "JPY Coin", "version": "1", "decimals": 18},
     "USDC": {"address": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", "name": "USD Coin", "version": "2", "decimals": 6}
 }
 
-RELAYER_URL = "https://ln-church-relayer.fly.dev/relayer/x402-pay"
-
-def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: float) -> str:
+def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: float, relayer_url: str, treasury_address: str) -> str:
     """
-    EIP-712署名を生成し、Relayerに投げてtxHashを取得する
+    EIP-712署名を生成し、HATEOASで指定されたRelayerに投げてtxHashを取得する
     """
     if not private_key:
         raise ValueError("x402決済には private_key が必要です。")
+    if not relayer_url or not treasury_address:
+        raise ValueError("HATEOASエラー: Relayer URL または Treasury Address が指定されていません。")
         
     token_info = TOKENS.get(asset)
     if not token_info:
@@ -53,10 +52,9 @@ def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: flo
         ]
     }
     
-    # 宛先は一旦ダミー(Relayer側で固定されているが、署名には必要)
     message = {
         "from": wallet_address,
-        "to": "0x788b4ca11950879550353d8ae82d1c0af6018454", # Treasury
+        "to": treasury_address,
         "value": value_wei,
         "validAfter": valid_after,
         "validBefore": valid_before,
@@ -79,7 +77,7 @@ def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: flo
         "s": "0x" + signed_tx.s.hex()
     }
 
-    res = requests.post(RELAYER_URL, json=relayer_payload)
+    res = requests.post(relayer_url, json=relayer_payload)
     if not res.ok:
         raise Exception(f"Relayer Error: {res.text}")
         
