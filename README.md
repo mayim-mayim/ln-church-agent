@@ -83,8 +83,19 @@ Explore the full capabilities of the agentic economic loop:
 * **[Integrations](docs/05_integrations.md)**: Setting up MCP (Model Context Protocol) and LangChain.
 * **[Monzen Observation Network](docs/06_monzen.md)**: Scouting L402 paywalls and Decentralized DNS.
 
-## Release Notes
-* **v0.9.5**: Added custom HTTP `User-Agent` telemetry for better API analytics.
+## 📊 Telemetry & Privacy
+
+To observe and improve the autonomous agent ecosystem, this SDK includes minimal, privacy-conscious telemetry in its HTTP headers.
+
+* **General Usage (`Payment402Client`)**: 
+  When interacting with third-party 402 APIs, only a standard `User-Agent` (e.g., `ln-church-agent/0.9.5`) is sent. **No custom tracking headers are included.**
+* **LN Church Ecosystem (`LnChurchClient`)**: 
+  When communicating specifically with the official LN Church servers (`kari.mayim-mayim.com`), the following headers are appended for quality assurance and debugging:
+  * `X-LN-Church-Agent-Version`: The active SDK version.
+  * `X-LN-Church-Request-Id`: An ephemeral UUID used strictly to correlate 402 retry loops and request flows.
+
+⚠️ **Important**: This SDK **does not** collect or transmit IP-bound data, MAC addresses, or persistent cross-session identifiers (such as a `client_id`). Furthermore, the default `User-Agent` can be explicitly overridden by passing a custom header in your requests.
+
 ---
 
 ## License

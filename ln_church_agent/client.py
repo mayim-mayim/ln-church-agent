@@ -5,6 +5,7 @@ import time
 import asyncio
 import warnings
 import importlib.metadata
+import uuid
 
 from typing import Optional, Dict, Any
 from eth_account import Account
@@ -23,6 +24,7 @@ def get_sdk_version() -> str:
     except importlib.metadata.PackageNotFoundError:
         return "dev"
 
+SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
 
 # ==========================================
@@ -62,11 +64,13 @@ class Payment402Client:
         return self.execute_request("POST", endpoint_path, payload, headers)
 
     def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
-        """HATEOASナビゲーションと402決済を統合した汎用リクエストエンジン (同期)"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
-        headers = headers or {}
-        if "User-Agent" not in headers and "user-agent" not in headers:
+        headers = dict(headers or {}) 
+        
+        # 標準的な User-Agent のみ付与（利用者が上書きしていない場合）
+        if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
+
         payload = payload or {}
         method_upper = method.upper()
 
@@ -165,15 +169,15 @@ class Payment402Client:
     # ⚡ 非同期 (Async) エンジン [NEW]
     # ------------------------------------------
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
-        """HATEOASナビゲーションと402決済を統合した汎用リクエストエンジン (非同期)"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
-        headers = headers or {}
-        if "User-Agent" not in headers and "user-agent" not in headers:
+        headers = dict(headers or {}) 
+
+        # 汎用クライアントは標準的な User-Agent のみ付与
+        if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
 
         payload = payload or {}
         method_upper = method.upper()
-
         is_get = method_upper == "GET"
         req_kwargs = {
             "json": None if is_get else payload,
@@ -290,6 +294,32 @@ class LnChurchClient(Payment402Client):
             
         self.probe_token = None
         self.faucet_token = None
+
+    def _inject_telemetry(self, headers: Optional[dict]) -> dict:
+        """LN教サーバー向けの専用観測ヘッダを付与"""
+        headers = dict(headers or {})
+        
+        # SDKバージョンの明示
+        headers["X-LN-Church-Agent-Version"] = SDK_VERSION
+        
+        # 402リトライループ等で同一リクエストフローを追跡するための使い捨てID
+        if not any(k.lower() == "x-ln-church-request-id" for k in headers.keys()):
+            headers["X-LN-Church-Request-Id"] = str(uuid.uuid4())
+            
+        return headers
+
+    # ------------------------------------------
+    # 親クラスの実行エンジンをオーバーライド
+    # ------------------------------------------
+    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+        # 専用ヘッダを注入してから親クラス（汎用決済ロジック）に処理を委譲
+        telemetry_headers = self._inject_telemetry(headers)
+        return super().execute_request(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
+
+    async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+        # 専用ヘッダを注入してから親クラス（汎用決済ロジック）に処理を委譲
+        telemetry_headers = self._inject_telemetry(headers)
+        return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
 
     # ------------------------------------------
     # 同期 (Sync) メソッド群
