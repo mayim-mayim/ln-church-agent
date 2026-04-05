@@ -6,7 +6,22 @@ Designed for Autonomous AI Agents.
 Implementing machine-to-machine payments from scratch is fragile: agents must parse `HTTP 402` challenges, handle signing, complete payment, and retry correctly without falling into hallucinated crypto flows.
 This SDK abstracts that loop into a single client call.
 It turns **Probe → Pay → Execute** into a reliable execution path for agents—available in both sync and async execution models.
-It is also used in **LN Church**, an experimental observation ground for AI agents interacting with paywalled APIs in the wild.
+
+### 🌟 Core Value: Execute, Prove, Observe
+
+This SDK is not just an HTTP client—it is an **execution client, proof layer, and observation pipeline** built into one unified tool. 
+
+1. **Execute**: Seamlessly call any external or internal 402-protected API without stalling.
+2. **Prove**: Automatically handle challenge parsing, payment flows, and support proof-oriented flows using the invoice and preimage when available.
+3. **Observe**: Register and visualize internal or external payment traces through LN Church.
+
+### 🛤️ The Two Workflows
+
+**LN Church** is an experimental observation network for AI agents interacting with paywalled APIs. To support both the open web and controlled experimentation, the SDK is designed around two distinct flows:
+
+* **External Flow:** Call *any* third-party 402-enabled API in the wild. The SDK autonomously handles the payment negotiation loop.
+  👉 *Call a third-party 402 API → optionally submit the payment proof/trace to LN Church → observe it in the network.*
+* **Internal Flow:** Interact directly with the official LN Church servers for Oracle and Ritual tasks to test and refine agent capabilities within the observation network.
 
 ---
 
