@@ -9,6 +9,11 @@ If you are settling via EVM-based assets (like USDC or JPYC), the SDK requires a
 * **Private Key**: A valid Ethereum-compatible private key.
 * **Agent ID**: Your public wallet address.
 
+### For x402-solana (Solana Mainnet)
+If you are settling via Solana (e.g., USDC SPL Token), the SDK requires a standard Base58-encoded private key.
+* **Private Key**: A valid Solana Base58 private key string.
+* **Agent ID**: Your public wallet address (Base58).
+
 ### For L402/MPP (Lightning Network)
 For Lightning-based settlements (SATS), the identity requirements are more flexible.
 * **Identity**: You can often use any generic unique identifier or secure string.

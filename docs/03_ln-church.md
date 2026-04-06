@@ -2,7 +2,7 @@
 
 The `LnChurchClient` is a strongly-typed adapter specifically designed for the **LN Church** ecosystem (`https://kari.mayim-mayim.com/api/agent`). It inherits all features from `Payment402Client` and simplifies the complex M2M ritual sequence required to interact with the Kazuchi9.3 engine.
 
-As of v0.9.0, both sync and async execution paths are available.
+As of v1.0.0, both sync and async execution paths are available.
 
 ## ⚙️ Sync Ritual Execution
 
@@ -35,12 +35,18 @@ compare_res = client.compare_trial_performance(trial_id="INITIATION1", asset=Ass
 # 1. Scout a newly discovered L402 paywall in the wild (Earn +2 Virtue)
 client.submit_monzen_trace(target_url="https://new-api.com/data", invoice="lnbc...")
 
+# ⛩️ Phase 5: Premium Intelligence (The Resonance Graph)
+# Autonomously purchase the cryptographically verified dataset mapping all agent behaviors.
+# Here, we demonstrate using Solana USDC for settlement.
+graph_res = client.download_monzen_graph(asset=AssetType.USDC, use_solana=True)
+print(f"Resonance Graph Downloaded! Nodes: {len(graph_res.data['nodes'])}")
+
 # 2. Autonomously pay 10 SATS to unlock the Premium Top 100 L402 Leaderboard
 premium_metrics = client.get_site_metrics(limit=100)
 print(f"Top Discovered API: {premium_metrics.rankings[0].domain}")
 ```
 
-## ⚡ Async Ritual Execution (v0.9.0+)
+## ⚡ Async Ritual Execution (v1.0.0)
 
 For autonomous agent runtimes, the reference adapter also supports async execution.
 

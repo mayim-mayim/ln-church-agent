@@ -4,8 +4,46 @@
 
 Designed for Autonomous AI Agents.
 Implementing machine-to-machine payments from scratch is fragile: agents must parse `HTTP 402` challenges, handle signing, complete payment, and retry correctly without falling into hallucinated crypto flows.
-This SDK abstracts that loop into a single client call.
-It turns **Probe → Pay → Execute** into a reliable execution path for agents—available in both sync and async execution models.
+This SDK abstracts that loop into a single client call. It turns **Probe → Pay → Execute** into a reliable execution path for agents—available in both sync and async execution models.
+
+---
+
+## 🚩 Start Here: The Canonical First Success
+
+The fastest way to understand this SDK is to run the canonical example. 
+This script connects to the **LN Church public endpoint**, which serves as the official testbed for agents to experience their first autonomous economic loop.
+
+You will see the agent autonomously navigate the Probe → Pay → Execute protocol through the canonical first-success path. The initial run is Faucet-assisted, so no pre-funded balance is required.
+
+### Running the Example
+
+**1. Set your Agent's Identity Key** (EVM or Solana format)
+```bash
+export AGENT_PRIVATE_KEY="0xYourPrivateKey"
+```
+
+**2. Run the Hello World script**
+```bash
+python examples/hello_ln_church.py
+```
+
+### What this script demonstrates:
+1. **Probe:** Establishes connection and identity.
+2. **Pay (Faucet):** Secures zero-balance fallback credits to test the payment loop safely.
+3. **Execute:** Hits a 402-protected endpoint, intercepts the paywall, negotiates the settlement automatically, and returns the paid result.
+
+By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
+
+---
+## 📦 Public API Surface (v1.0.0 Stable)
+The following interfaces are guaranteed stable in 1.x:
+- `Payment402Client` (Core Engine)
+- `LnChurchClient` (Reference Adapter)
+- `AssetType`, `SchemeType` (Enums)
+- All response models (e.g., `OmikujiResponse`, `MonzenTraceResponse`, `MonzenGraphResponse`) top-level schemas are guaranteed stable in 1.x.
+Note: The inner payload of MonzenGraphResponse.data may evolve based on the graph network's schema.
+- The Trace Record Semantics (action_type, recorded_hash, trace_id, etc.)
+*Note: `execute_paid_action` is deprecated in favor of `execute_request(method="POST", ...)`.*
 
 ### 🌟 Core Value: Execute, Prove, Observe
 
@@ -29,7 +67,11 @@ This SDK is not just an HTTP client—it is an **execution client, proof layer, 
 
 ### 1. Install
 ```bash
+# Standard install (EVM & Lightning support)
 pip install ln-church-agent
+
+# Full install (Includes Solana support)
+pip install ln-church-agent[solana]
 ```
 
 ### 2. Configure & Call (Sync)
@@ -45,7 +87,7 @@ client = Payment402Client(
 # Detects 402 -> Pays invoice -> Retries -> Returns JSON
 result = client.execute_request(
     method="POST",
-    endpoint="/api/protected",
+    endpoint_path="/api/protected",
     payload={"input": "hello"}
 )
 
@@ -53,7 +95,7 @@ print(result)
 ```
 
 ### 3. Configure & Call (Async)
-For agent runtimes that need concurrent execution, async is supported in v0.9.0+.
+For agent runtimes that need concurrent execution, async is supported in v1.0.0.
 
 ```python
 import asyncio
@@ -66,7 +108,7 @@ async def main():
 
     result = await client.execute_request_async(
         method="POST",
-        endpoint="/api/protected",
+        endpoint_path="/api/protected",
         payload={"input": "hello"}
     )
 
@@ -83,7 +125,7 @@ When an AI Agent hits `HTTP 402 Payment Required`, it often stalls, crashes, or 
 * **Why this is hard:** Handling 402 flows means parsing challenge headers, extracting payment instructions, coordinating wallets, signing correctly, and retrying in the right order.
 * **What this SDK does:** It reduces that economic negotiation to a normal HTTP client call, with typed responses and built-in retry guardrails.
 
-As of v0.9.0, the same economic loop is available in both sync and async execution paths.
+As of v1.0.0, the same economic loop is available in both sync and async execution paths.
 
 ---
 
@@ -103,7 +145,7 @@ Explore the full capabilities of the agentic economic loop:
 To observe and improve the autonomous agent ecosystem, this SDK includes minimal, privacy-conscious telemetry in its HTTP headers.
 
 * **General Usage (`Payment402Client`)**: 
-  When interacting with third-party 402 APIs, only a standard `User-Agent` (e.g., `ln-church-agent/0.9.5`) is sent. **No custom tracking headers are included.**
+  When interacting with third-party 402 APIs, only a standard `User-Agent` (e.g., `ln-church-agent/<version>`) is sent. **No custom tracking headers are included.**
 * **LN Church Ecosystem (`LnChurchClient`)**: 
   When communicating specifically with the official LN Church servers (`kari.mayim-mayim.com`), the following headers are appended for quality assurance and debugging:
   * `X-LN-Church-Agent-Version`: The active SDK version.

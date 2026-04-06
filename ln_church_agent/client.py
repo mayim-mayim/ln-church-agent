@@ -12,7 +12,8 @@ from eth_account import Account
 from .models import (
     AssetType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
     HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
-    HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse
+    HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
+    MonzenGraphResponse
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 from .crypto.evm import execute_x402_gasless_payment
@@ -22,7 +23,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "dev"
+        return "1.0.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -141,6 +142,21 @@ class Payment402Client:
             tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}    
 
+        elif scheme == "x402-solana":
+            treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
+            if not treasury_address:
+                raise PaymentExecutionError("HATEOAS Error: 'payTo' (Treasury Address) is missing in the 402 challenge for x402-solana. Cannot proceed with transaction.")
+
+            try:
+                from .crypto.solana import execute_x402_solana_payment
+            except ImportError:
+                raise ImportError("Solana support requires extra dependencies. Run `pip install ln-church-agent[solana]` to enable x402-solana features.")
+
+            tx_sig = execute_x402_solana_payment(self.private_key, amount, treasury_address)
+     
+            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_sig}
+            headers["Authorization"] = f"x402-solana {tx_sig}"
+
         elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
             
@@ -166,7 +182,7 @@ class Payment402Client:
         return self.execute_request(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
 
     # ------------------------------------------
-    # ⚡ 非同期 (Async) エンジン [NEW]
+    # ⚡ 非同期 (Async) エンジン 
     # ------------------------------------------
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -185,7 +201,7 @@ class Payment402Client:
             "headers": headers
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             res = await client.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
@@ -243,7 +259,23 @@ class Payment402Client:
 
             tx_hash = await loop.run_in_executor(None, execute_x402_gasless_payment, self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
-            
+
+        elif scheme == "x402-solana":
+            treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
+            if not treasury_address:
+                raise PaymentExecutionError("HATEOAS Error: 'payTo' (Treasury Address) is missing in the 402 challenge for x402-solana. Cannot proceed with transaction.")
+
+            try:
+                from .crypto.solana import execute_x402_solana_payment
+            except ImportError:
+                raise ImportError("Solana support requires extra dependencies. Run `pip install ln-church-agent[solana]` to enable x402-solana features.")
+
+            # ★ 修正: 第4引数を削除し、solana.py の定義 (3引数) に完全に一致させる
+            tx_sig = await loop.run_in_executor(None, execute_x402_solana_payment, self.private_key, amount, treasury_address)
+   
+            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_sig}
+            headers["Authorization"] = f"x402-solana {tx_sig}"
+
         elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
             
@@ -288,7 +320,17 @@ class LnChurchClient(Payment402Client):
         super().__init__(private_key, ln_api_url, ln_api_key, ln_provider, base_url, auto_navigate, max_hops, allow_unsafe_navigate)
 
         if private_key and not agent_id:
-            self.agent_id = Account.from_key(private_key).address
+            try:
+                # 1. まずEVMの鍵としてアドレス(0x...)の導出を試みる
+                self.agent_id = Account.from_key(private_key).address
+            except Exception:
+                # 2. 失敗したら、Solanaの鍵(Base58)として公開鍵の導出を試みる
+                try:
+                    from solders.keypair import Keypair
+                    self.agent_id = str(Keypair.from_base58_string(private_key).pubkey())
+                except Exception:
+                    # 3. どちらもダメなら匿名エージェントにする
+                    self.agent_id = "Anonymous_Agent"
         else:
             self.agent_id = agent_id or "Anonymous_Agent"
             
@@ -374,13 +416,24 @@ class LnChurchClient(Payment402Client):
 
     def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
-        if preimage: payload["preimage"] = preimage
-        return MonzenTraceResponse(**self.execute_request("POST", "/api/agent/monzen/trace", payload))
+        if preimage: payload["preimage"] = preimage        
+        res_dict = self.execute_request("POST", "/api/agent/monzen/trace", payload)
+        return MonzenTraceResponse(**res_dict)
 
     def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
         return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
+
+    def download_monzen_graph(self, asset: AssetType = AssetType.SATS, use_solana: bool = False) -> MonzenGraphResponse:
+        if use_solana and asset != AssetType.USDC:
+            raise ValueError("x402-solana settlement is strictly limited to USDC asset. Please change preferred_asset to USDC.")
+            
+        scheme = "x402-solana" if use_solana else ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": scheme, "asset": asset.value, "agentId": self.agent_id}
+        # requests uses allow_redirects=True by default for 302 presigned URLs
+        res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
+        return MonzenGraphResponse(**res)
 
     # ------------------------------------------
     # ⚡ 非同期 (Async) メソッド群 [NEW]
@@ -442,11 +495,20 @@ class LnChurchClient(Payment402Client):
     async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
         if preimage: payload["preimage"] = preimage
-        res = await self.execute_request_async("POST", "/api/agent/monzen/trace", payload)
-        return MonzenTraceResponse(**res)
+        res_dict = await self.execute_request_async("POST", "/api/agent/monzen/trace", payload)
+        return MonzenTraceResponse(**res_dict)
 
     async def get_site_metrics_async(self, limit: int = 10, target_agent_id: Optional[str] = None) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
         res = await self.execute_request_async("GET", "/api/agent/monzen/metrics", payload=params)
         return MonzenMetricsResponse(**res)
+
+    async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, use_solana: bool = False) -> MonzenGraphResponse:
+        if use_solana and asset != AssetType.USDC:
+            raise ValueError("x402-solana settlement is strictly limited to USDC asset. Please change preferred_asset to USDC.")
+            
+        scheme = "x402-solana" if use_solana else ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": scheme, "asset": asset.value, "agentId": self.agent_id}
+        res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
+        return MonzenGraphResponse(**res)

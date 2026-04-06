@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="0.9.7",
+    version="1.0.0",
     packages=['ln_church_agent', 'ln_church_agent.crypto', 'ln_church_agent.integrations'],
     install_requires=[
         "requests>=2.31.0",
@@ -19,7 +19,11 @@ setup(
     ],
     extras_require={
         "langchain": ["langchain-core>=0.1.0"],
-        "mcp": ["mcp>=1.0.0"]
+        "mcp": ["mcp>=1.0.0"],
+        "solana": [
+            "solana>=0.34.0",
+            "solders>=0.21.0"
+        ]
     },
     author="LN Church",
     description="A Python reference client for HTTP 402 settlement across x402, L402, MPP, and fallback flows.",

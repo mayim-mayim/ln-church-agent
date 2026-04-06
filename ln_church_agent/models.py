@@ -11,6 +11,7 @@ class AssetType(str, Enum):
 class SchemeType(str, Enum):
     x402 = "x402"
     x402_direct = "x402-direct"
+    x402_solana = "x402-solana"
     L402 = "L402"
     MPP = "MPP"
     PAYMENT = "Payment"
@@ -145,13 +146,16 @@ class BenchmarkOverviewResponse(BaseModel):
 # ==========================================
 class MonzenTraceResponse(BaseModel):
     status: str
-    message: str
-    verification_status: str
-    verification_method: str
-    proof_reference: str
-    recorded_hash: str
     action_type: str
-    next_action: Optional[NextAction] = None
+    trace_id: str
+    recorded_hash: str
+    timestamp: int
+    virtue_earned: int
+    verification_status: Optional[str] = None
+    verification_method: Optional[str] = None
+    proof_reference: Optional[str] = None
+    message: str
+    next_action: Optional[Dict[str, Any]] = None
 
 class SiteRanking(BaseModel):
     domain: str
@@ -164,4 +168,11 @@ class MonzenMetricsResponse(BaseModel):
     tier: str
     limit_applied: int
     rankings: List[SiteRanking]
+    next_action: Optional[NextAction] = None
+
+class MonzenGraphResponse(BaseModel):
+    status: str
+    tier: str
+    payment_scheme_used: str
+    data: Dict[str, Any]
     next_action: Optional[NextAction] = None
