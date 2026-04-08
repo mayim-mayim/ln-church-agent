@@ -2,6 +2,21 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
+class PaymentPolicy(BaseModel):
+    """決済のガードレールを定義する最小限のポリシー"""
+    max_spend_per_tx_usd: float = Field(default=10.0, description="1Txあたりの最大許容額(USD)")
+    allowed_assets: List[str] = Field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
+    allowed_schemes: List[str] = Field(default_factory=lambda: ["L402", "MPP", "x402", "x402-direct", "x402-solana"])
+
+class SettlementReceipt(BaseModel):
+    """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""
+    scheme: str
+    network: str
+    asset: str
+    settled_amount: float
+    proof_reference: str  # TxHash または Preimage
+    verification_status: str = "completed"
+
 class AssetType(str, Enum):
     JPYC = "JPYC"
     USDC = "USDC"

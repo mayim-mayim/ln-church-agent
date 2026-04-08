@@ -1,8 +1,10 @@
 import time
 import os
 import requests
+from typing import Optional, Protocol
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from .protocols import EVMSigner
 
 # フォールバック用辞書
 TOKENS = {
@@ -10,153 +12,138 @@ TOKENS = {
     "USDC": {"address": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", "name": "USD Coin", "version": "2", "decimals": 6}
 }
 
-def execute_x402_gasless_payment(
-    private_key: str, 
-    asset: str, 
-    human_amount: float, 
-    relayer_url: str, 
-    treasury_address: str,
-    chain_id: int = 137,
-    token_address: str = None
-) -> str:
-    """
-    EIP-712署名を生成し、HATEOASで指定されたRelayerに投げてtxHashを取得する (x402)
-    """
-    if not private_key:
-        raise ValueError("x402決済には private_key が必要です。")
-    if not relayer_url or not treasury_address:
-        raise ValueError("HATEOASエラー: Relayer URL または Treasury Address が指定されていません。")
+# --- v1.2.0: Concrete Adapter (Default) ---
+class LocalKeyAdapter(EVMSigner):
+    """従来の private_key を内部に保持し、EVMSignerプロトコルを満たすデフォルトアダプター"""
+    
+    def __init__(self, private_key: str):
+        if not private_key:
+            raise ValueError("LocalKeyAdapter requires a private_key.")
+        self.account = Account.from_key(private_key)
+
+    @property
+    def address(self) -> str:
+        return self.account.address
+
+    def execute_x402_gasless(
+        self, asset: str, human_amount: float, relayer_url: str, treasury_address: str,
+        chain_id: int = 137, token_address: str = None
+    ) -> str:
+        if not relayer_url or not treasury_address:
+            raise ValueError("HATEOASエラー: Relayer URL または Treasury Address が指定されていません。")
+            
+        token_info = TOKENS.get(asset, {})
+        contract_address = token_address or token_info.get("address")
+        if not contract_address:
+            raise ValueError(f"トークンアドレスが不明です: {asset}")
+
+        token_name = token_info.get("name", "USD Coin" if asset == "USDC" else asset)
+        token_version = token_info.get("version", "2" if asset == "USDC" else "1")
+        decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
+
+        value_wei = int(human_amount * (10 ** decimals))
+        valid_after = 0
+        valid_before = int(time.time()) + 3600 
+        nonce = os.urandom(32).hex() 
+
+        domain = {
+            "name": token_name,
+            "version": token_version,
+            "chainId": int(chain_id),
+            "verifyingContract": contract_address
+        }
         
-    token_info = TOKENS.get(asset, {})
-    contract_address = token_address or token_info.get("address")
-    if not contract_address:
-        raise ValueError(f"トークンアドレスが不明です: {asset}")
-
-    token_name = token_info.get("name", "USD Coin" if asset == "USDC" else asset)
-    token_version = token_info.get("version", "2" if asset == "USDC" else "1")
-    decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
-
-    account = Account.from_key(private_key)
-    value_wei = int(human_amount * (10 ** decimals))
-    
-    valid_after = 0
-    valid_before = int(time.time()) + 3600 
-    nonce = os.urandom(32).hex() 
-
-    domain = {
-        "name": token_name,
-        "version": token_version,
-        "chainId": int(chain_id),
-        "verifyingContract": contract_address
-    }
-    
-    types = {
-        "TransferWithAuthorization": [
-            {"name": "from", "type": "address"},
-            {"name": "to", "type": "address"},
-            {"name": "value", "type": "uint256"},
-            {"name": "validAfter", "type": "uint256"},
-            {"name": "validBefore", "type": "uint256"},
-            {"name": "nonce", "type": "bytes32"}
-        ]
-    }
-    
-    message = {
-        "from": account.address,
-        "to": treasury_address,
-        "value": value_wei,
-        "validAfter": valid_after,
-        "validBefore": valid_before,
-        "nonce": bytes.fromhex(nonce)
-    }
-
-    signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
-    signed_tx = account.sign_message(signable_msg)
-
-    relayer_payload = {
-        "token": contract_address,
-        "from": account.address,
-        "value": str(value_wei),
-        "validAfter": valid_after,
-        "validBefore": valid_before,
-        "nonce": "0x" + nonce,
-        "v": signed_tx.v,
-        "r": "0x" + signed_tx.r.hex(),
-        "s": "0x" + signed_tx.s.hex()
-    }
-
-    res = requests.post(relayer_url, json=relayer_payload)
-    if not res.ok:
-        raise Exception(f"Relayer Error: {res.text}")
+        types = {
+            "TransferWithAuthorization": [
+                {"name": "from", "type": "address"},
+                {"name": "to", "type": "address"},
+                {"name": "value", "type": "uint256"},
+                {"name": "validAfter", "type": "uint256"},
+                {"name": "validBefore", "type": "uint256"},
+                {"name": "nonce", "type": "bytes32"}
+            ]
+        }
         
-    return res.json().get("txHash")
+        message = {
+            "from": self.account.address,
+            "to": treasury_address,
+            "value": value_wei,
+            "validAfter": valid_after,
+            "validBefore": valid_before,
+            "nonce": bytes.fromhex(nonce)
+        }
 
-def execute_x402_direct_payment(
-    private_key: str,
-    asset: str,
-    human_amount: float,
-    treasury_address: str,
-    chain_id: int = 137,
-    token_address: str = None,
-    rpc_url: str = None
-) -> str:
-    """
-    Agent自身がガス代を支払い、オンチェーンに直接ERC20 Transferをブロードキャストする (x402-direct)
-    """
-    if not private_key or not treasury_address:
-        raise ValueError("x402-direct決済には private_key と treasury_address が必要です。")
+        signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
+        signed_tx = self.account.sign_message(signable_msg)
 
-    # RPC URLの解決 (環境変数 > 引数 > デフォルトの順)
-    node_url = os.environ.get("EVM_RPC_URL") or rpc_url
-    if not node_url:
-        if chain_id == 137: node_url = "https://polygon-rpc.com"
-        elif chain_id == 8453: node_url = "https://mainnet.base.org"
-        else: raise ValueError(f"Unknown chain ID {chain_id}. Please provide EVM_RPC_URL.")
+        relayer_payload = {
+            "token": contract_address,
+            "from": self.account.address,
+            "value": str(value_wei),
+            "validAfter": valid_after,
+            "validBefore": valid_before,
+            "nonce": "0x" + nonce,
+            "v": signed_tx.v,
+            "r": "0x" + signed_tx.r.hex(),
+            "s": "0x" + signed_tx.s.hex()
+        }
 
-    token_info = TOKENS.get(asset, {})
-    contract_address = token_address or token_info.get("address")
-    if not contract_address:
-        raise ValueError(f"トークンアドレスが不明です: {asset}")
+        res = requests.post(relayer_url, json=relayer_payload)
+        if not res.ok:
+            raise Exception(f"Relayer Error: {res.text}")
+            
+        return res.json().get("txHash")
 
-    decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
-    value_wei = int(human_amount * (10 ** decimals))
+    def execute_x402_direct(
+        self, asset: str, human_amount: float, treasury_address: str, 
+        chain_id: int = 137, token_address: str = None, rpc_url: str = None
+    ) -> str:
+        if not treasury_address:
+            raise ValueError("x402-direct決済には treasury_address が必要です。")
 
-    account = Account.from_key(private_key)
-    
-    def rpc_call(method, params):
-        res = requests.post(node_url, json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1})
-        if not res.ok: raise Exception(f"RPC Error: {res.text}")
-        data = res.json()
-        if "error" in data: raise Exception(f"RPC Error: {data['error']}")
-        return data["result"]
+        node_url = os.environ.get("EVM_RPC_URL") or rpc_url
+        if not node_url:
+            if chain_id == 137: node_url = "https://polygon-rpc.com"
+            elif chain_id == 8453: node_url = "https://mainnet.base.org"
+            else: raise ValueError(f"Unknown chain ID {chain_id}. Please provide EVM_RPC_URL.")
 
-    # 1. Nonce取得
-    nonce_hex = rpc_call("eth_getTransactionCount", [account.address, "pending"])
-    nonce = int(nonce_hex, 16)
+        token_info = TOKENS.get(asset, {})
+        contract_address = token_address or token_info.get("address")
+        if not contract_address:
+            raise ValueError(f"トークンアドレスが不明です: {asset}")
 
-    # 2. Gas Price 取得 (EIP-1559を簡略化しレガシーGasを使用)
-    gas_price_hex = rpc_call("eth_gasPrice", [])
-    gas_price = int(gas_price_hex, 16)
-    
-    # 3. ERC20 Transfer データ構築 (0xa9059cbb + padding_to + padding_value)
-    method_id = "a9059cbb"
-    padded_to = treasury_address.lower().replace("0x", "").rjust(64, "0")
-    padded_value = hex(value_wei).replace("0x", "").rjust(64, "0")
-    tx_data = f"0x{method_id}{padded_to}{padded_value}"
+        decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
+        value_wei = int(human_amount * (10 ** decimals))
 
-    # 4. トランザクション構築
-    tx = {
-        "nonce": nonce,
-        "gasPrice": int(gas_price * 1.1), # 10%増しで確実に通す
-        "gas": 100000, # ERC20転送の安全なマージン
-        "to": contract_address,
-        "value": 0,
-        "data": tx_data,
-        "chainId": int(chain_id)
-    }
+        def rpc_call(method, params):
+            res = requests.post(node_url, json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1})
+            if not res.ok: raise Exception(f"RPC Error: {res.text}")
+            data = res.json()
+            if "error" in data: raise Exception(f"RPC Error: {data['error']}")
+            return data["result"]
 
-    # 5. 署名とブロードキャスト
-    signed_tx = account.sign_transaction(tx)
-    tx_hash_hex = rpc_call("eth_sendRawTransaction", [signed_tx.raw_transaction.hex()])
-    
-    return tx_hash_hex
+        nonce_hex = rpc_call("eth_getTransactionCount", [self.account.address, "pending"])
+        nonce = int(nonce_hex, 16)
+
+        gas_price_hex = rpc_call("eth_gasPrice", [])
+        gas_price = int(gas_price_hex, 16)
+        
+        method_id = "a9059cbb"
+        padded_to = treasury_address.lower().replace("0x", "").rjust(64, "0")
+        padded_value = hex(value_wei).replace("0x", "").rjust(64, "0")
+        tx_data = f"0x{method_id}{padded_to}{padded_value}"
+
+        tx = {
+            "nonce": nonce,
+            "gasPrice": int(gas_price * 1.1),
+            "gas": 100000,
+            "to": contract_address,
+            "value": 0,
+            "data": tx_data,
+            "chainId": int(chain_id)
+        }
+
+        signed_tx = self.account.sign_transaction(tx)
+        tx_hash_hex = rpc_call("eth_sendRawTransaction", [signed_tx.raw_transaction.hex()])
+        
+        return tx_hash_hex

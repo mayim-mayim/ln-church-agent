@@ -7,6 +7,7 @@ from spl.token.instructions import transfer_checked, TransferCheckedParams, get_
 from solders.transaction import VersionedTransaction
 from solders.message import MessageV0
 from typing import Optional, Union
+from .protocols import SolanaSigner
 
 # --- 定数設定 ---
 # Solana Mainnet USDC Mint Address
@@ -81,3 +82,11 @@ def execute_x402_solana_payment(private_key_base58: str, amount: Union[int, floa
         raise Exception("Solana transaction failed to send.")
 
     return str(res.value) # Base58形式のSignature (txHashに相当)
+
+class LocalSolanaAdapter(SolanaSigner):
+    def __init__(self, private_key_base58: str):
+        self.private_key_base58 = private_key_base58
+        
+    def execute_x402_solana(self, amount: float, destination_addr: str, reference_key: str = None) -> str:
+        # 古い関数を呼び出す
+        return execute_x402_solana_payment(self.private_key_base58, amount, destination_addr, reference_key)    

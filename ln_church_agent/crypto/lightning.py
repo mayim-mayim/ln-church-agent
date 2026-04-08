@@ -1,6 +1,7 @@
 import requests
 import time
 from typing import Optional
+from .protocols import LightningProvider
 
 def pay_lightning_invoice(
     invoice: str, 
@@ -75,3 +76,13 @@ def _pay_with_alby(invoice: str, access_token: str) -> str:
         raise Exception("Alby Payment succeeded but preimage was not returned.")
         
     return preimage
+
+class LegacyLNAdapter(LightningProvider):
+    def __init__(self, api_url: str, api_key: str, provider: str = "lnbits"):
+        self.api_url = api_url
+        self.api_key = api_key
+        self.provider = provider
+        
+    def pay_invoice(self, invoice: str) -> str:
+        # 古い関数を呼び出す
+        return pay_lightning_invoice(invoice, self.api_url, self.api_key, self.provider)
