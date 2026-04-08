@@ -17,12 +17,9 @@ from .models import (
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 
-# --- [NEW] v1.2.0 Boundary Cleanup: インポートを生関数から抽象(Protocol)へ変更 ---
+# --- v1.2.0 Boundary Cleanup ---
 from .crypto.protocols import EVMSigner, LightningProvider
 
-# ※ Solana用の抽象もprotocols.pyに追加されている前提
-# class SolanaSigner(Protocol):
-#     def execute_x402_solana(self, amount: float, destination_addr: str, reference_key: Optional[str] = None) -> str: ...
 try:
     from .crypto.protocols import SolanaSigner
 except ImportError:
@@ -32,7 +29,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.2.0"
+        return "1.1.2"  # GPT先生の指摘通り fallback も 1.1.2 に統一
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -41,7 +38,7 @@ CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
 # 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
 # ==========================================
 class Payment402Client:
-def __init__(
+    def __init__(
         self, 
         private_key: Optional[str] = None, 
         ln_api_url: Optional[str] = None,
@@ -49,13 +46,14 @@ def __init__(
         ln_provider: str = "lnbits",
         base_url: str = "",
         evm_rpc_url: Optional[str] = None, 
+        nwc_bridge_url: Optional[str] = None, 
         auto_navigate: bool = False,
         max_hops: int = 2,
         allow_unsafe_navigate: bool = False,
         max_payment_retries: int = 2,
         # --- v1.2.0 Boundaries ---
-        nwc_uri: Optional[str] = None,             # [NEW] NWC URI
-        policy: Optional[PaymentPolicy] = None,    # [NEW] Typed Policy
+        nwc_uri: Optional[str] = None,
+        policy: Optional[PaymentPolicy] = None,
         evm_signer: Optional[EVMSigner] = None,
         ln_adapter: Optional[LightningProvider] = None,
         solana_signer: Optional[SolanaSigner] = None,
@@ -72,11 +70,11 @@ def __init__(
         self.allow_unsafe_navigate = allow_unsafe_navigate
         self.max_payment_retries = max_payment_retries
 
-        # [1] Policy の実体化
+        # [1] Policy & Receipt
         self.policy = policy or PaymentPolicy()
-        self.last_receipt: Optional[SettlementReceipt] = None # エージェント参照用
+        self.last_receipt: Optional[SettlementReceipt] = None 
 
-        # [2] Default Adapter Pattern の徹底 (if private_key の撲滅)
+        # [2] Default Adapter Pattern
         self.evm_signer = evm_signer
         if not self.evm_signer and private_key:
             from .crypto.evm import LocalKeyAdapter
@@ -93,13 +91,36 @@ def __init__(
         self.ln_adapter = ln_adapter
         if not self.ln_adapter:
             if nwc_uri:
-                # NWC Adapterの注入 (推奨パス)
                 from .adapters.nwc import NWCAdapter
-                self.ln_adapter = NWCAdapter(nwc_uri)
+                self.ln_adapter = NWCAdapter(nwc_uri=nwc_uri, bridge_url=nwc_bridge_url)
             elif ln_api_key:
-                # 既存の Legacy Adapter
                 from .crypto.lightning import LegacyLNAdapter
                 self.ln_adapter = LegacyLNAdapter(ln_api_url, ln_api_key, ln_provider)
+
+    def _enforce_policy(self, scheme: str, asset: str, amount: float):
+        """決済実行前にPaymentPolicyを評価する強固なガードレール"""
+        if not self.policy:
+            return
+
+        if scheme not in self.policy.allowed_schemes:
+            raise PaymentExecutionError(f"Policy Violation: Scheme '{scheme}' is restricted.")
+        if asset not in self.policy.allowed_assets:
+            raise PaymentExecutionError(f"Policy Violation: Asset '{asset}' is restricted.")
+        
+        # 簡易的なUSD換算による上限チェック
+        usd_value = 0.0
+        if asset == "USDC":
+            usd_value = amount
+        elif asset == "JPYC":
+            usd_value = amount * 0.0067
+        elif asset == "SATS":
+            usd_value = amount * 0.00065
+
+        if usd_value > self.policy.max_spend_per_tx_usd:
+            raise PaymentExecutionError(
+                f"Policy Violation: Amount ({usd_value:.4f} USD equivalent) "
+                f"exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd})."
+            )
 
     def execute_paid_action(self, endpoint_path: str, payload: dict, headers: Optional[dict] = None) -> dict:
         warnings.warn("execute_paid_action() is deprecated. Please use execute_request(method='POST', ...) instead.", DeprecationWarning, stacklevel=2)
@@ -160,19 +181,16 @@ def __init__(
         
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
+        asset = challenge.get("asset", payload.get("asset", "SATS"))
 
-        # --- [NEW] Policy Enforcement ---
-        if scheme not in self.policy.allowed_schemes:
-            raise PaymentExecutionError(f"Policy Violation: Scheme '{scheme}' is restricted by PaymentPolicy.")
-        if payload.get("asset", "SATS") not in self.policy.allowed_assets:
-            raise PaymentExecutionError(f"Policy Violation: Asset '{payload.get('asset')}' is restricted.")
+        # --- Policy Enforcement ---
+        self._enforce_policy(scheme, asset, amount)
 
-        print(f"[402 Intercepted] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
+        print(f"[402 Intercepted] Processing {amount} {asset} payment via {scheme}...")
 
         proof_ref = ""
         network_name = ""
 
-        # --- Adapter への委譲のみで構成 (private_key は見ない) ---
         if scheme in ["x402", "x402-direct"]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{scheme} 決済には evm_signer が必要です。")
@@ -187,12 +205,12 @@ def __init__(
                 relayer_url = instruction.get("relayer_endpoint")
                 if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
                 proof_ref = self.evm_signer.execute_x402_gasless(
-                    payload.get("asset", "USDC"), amount, relayer_url, treasury_address, int(chain_id), token_address
+                    asset, amount, relayer_url, treasury_address, int(chain_id), token_address
                 )
             else: # x402-direct
                 if not self.evm_rpc_url: raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
                 proof_ref = self.evm_signer.execute_x402_direct(
-                    payload.get("asset", "USDC"), amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url
+                    asset, amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url
                 )
                 
             network_name = "EVM"
@@ -215,7 +233,7 @@ def __init__(
 
         elif scheme in ["L402", "MPP", "Payment"]:
             if not self.ln_adapter:
-                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter (NWC等) が必要です。")
+                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter が必要です。")
 
             auth_header = response.headers.get("WWW-Authenticate", "")
             def safe_extract(pattern, text, fallback):
@@ -236,109 +254,17 @@ def __init__(
                 charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
                 headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
 
-        # --- [NEW] SettlementReceipt の生成と格納 ---
+        # --- SettlementReceipt の生成と格納 ---
         self.last_receipt = SettlementReceipt(
             scheme=scheme,
             network=network_name,
-            asset=challenge.get("asset", payload.get("asset", "UNKNOWN")),
+            asset=asset,
             settled_amount=amount,
-            proof_reference=proof_ref
+            proof_reference=proof_ref,
+            verification_status="verified" if network_name == "Lightning" else "self_reported"
         )
 
         return self.execute_request(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
-
-    # ------------------------------------------
-    # ⚡ 非同期 (Async) メソッド
-    # ------------------------------------------
-    async def _handle_402_challenge_async(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
-        data = response.json()
-        challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {}) 
-        
-        scheme = challenge.get("scheme")
-        amount = float(challenge.get("amount", 0))
-        loop = asyncio.get_event_loop()
-
-        # --- [NEW] Policy Enforcement ---
-        if scheme not in self.policy.allowed_schemes:
-            raise PaymentExecutionError(f"Policy Violation: Scheme '{scheme}' is restricted by PaymentPolicy.")
-        if payload.get("asset", "SATS") not in self.policy.allowed_assets:
-            raise PaymentExecutionError(f"Policy Violation: Asset '{payload.get('asset')}' is restricted.")
-
-        print(f"[402 Intercepted ASYNC] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
-
-        proof_ref = ""
-        network_name = ""
-
-        if scheme in ["x402", "x402-direct"]:
-            if not self.evm_signer:
-                raise PaymentExecutionError(f"{scheme} 決済には evm_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
-            chain_id = challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id", 137)
-            token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
-
-            if scheme == "x402":
-                relayer_url = instruction.get("relayer_endpoint")
-                if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
-                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_gasless, payload.get("asset", "USDC"), amount, relayer_url, treasury_address, int(chain_id), token_address)
-            else: # x402-direct
-                if not self.evm_rpc_url: raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
-                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_direct, payload.get("asset", "USDC"), amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url)
-
-            network_name = "EVM"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"{scheme} {proof_ref}"
-
-        elif scheme == "x402-solana":
-            if not self.solana_signer:
-                raise PaymentExecutionError("x402-solana 決済には solana_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
-            reference_key = challenge.get("parameters", {}).get("reference") or instruction.get("reference") 
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
-
-            proof_ref = await loop.run_in_executor(None, self.solana_signer.execute_x402_solana, amount, treasury_address, reference_key)
-            network_name = "Solana"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"x402-solana {proof_ref}"
-
-        elif scheme in ["L402", "MPP", "Payment"]:
-            if not self.ln_adapter:
-                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter が必要です。")
-
-            auth_header = response.headers.get("WWW-Authenticate", "")
-            def safe_extract(pattern, text, fallback):
-                match = re.search(pattern, text)
-                return match.group(1) if match else fallback
-
-            invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge.")
-
-            proof_ref = await loop.run_in_executor(None, self.ln_adapter.pay_invoice, invoice)
-            network_name = "Lightning"
-            
-            if scheme == "L402":
-                macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
-                if not macaroon: raise InvoiceParseError("Macaroon not found.")
-                headers["Authorization"] = f"L402 {macaroon}:{proof_ref}"
-            else:
-                charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
-                headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
-
-        # --- [NEW] SettlementReceipt の生成と格納 ---
-        self.last_receipt = SettlementReceipt(
-            scheme=scheme,
-            network=network_name,
-            asset=challenge.get("asset", payload.get("asset", "UNKNOWN")),
-            settled_amount=amount,
-            proof_reference=proof_ref
-        )
-
-        return await self.execute_request_async(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
 
     # ------------------------------------------
     # ⚡ 非同期 (Async) エンジン 
@@ -392,26 +318,24 @@ def __init__(
 
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)} | Next Action: {next_action}")
 
-    def _handle_402_challenge(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
+    async def _handle_402_challenge_async(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
         instruction = data.get("instruction_for_agents", {}) 
         
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
+        asset = challenge.get("asset", payload.get("asset", "SATS"))
+        loop = asyncio.get_event_loop()
 
-        # --- [NEW] Policy Enforcement ---
-        if scheme not in self.policy.allowed_schemes:
-            raise PaymentExecutionError(f"Policy Violation: Scheme '{scheme}' is restricted by PaymentPolicy.")
-        if payload.get("asset", "SATS") not in self.policy.allowed_assets:
-            raise PaymentExecutionError(f"Policy Violation: Asset '{payload.get('asset')}' is restricted.")
+        # --- Policy Enforcement ---
+        self._enforce_policy(scheme, asset, amount)
 
-        print(f"[402 Intercepted] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
+        print(f"[402 Intercepted ASYNC] Processing {amount} {asset} payment via {scheme}...")
 
         proof_ref = ""
         network_name = ""
 
-        # --- Adapter への委譲のみで構成 (private_key は見ない) ---
         if scheme in ["x402", "x402-direct"]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{scheme} 決済には evm_signer が必要です。")
@@ -421,19 +345,15 @@ def __init__(
             token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
             
             if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
-            
+
             if scheme == "x402":
                 relayer_url = instruction.get("relayer_endpoint")
                 if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
-                proof_ref = self.evm_signer.execute_x402_gasless(
-                    payload.get("asset", "USDC"), amount, relayer_url, treasury_address, int(chain_id), token_address
-                )
+                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_gasless, asset, amount, relayer_url, treasury_address, int(chain_id), token_address)
             else: # x402-direct
                 if not self.evm_rpc_url: raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
-                proof_ref = self.evm_signer.execute_x402_direct(
-                    payload.get("asset", "USDC"), amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url
-                )
-                
+                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_direct, asset, amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url)
+
             network_name = "EVM"
             payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
             headers["Authorization"] = f"{scheme} {proof_ref}"
@@ -447,14 +367,14 @@ def __init__(
             
             if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
 
-            proof_ref = self.solana_signer.execute_x402_solana(amount, treasury_address, reference_key)
+            proof_ref = await loop.run_in_executor(None, self.solana_signer.execute_x402_solana, amount, treasury_address, reference_key)
             network_name = "Solana"
             payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
             headers["Authorization"] = f"x402-solana {proof_ref}"
 
         elif scheme in ["L402", "MPP", "Payment"]:
             if not self.ln_adapter:
-                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter (NWC等) が必要です。")
+                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter が必要です。")
 
             auth_header = response.headers.get("WWW-Authenticate", "")
             def safe_extract(pattern, text, fallback):
@@ -462,9 +382,9 @@ def __init__(
                 return match.group(1) if match else fallback
 
             invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge header.")
+            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge.")
 
-            proof_ref = self.ln_adapter.pay_invoice(invoice)
+            proof_ref = await loop.run_in_executor(None, self.ln_adapter.pay_invoice, invoice)
             network_name = "Lightning"
             
             if scheme == "L402":
@@ -475,16 +395,17 @@ def __init__(
                 charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
                 headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
 
-        # --- [NEW] SettlementReceipt の生成と格納 ---
+        # --- SettlementReceipt の生成と格納 ---
         self.last_receipt = SettlementReceipt(
             scheme=scheme,
             network=network_name,
-            asset=challenge.get("asset", payload.get("asset", "UNKNOWN")),
+            asset=asset,
             settled_amount=amount,
-            proof_reference=proof_ref
+            proof_reference=proof_ref,
+            verification_status="verified" if network_name == "Lightning" else "self_reported"
         )
 
-        return self.execute_request(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
+        return await self.execute_request_async(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
 
 # ==========================================
 # ⛩️ ADAPTER: LN Church 専用拡張クラス
@@ -506,7 +427,7 @@ class LnChurchClient(Payment402Client):
         evm_signer: Optional[EVMSigner] = None,
         ln_adapter: Optional[LightningProvider] = None,
         solana_signer: Optional[SolanaSigner] = None,
-        policy: Optional[Any] = None,
+        policy: Optional[PaymentPolicy] = None,
     ):
         super().__init__(
             private_key=private_key, 

@@ -35,7 +35,7 @@ python examples/hello_ln_church.py
 By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
 
 ---
-## 📦 Public API Surface (v1.1.0 Stable)
+## 📦 Public API Surface (v1.2.0 Stable)
 The following interfaces are guaranteed stable in 1.x:
 - `Payment402Client` (Core Engine)
 - `LnChurchClient` (Reference Adapter)
@@ -126,16 +126,28 @@ When an AI Agent hits `HTTP 402 Payment Required`, it often stalls, crashes, or 
 * **What this SDK does:** It reduces that economic negotiation to a normal HTTP client call, with typed responses and built-in retry guardrails.
 
 As of v1.1.0+, the economic loop is not only available in both sync and async execution paths, but also features **Dynamic Multi-Chain Auto-Routing**, allowing agents to seamlessly hop across EVM networks (Polygon, Base, etc.) exactly as dictated by the server's HATEOAS challenge.
+
 ---
 
+## 🧪 Experimental / Agent-Native Features (v1.2.0+)
+
+For advanced enterprise or multi-agent runtimes, v1.2.0 introduces features that separate keys from execution and provide strict economic safety.
+
+* **Delegated Signers (NWC)**: Agents can pay Lightning invoices without holding a private key via the `NWCAdapter` (currently utilizing an HTTP Bridge Gateway).
+* **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction") and restrict allowed networks.
+* **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
+
+👉 **[See the Advanced v1.2.0 Example](examples/advanced_1_2_0.py)**
+
+---
 ## 📚 Detailed Documentation
 
 Explore the full capabilities of the agentic economic loop:
 
-* **[Quickstart & Authentication](docs/01_quickstart.md)**: Identity, keys, generic client configuration, and sync/async usage.
-* **[Architecture & Capabilities](docs/02_architecture.md)**: Deep dive into x402, L402, and HATEOAS logic.
+* **[Quickstart & Authentication](docs/01_quickstart.md)**: Identity, keys, policies, and sync/async usage.
+* **[Architecture & Capabilities](docs/02_architecture.md)**: Deep dive into x402, L402, Policies, and Receipts.
 * **[The LN Church Pilgrimage](docs/03_ln-church.md)**: Using the reference adapter for Oracle and Ritual tasks.
-* **[Lightning Providers](docs/04_providers.md)**: Configuration for Alby and LNBits.
+* **[Lightning Providers & NWC](docs/04_providers.md)**: Configuration for Alby, LNBits, and NWC Bridge.
 * **[Integrations](docs/05_integrations.md)**: Setting up MCP (Model Context Protocol) and LangChain.
 * **[Monzen Observation Network](docs/06_monzen.md)**: Scouting L402 paywalls and Decentralized DNS.
 
@@ -156,13 +168,17 @@ To observe and improve the autonomous agent ecosystem, this SDK includes minimal
 
 ## 📝 Changelog
 
+* **v1.2.0**
+  * **Economic Guardrails**: Introduced `PaymentPolicy` for strict asset, scheme, and USD-equivalent spend limits.
+  * **Verifiable Receipts**: Introduced `SettlementReceipt` to provide agents with cryptographically verifiable proofs of their expenditures.
+  * **NWC Adapter (Experimental)**: Added support for NIP-47 Nostr Wallet Connect via HTTP Bridge, enabling keyless agent execution.
 * **v1.1.0**
   * **Dynamic EVM Auto-Routing**: Enhanced `x402` and `x402-direct` schemes. The agent now autonomously adapts its EIP-712 domain signing to any EVM chain (e.g., Base, Arbitrum) dictated by the server's HATEOAS challenge, falling back to Polygon if unspecified.
   * **Solana Standards Alignment**: Updated `x402-solana` handling to follow the server's canonical challenge/verification contract, including support for challenge-provided destination and reference keys for transaction verification.
 * **v1.0.0**
   * Initial stable release. Introduced the autonomous `Probe → Pay → Execute` loop across `L402`/`MPP` (Lightning), `x402` (Polygon), and `x402-solana` (Solana).
 
----
+  ---
 
 ## License
 MIT

@@ -2,7 +2,7 @@
 
 To begin your agent's economic journey, you must first establish its identity and settlement credentials. The requirements for `private_key` and `agentId` vary depending on the payment layer you intend to use.
 
-## 🛂 Identity & Keys
+## 🛂 Identity & Keys (Stable)
 
 ### For x402 (EVM)
 If you are settling via EVM-based assets (like USDC or JPYC), the SDK requires a standard `0x`-prefixed EVM private key.
@@ -21,7 +21,7 @@ For Lightning-based settlements (SATS), the identity requirements are more flexi
 
 ---
 
-## 🛠️ Detailed Core Example (`Payment402Client`)
+## 🛠️ Basic Usage (Stable)
 
 The `Payment402Client` is the pure core engine used to execute raw payloads against any 402-protected endpoint. It automatically intercepts challenges, negotiates payments, and retries the request safely.
 
@@ -86,7 +86,7 @@ async def main():
 
     result = await client.execute_request_async(
         method="POST",
-        endpoint="/api/protected",
+        endpoint_path="/api/protected",
         payload={"input": "hello"}
     )
 
@@ -95,6 +95,54 @@ async def main():
 asyncio.run(main())
 ```
 This uses the same economic loop as the sync client: 402 detect → pay → retry → return response.
+
+---
+
+## 🧪 Advanced Usage: Guardrails & NWC (v1.2.0+)
+
+For enterprise or multi-agent runtimes, you should not give agents raw private keys or unlimited spending power. Version 1.2.0 introduces `PaymentPolicy` and `NWCAdapter`.
+
+### 1. Setting a Payment Policy
+Prevent AI hallucinations from draining wallets by enforcing strict rules.
+
+```python
+from ln_church_agent import PaymentPolicy
+
+strict_policy = PaymentPolicy(
+    allowed_schemes=["L402", "x402"],
+    allowed_assets=["SATS", "USDC"],
+    max_spend_per_tx_usd=2.0  # Block any transaction > $2.00 USD
+)
+```
+
+### 2. Using NWC (Keyless Agent)
+Delegate signing to a remote wallet using Nostr Wallet Connect via an HTTP Bridge.
+
+```python
+from ln_church_agent import Payment402Client
+from ln_church_agent.adapters.nwc import NWCAdapter
+
+# The agent only holds the URI, not the seed phrase.
+nwc_adapter = NWCAdapter(
+    nwc_uri="nostr+walletconnect://...",
+    bridge_url="https://your-nwc-bridge.com/api/nwc"
+)
+
+client = Payment402Client(
+    base_url="https://kari.mayim-mayim.com",
+    ln_adapter=nwc_adapter,
+    policy=strict_policy
+)
+
+# Execute safely. If the 402 challenge exceeds $2.00, it raises a PaymentExecutionError.
+result = client.execute_request("POST", "/api/agent/omikuji", payload={"asset": "SATS"})
+
+# Read the Settlement Receipt
+print(f"Paid via: {client.last_receipt.network}")
+print(f"Proof: {client.last_receipt.proof_reference}")
+```
+
+---
 
 
 ## 🔐 Security Best Practice: Handling Private Keys

@@ -1,35 +1,47 @@
+import requests
 from urllib.parse import urlparse, parse_qs
 from ..crypto.protocols import LightningProvider
 
 class NWCAdapter(LightningProvider):
     """
-    Nostr Wallet Connect (NIP-47) を用いたサイナー分離型プロバイダー。
-    エージェントは秘密鍵を持たず、NWC URI を通じてリモートウォレットに署名/支払いを委譲する。
+    Nostr Wallet Connect (NIP-47) Adapter via HTTP Bridge.
+    エージェントは秘密鍵を持たず、NWC URIを通じてリモートウォレットに署名を委譲します。
+    ※ v1.2.0 Experimental: 現在はHTTP Bridge Gatewayを経由した通信のみをサポートします。
     """
-    def __init__(self, nwc_uri: str):
+    def __init__(self, nwc_uri: str, bridge_url: str):
         if not nwc_uri.startswith("nostr+walletconnect://"):
-            raise ValueError("Invalid NWC URI format. Must start with 'nostr+walletconnect://'")
+            raise ValueError("Invalid NWC URI format.")
+        if not bridge_url:
+            raise ValueError("NWCAdapter in v1.2.0 requires an HTTP `bridge_url`.")
+            
         self.nwc_uri = nwc_uri
+        self.bridge_url = bridge_url
         
-        # URIパース (pubkey, relay, secretの抽出)
         parsed = urlparse(nwc_uri)
         self.wallet_pubkey = parsed.netloc
-        query = parse_qs(parsed.query)
-        self.relay = query.get('relay', [''])[0]
-        self.secret = query.get('secret', [''])[0]
+        self.relay = parse_qs(parsed.query).get('relay', [''])[0]
 
     def pay_invoice(self, invoice: str) -> str:
-        # v1.2.0: Boundary Definition
-        # 実際にはここに WebSocket / NIP-47 の通信ロジックが入るか、
-        # 軽量化のために HTTP NWC ブリッジ API (Alby 等) を叩くロジックを配置する。
-        print(f"[NWC Adapter] Delegating payment to Remote Wallet via Relay: {self.relay}")
+        # NWC HTTP Bridgeの標準化ペイロード
+        payload = {
+            "method": "pay_invoice",
+            "params": {"invoice": invoice},
+            "nwc_uri": self.nwc_uri
+        }
         
-        # 実装例: (HTTP Bridgeを利用する場合)
-        # res = requests.post("https://nwc-bridge/pay", json={"invoice": invoice, "nwc_uri": self.nwc_uri})
-        # return res.json()["preimage"]
-        
-        raise NotImplementedError("NWC full NIP-47 transport is initialized, but requires async WS runtime to execute.")
+        try:
+            res = requests.post(self.bridge_url, json=payload, timeout=30)
+            res.raise_for_status()
+            data = res.json()
+            
+            preimage = data.get("preimage") or data.get("result", {}).get("preimage")
+            if not preimage:
+                raise Exception("Payment succeeded but gateway did not return a preimage.")
+            return preimage
+            
+        except Exception as e:
+            raise Exception(f"NWC Bridge Payment Failed: {str(e)}")
 
     def get_balance(self) -> float:
-        print("[NWC Adapter] Requesting balance via NIP-47 get_balance command.")
+        # v1.2.0時点ではモック（今後の拡張用）
         return 0.0

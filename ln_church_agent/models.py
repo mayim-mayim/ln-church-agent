@@ -1,21 +1,23 @@
+import uuid
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class PaymentPolicy(BaseModel):
     """決済のガードレールを定義する最小限のポリシー"""
-    max_spend_per_tx_usd: float = Field(default=10.0, description="1Txあたりの最大許容額(USD)")
-    allowed_assets: List[str] = Field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
-    allowed_schemes: List[str] = Field(default_factory=lambda: ["L402", "MPP", "x402", "x402-direct", "x402-solana"])
+    allowed_schemes: List[str] = Field(default=["L402", "MPP", "x402", "x402-direct", "x402-solana"])
+    allowed_assets: List[str] = Field(default=["SATS", "USDC", "JPYC"])
+    max_spend_per_tx_usd: float = Field(default=5.0) # デフォルトで1回5ドルを上限とする安全装置
 
 class SettlementReceipt(BaseModel):
     """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""
+    receipt_id: str = Field(default_factory=lambda: f"rec_{uuid.uuid4().hex[:12]}")
     scheme: str
     network: str
     asset: str
     settled_amount: float
-    proof_reference: str  # TxHash または Preimage
-    verification_status: str = "completed"
+    proof_reference: str
+    verification_status: str = "pending" # pending, verified, self_reported
 
 class AssetType(str, Enum):
     JPYC = "JPYC"

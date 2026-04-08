@@ -9,8 +9,8 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.1.2",
-    packages=['ln_church_agent', 'ln_church_agent.crypto', 'ln_church_agent.integrations'],
+    version="1.2.0",
+    packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     install_requires=[
         "requests>=2.31.0",
         "pydantic>=2.0.0",
