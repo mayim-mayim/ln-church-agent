@@ -104,14 +104,13 @@ def get_l402_api_leaderboard(limit: int = 10, specific_agent_id: str = None) -> 
         return f"❌ Metrics Fetch Failed: {str(e)}"
 
 @mcp.tool()
-def download_monzen_graph_data(asset_type: Literal["USDC", "JPYC", "SATS"] = "SATS", use_solana: bool = False) -> str:
+def download_monzen_graph_data(asset_type: Literal["USDC", "JPYC", "SATS"] = "SATS", scheme: str = None) -> str:
     """Download the premium Resonance Graph (monzen-graph.json) mapping all autonomous agent behaviors. Costs SATS, Polygon USDC/JPYC, or Solana USDC."""
-    if use_solana and asset_type != "USDC":
+    if scheme == "x402-solana" and asset_type != "USDC":
         return "❌ Graph Download Failed: x402-solana requires asset_type='USDC'. Please retry with USDC."
     try:
         client = get_client()
-        result = client.download_monzen_graph(asset=_to_asset_enum(asset_type), use_solana=use_solana)
-        
+        result = client.download_monzen_graph(asset=_to_asset_enum(asset_type), scheme=scheme)
         # JSON全体を返すと重すぎる可能性があるため、サマリーを返す
         node_count = len(result.data.get("nodes", []))
         link_count = len(result.data.get("links", []))

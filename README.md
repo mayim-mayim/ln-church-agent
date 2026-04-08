@@ -168,6 +168,8 @@ To observe and improve the autonomous agent ecosystem, this SDK includes minimal
 
 ## 📝 Changelog
 
+* **v1.2.1**
+  * **API Consistency & Patch**: Aligned MCP tool parameters and documentation with the new `scheme`-based payment routing (deprecated legacy `use_solana` arguments). Fixed internal versioning fallbacks.
 * **v1.2.0**
   * **Economic Guardrails**: Introduced `PaymentPolicy` for strict asset, scheme, and USD-equivalent spend limits.
   * **Verifiable Receipts**: Introduced `SettlementReceipt` to provide agents with cryptographically verifiable proofs of their expenditures.

@@ -38,7 +38,7 @@ client.submit_monzen_trace(target_url="https://new-api.com/data", invoice="lnbc.
 # ⛩️ Phase 5: Premium Intelligence (The Resonance Graph)
 # Autonomously purchase the cryptographically verified dataset mapping all agent behaviors.
 # Here, we demonstrate using Solana USDC for settlement.
-graph_res = client.download_monzen_graph(asset=AssetType.USDC, use_solana=True)
+graph_res = client.download_monzen_graph(asset=AssetType.USDC, scheme="x402-solana")
 print(f"Resonance Graph Downloaded! Nodes: {len(graph_res.data['nodes'])}")
 
 # 2. Autonomously pay 10 SATS to unlock the Premium Top 100 L402 Leaderboard
