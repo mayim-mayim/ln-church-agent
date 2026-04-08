@@ -2,9 +2,11 @@ import os
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
+from solders.instruction import AccountMeta, Instruction
 from spl.token.instructions import transfer_checked, TransferCheckedParams, get_associated_token_address
 from solders.transaction import VersionedTransaction
 from solders.message import MessageV0
+from typing import Optional, Union
 
 # --- 定数設定 ---
 # Solana Mainnet USDC Mint Address
@@ -13,7 +15,7 @@ TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5
 # デフォルトRPC（環境変数 SOLANA_RPC_URL で上書き可能）
 DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 
-def execute_x402_solana_payment(private_key_base58: str, amount: float, destination_addr: str) -> str:
+def execute_x402_solana_payment(private_key_base58: str, amount: Union[int, float], destination_addr: str, reference_key: Optional[str] = None) -> str:
     """
     Solanaネットワーク上でUSDCのSPLトークン転送を完遂し、Signatureを返す。
     """
@@ -49,6 +51,15 @@ def execute_x402_solana_payment(private_key_base58: str, amount: float, destinat
             decimals=6
         )
     )
+
+    if reference_key:
+        ref_pubkey = Pubkey.from_string(reference_key)
+        # 既存のアカウントリストの末尾にReference Keyを Read-Only で追加してInstructionを再構築
+        transfer_ix = Instruction(
+            program_id=transfer_ix.program_id,
+            data=transfer_ix.data,
+            accounts=transfer_ix.accounts + [AccountMeta(pubkey=ref_pubkey, is_signer=False, is_writable=False)]
+        )
 
     # 5. トランザクションの構築と署名
     recent_blockhash_resp = client.get_latest_blockhash()

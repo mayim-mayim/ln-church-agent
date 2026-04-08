@@ -40,6 +40,4 @@ client = Payment402Client(
 
 ## 🚀 Adding New Providers
 The architecture is designed for easy expansion. To add a new provider (e.g., Strike or Phoenix), developers only need to add a routing case in `ln_church_agent/crypto/lightning.py`.
-```
-
 ---

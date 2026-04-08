@@ -16,14 +16,14 @@ from .models import (
     MonzenGraphResponse
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
-from .crypto.evm import execute_x402_gasless_payment
+from .crypto.evm import execute_x402_gasless_payment, execute_x402_direct_payment
 from .crypto.lightning import pay_lightning_invoice
 
 def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.0.0"
+        return "1.1.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -39,7 +39,7 @@ class Payment402Client:
         ln_api_key: Optional[str] = None,
         ln_provider: str = "lnbits",
         base_url: str = "",
-        # --- 🛡️ HATEOAS Guardrails ---
+        evm_rpc_url: Optional[str] = None, # ★追加: Direct送金用のRPC
         auto_navigate: bool = False,
         max_hops: int = 2,
         allow_unsafe_navigate: bool = False,
@@ -50,17 +50,14 @@ class Payment402Client:
         self.ln_api_key = ln_api_key
         self.ln_provider = ln_provider
         self.base_url = base_url.rstrip('/') if base_url else ""
+        self.evm_rpc_url = evm_rpc_url
         
         self.auto_navigate = auto_navigate
         self.max_hops = max_hops
         self.allow_unsafe_navigate = allow_unsafe_navigate
         self.max_payment_retries = max_payment_retries
 
-    # ------------------------------------------
-    # 同期 (Sync) エンジン
-    # ------------------------------------------
     def execute_paid_action(self, endpoint_path: str, payload: dict, headers: Optional[dict] = None) -> dict:
-        """[Deprecated] 後方互換性のためのラッパー"""
         warnings.warn("execute_paid_action() is deprecated. Please use execute_request(method='POST', ...) instead.", DeprecationWarning, stacklevel=2)
         return self.execute_request("POST", endpoint_path, payload, headers)
 
@@ -68,13 +65,11 @@ class Payment402Client:
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
         
-        # 標準的な User-Agent のみ付与（利用者が上書きしていない場合）
         if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
 
         payload = payload or {}
         method_upper = method.upper()
-
         is_get = method_upper == "GET"
         req_kwargs = {
             "json": None if is_get else payload,
@@ -82,22 +77,16 @@ class Payment402Client:
             "headers": headers
         }
 
-        # 1. APIリクエスト実行
         res = requests.request(method_upper, url, **req_kwargs)
 
-        # 2. 正常終了
         if 200 <= res.status_code < 300:
-            if not res.content:
-                return {"status": "success", "message": "No content returned"}
+            if not res.content: return {"status": "success", "message": "No content returned"}
             return res.json()
 
-        # 3. 402決済インターセプト
         if res.status_code == 402:
-            if _payment_retry_count >= self.max_payment_retries:
-                raise PaymentExecutionError("Max 402 retries exceeded")
+            if _payment_retry_count >= self.max_payment_retries: raise PaymentExecutionError("Max 402 retries exceeded")
             return self._handle_402_challenge(res, payload, headers, url, method_upper, _current_hop, _payment_retry_count)
 
-        # 4. HATEOAS 自動修復
         try:
             error_data = res.json()
             error_obj = HateoasErrorResponse(**error_data)
@@ -123,57 +112,59 @@ class Payment402Client:
     def _handle_402_challenge(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {}) # ★ HATEOAS命令を取得
+        instruction = data.get("instruction_for_agents", {}) 
         
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
 
         print(f"[402 Intercepted] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
 
-        if scheme == "x402" or scheme == "x402-direct":
+        if scheme in ["x402", "x402-direct"]:
             treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
-            relayer_url = instruction.get("relayer_endpoint")
+            chain_id = challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id", 137)
+            token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
             
-            if not treasury_address:
-                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing in the 402 challenge.")
-            if scheme == "x402" and not relayer_url:
-                raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing in the 402 challenge.")
+            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing in the 402 challenge.")
+            
+            if scheme == "x402":
+                relayer_url = instruction.get("relayer_endpoint")
+                if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
+                tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address, int(chain_id), token_address)
+            else: # x402-direct
+                if not self.evm_rpc_url: 
+                    raise PaymentExecutionError("RPC URL is required for x402-direct payment. Please set 'evm_rpc_url' during initialization.")
+                tx_hash = execute_x402_direct_payment(self.private_key, payload.get("asset", "USDC"), amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url)
 
-            tx_hash = execute_x402_gasless_payment(self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
-            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}    
+            payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
+            headers["Authorization"] = f"{scheme} {tx_hash}" # ★GETメソッド対応用
 
         elif scheme == "x402-solana":
             treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
-            if not treasury_address:
-                raise PaymentExecutionError("HATEOAS Error: 'payTo' (Treasury Address) is missing in the 402 challenge for x402-solana. Cannot proceed with transaction.")
+            reference_key = challenge.get("parameters", {}).get("reference") or instruction.get("reference") 
+            
+            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing in the 402 challenge.")
 
-            try:
-                from .crypto.solana import execute_x402_solana_payment
-            except ImportError:
-                raise ImportError("Solana support requires extra dependencies. Run `pip install ln-church-agent[solana]` to enable x402-solana features.")
+            try: from .crypto.solana import execute_x402_solana_payment
+            except ImportError: raise ImportError("Run `pip install ln-church-agent[solana]` to enable x402-solana.")
 
-            tx_sig = execute_x402_solana_payment(self.private_key, amount, treasury_address)
-     
+            tx_sig = execute_x402_solana_payment(self.private_key, amount, treasury_address, reference_key=reference_key)
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_sig}
             headers["Authorization"] = f"x402-solana {tx_sig}"
 
         elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
-            
             def safe_extract(pattern, text, fallback):
                 match = re.search(pattern, text)
                 return match.group(1) if match else fallback
 
             invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice:
-                raise InvoiceParseError("Invoice not found in 402 challenge header.")
+            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge header.")
 
             preimage = pay_lightning_invoice(invoice, self.ln_api_url, self.ln_api_key, self.ln_provider)
             
             if scheme == "L402":
                 macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
-                if not macaroon:
-                    raise InvoiceParseError("Macaroon not found in 402 L402 challenge.")
+                if not macaroon: raise InvoiceParseError("Macaroon not found.")
                 headers["Authorization"] = f"L402 {macaroon}:{preimage}"
             else:
                 charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
@@ -188,7 +179,6 @@ class Payment402Client:
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
 
-        # 汎用クライアントは標準的な User-Agent のみ付与
         if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
 
@@ -205,13 +195,11 @@ class Payment402Client:
             res = await client.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
-            if not res.content:
-                return {"status": "success", "message": "No content returned"}
+            if not res.content: return {"status": "success", "message": "No content returned"}
             return res.json()
 
         if res.status_code == 402:
-            if _payment_retry_count >= self.max_payment_retries:
-                raise PaymentExecutionError("Max 402 retries exceeded")
+            if _payment_retry_count >= self.max_payment_retries: raise PaymentExecutionError("Max 402 retries exceeded")
             return await self._handle_402_challenge_async(res, payload, headers, url, method_upper, _current_hop, _payment_retry_count)
 
         try:
@@ -231,8 +219,7 @@ class Payment402Client:
                 print(f"[{res.status_code} Intercepted ASYNC] HATEOAS Auto-Navigating to: {next_method} {next_url}")
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
-                
-                await asyncio.sleep(1) # 非同期スリープ
+                await asyncio.sleep(1) 
                 return await self.execute_request_async(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
 
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)} | Next Action: {next_action}")
@@ -240,7 +227,7 @@ class Payment402Client:
     async def _handle_402_challenge_async(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
         data = response.json()
         challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {}) # ★ HATEOAS命令を取得
+        instruction = data.get("instruction_for_agents", {}) 
         
         scheme = challenge.get("scheme")
         amount = float(challenge.get("amount", 0))
@@ -248,52 +235,52 @@ class Payment402Client:
 
         print(f"[402 Intercepted ASYNC] Processing {amount} {challenge.get('asset')} payment via {scheme}...")
 
-        if scheme == "x402" or scheme == "x402-direct":
+        if scheme in ["x402", "x402-direct"]:
             treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
-            relayer_url = instruction.get("relayer_endpoint")
+            chain_id = challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id", 137)
+            token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
             
-            if not treasury_address:
-                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing in the 402 challenge.")
-            if scheme == "x402" and not relayer_url:
-                raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing in the 402 challenge.")
+            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
 
-            tx_hash = await loop.run_in_executor(None, execute_x402_gasless_payment, self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address)
+            if scheme == "x402":
+                relayer_url = instruction.get("relayer_endpoint")
+                if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
+                tx_hash = await loop.run_in_executor(None, execute_x402_gasless_payment, self.private_key, payload.get("asset", "USDC"), amount, relayer_url, treasury_address, int(chain_id), token_address)
+            else: # x402-direct
+                if not self.evm_rpc_url: 
+                    raise PaymentExecutionError("RPC URL is required for x402-direct payment. Please set 'evm_rpc_url' during initialization.")
+                tx_hash = await loop.run_in_executor(None, execute_x402_direct_payment, self.private_key, payload.get("asset", "USDC"), amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url)
+
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_hash}
+            headers["Authorization"] = f"{scheme} {tx_hash}" # ★GETメソッド対応用
 
         elif scheme == "x402-solana":
             treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
-            if not treasury_address:
-                raise PaymentExecutionError("HATEOAS Error: 'payTo' (Treasury Address) is missing in the 402 challenge for x402-solana. Cannot proceed with transaction.")
+            reference_key = challenge.get("parameters", {}).get("reference") or instruction.get("reference") 
+            
+            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
 
-            try:
-                from .crypto.solana import execute_x402_solana_payment
-            except ImportError:
-                raise ImportError("Solana support requires extra dependencies. Run `pip install ln-church-agent[solana]` to enable x402-solana features.")
+            try: from .crypto.solana import execute_x402_solana_payment
+            except ImportError: raise ImportError("Run `pip install ln-church-agent[solana]` to enable x402-solana.")
 
-            # ★ 修正: 第4引数を削除し、solana.py の定義 (3引数) に完全に一致させる
-            tx_sig = await loop.run_in_executor(None, execute_x402_solana_payment, self.private_key, amount, treasury_address)
-   
+            tx_sig = await loop.run_in_executor(None, execute_x402_solana_payment, self.private_key, amount, treasury_address, reference_key)
             payload["paymentAuth"] = {"scheme": scheme, "proof": tx_sig}
             headers["Authorization"] = f"x402-solana {tx_sig}"
 
         elif scheme in ["L402", "MPP", "Payment"]:
             auth_header = response.headers.get("WWW-Authenticate", "")
-            
             def safe_extract(pattern, text, fallback):
                 match = re.search(pattern, text)
                 return match.group(1) if match else fallback
 
             invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice:
-                raise InvoiceParseError("Invoice not found in 402 challenge header.")
+            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge.")
 
-            # 既存の同期モジュールをノンブロッキングで実行
             preimage = await loop.run_in_executor(None, pay_lightning_invoice, invoice, self.ln_api_url, self.ln_api_key, self.ln_provider)
             
             if scheme == "L402":
                 macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
-                if not macaroon:
-                    raise InvoiceParseError("Macaroon not found in 402 L402 challenge.")
+                if not macaroon: raise InvoiceParseError("Macaroon not found.")
                 headers["Authorization"] = f"L402 {macaroon}:{preimage}"
             else:
                 charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
@@ -313,23 +300,21 @@ class LnChurchClient(Payment402Client):
         ln_api_key: Optional[str] = None,
         ln_provider: str = "lnbits",
         base_url: str = "https://kari.mayim-mayim.com",
+        evm_rpc_url: Optional[str] = None,
         auto_navigate: bool = True, 
         max_hops: int = 3,
         allow_unsafe_navigate: bool = False
     ):
-        super().__init__(private_key, ln_api_url, ln_api_key, ln_provider, base_url, auto_navigate, max_hops, allow_unsafe_navigate)
+        super().__init__(private_key, ln_api_url, ln_api_key, ln_provider, base_url, evm_rpc_url, auto_navigate, max_hops, allow_unsafe_navigate)
 
         if private_key and not agent_id:
             try:
-                # 1. まずEVMの鍵としてアドレス(0x...)の導出を試みる
                 self.agent_id = Account.from_key(private_key).address
             except Exception:
-                # 2. 失敗したら、Solanaの鍵(Base58)として公開鍵の導出を試みる
                 try:
                     from solders.keypair import Keypair
                     self.agent_id = str(Keypair.from_base58_string(private_key).pubkey())
                 except Exception:
-                    # 3. どちらもダメなら匿名エージェントにする
                     self.agent_id = "Anonymous_Agent"
         else:
             self.agent_id = agent_id or "Anonymous_Agent"
@@ -338,28 +323,17 @@ class LnChurchClient(Payment402Client):
         self.faucet_token = None
 
     def _inject_telemetry(self, headers: Optional[dict]) -> dict:
-        """LN教サーバー向けの専用観測ヘッダを付与"""
         headers = dict(headers or {})
-        
-        # SDKバージョンの明示
         headers["X-LN-Church-Agent-Version"] = SDK_VERSION
-        
-        # 402リトライループ等で同一リクエストフローを追跡するための使い捨てID
         if not any(k.lower() == "x-ln-church-request-id" for k in headers.keys()):
             headers["X-LN-Church-Request-Id"] = str(uuid.uuid4())
-            
         return headers
 
-    # ------------------------------------------
-    # 親クラスの実行エンジンをオーバーライド
-    # ------------------------------------------
     def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
-        # 専用ヘッダを注入してから親クラス（汎用決済ロジック）に処理を委譲
         telemetry_headers = self._inject_telemetry(headers)
         return super().execute_request(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
 
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
-        # 専用ヘッダを注入してから親クラス（汎用決済ロジック）に処理を委譲
         telemetry_headers = self._inject_telemetry(headers)
         return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
 
@@ -379,19 +353,23 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             print(f"[System] Faucet skipped or failed: {str(e)}")
 
-    def draw_omikuji(self, asset: AssetType = AssetType.USDC) -> OmikujiResponse:
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    # ★ schemeの動的オーバーライドを許可
+    def draw_omikuji(self, asset: AssetType = AssetType.USDC, scheme: Optional[str] = None) -> OmikujiResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
             payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         return OmikujiResponse(**self.execute_request("POST", "/api/agent/omikuji", payload, headers))
 
-    def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None) -> ConfessionResponse:
-        payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
 
-    def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS) -> HonoResponse:
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": "MPP" if asset == AssetType.SATS else "x402-direct", "asset": asset.value, "amount": amount}
+    def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
+        target_scheme = scheme or ("MPP" if asset == AssetType.SATS else "x402-direct")
+        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         return HonoResponse(**self.execute_request("POST", "/api/agent/hono", payload))
 
     def issue_identity(self) -> AgentIdentity:
@@ -406,12 +384,14 @@ class LnChurchClient(Payment402Client):
     def get_benchmark_overview(self) -> BenchmarkOverviewResponse:
         return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}"))
 
-    def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS) -> CompareResponse:
-        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value}
         return CompareResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload))
 
-    def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS) -> AggregateResponse:
-        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value}
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
 
     def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
@@ -420,23 +400,20 @@ class LnChurchClient(Payment402Client):
         res_dict = self.execute_request("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 
-    def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None) -> MonzenMetricsResponse:
+    def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
+        if scheme: params["scheme"] = scheme
         return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
 
-    def download_monzen_graph(self, asset: AssetType = AssetType.SATS, use_solana: bool = False) -> MonzenGraphResponse:
-        if use_solana and asset != AssetType.USDC:
-            raise ValueError("x402-solana settlement is strictly limited to USDC asset. Please change preferred_asset to USDC.")
-            
-        scheme = "x402-solana" if use_solana else ("L402" if asset == AssetType.SATS else "x402")
-        payload = {"scheme": scheme, "asset": asset.value, "agentId": self.agent_id}
-        # requests uses allow_redirects=True by default for 302 presigned URLs
+    def download_monzen_graph(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
     # ------------------------------------------
-    # ⚡ 非同期 (Async) メソッド群 [NEW]
+    # ⚡ 非同期 (Async) メソッド群
     # ------------------------------------------
     async def init_probe_async(self):
         res = await self.execute_request_async("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk_async")
@@ -451,21 +428,24 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             print(f"[System ASYNC] Faucet skipped or failed: {str(e)}")
 
-    async def draw_omikuji_async(self, asset: AssetType = AssetType.USDC) -> OmikujiResponse:
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    async def draw_omikuji_async(self, asset: AssetType = AssetType.USDC, scheme: Optional[str] = None) -> OmikujiResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
             payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         res = await self.execute_request_async("POST", "/api/agent/omikuji", payload, headers)
         return OmikujiResponse(**res)
 
-    async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None) -> ConfessionResponse:
-        payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", "/api/agent/confession", payload)
         return ConfessionResponse(**res)
 
-    async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS) -> HonoResponse:
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": "MPP" if asset == AssetType.SATS else "x402-direct", "asset": asset.value, "amount": amount}
+    async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
+        target_scheme = scheme or ("MPP" if asset == AssetType.SATS else "x402-direct")
+        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         res = await self.execute_request_async("POST", "/api/agent/hono", payload)
         return HonoResponse(**res)
 
@@ -482,13 +462,15 @@ class LnChurchClient(Payment402Client):
         res = await self.execute_request_async("GET", f"/api/agent/benchmark/{self.agent_id}")
         return BenchmarkOverviewResponse(**res)
 
-    async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS) -> CompareResponse:
-        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload)
         return CompareResponse(**res)
 
-    async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS) -> AggregateResponse:
-        payload = {"scheme": "L402" if asset == AssetType.SATS else "x402", "asset": asset.value}
+    async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload)
         return AggregateResponse(**res)
 
@@ -498,17 +480,15 @@ class LnChurchClient(Payment402Client):
         res_dict = await self.execute_request_async("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 
-    async def get_site_metrics_async(self, limit: int = 10, target_agent_id: Optional[str] = None) -> MonzenMetricsResponse:
+    async def get_site_metrics_async(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
+        if scheme: params["scheme"] = scheme
         res = await self.execute_request_async("GET", "/api/agent/monzen/metrics", payload=params)
         return MonzenMetricsResponse(**res)
 
-    async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, use_solana: bool = False) -> MonzenGraphResponse:
-        if use_solana and asset != AssetType.USDC:
-            raise ValueError("x402-solana settlement is strictly limited to USDC asset. Please change preferred_asset to USDC.")
-            
-        scheme = "x402-solana" if use_solana else ("L402" if asset == AssetType.SATS else "x402")
-        payload = {"scheme": scheme, "asset": asset.value, "agentId": self.agent_id}
+    async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
+        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)

@@ -23,8 +23,7 @@ python -m ln_church_agent.integrations.mcp
 * **`offer_hono_donation`**: Make generic donations via MPP or x402.
 * **`report_external_paywall`**: Earn Virtue by reporting L402 paywalls to the Decentralized DNS.
 * **`get_l402_api_leaderboard`**: Query the global registry of verified L402 APIs.
-* **`download_monzen_graph_data`**: Autonomously pay (via Lightning, Polygon, or Solana) and download the premium Resonance Graph JSON dataset mapping M2M economic interactions.
-
+* **`download_monzen_graph_data`**: Autonomously pay (via Lightning, EVM networks like Base/Polygon, or Solana) and download the premium Resonance Graph JSON dataset mapping M2M economic interactions.
 ---
 
 ## 🦜 LangChain Integration

@@ -2,7 +2,7 @@
 
 The `LnChurchClient` is a strongly-typed adapter specifically designed for the **LN Church** ecosystem (`https://kari.mayim-mayim.com/api/agent`). It inherits all features from `Payment402Client` and simplifies the complex M2M ritual sequence required to interact with the Kazuchi9.3 engine.
 
-As of v1.0.0, both sync and async execution paths are available.
+As of v1.x, both sync and async execution paths are available.
 
 ## ⚙️ Sync Ritual Execution
 
@@ -46,7 +46,7 @@ premium_metrics = client.get_site_metrics(limit=100)
 print(f"Top Discovered API: {premium_metrics.rankings[0].domain}")
 ```
 
-## ⚡ Async Ritual Execution (v1.0.0)
+## ⚡ Async Ritual Execution (v1.x)
 
 For autonomous agent runtimes, the reference adapter also supports async execution.
 

@@ -35,7 +35,7 @@ python examples/hello_ln_church.py
 By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
 
 ---
-## 📦 Public API Surface (v1.0.0 Stable)
+## 📦 Public API Surface (v1.1.0 Stable)
 The following interfaces are guaranteed stable in 1.x:
 - `Payment402Client` (Core Engine)
 - `LnChurchClient` (Reference Adapter)
@@ -95,7 +95,7 @@ print(result)
 ```
 
 ### 3. Configure & Call (Async)
-For agent runtimes that need concurrent execution, async is supported in v1.0.0.
+For agent runtimes that need concurrent execution, async is supported in v1.1.0.
 
 ```python
 import asyncio
@@ -125,8 +125,7 @@ When an AI Agent hits `HTTP 402 Payment Required`, it often stalls, crashes, or 
 * **Why this is hard:** Handling 402 flows means parsing challenge headers, extracting payment instructions, coordinating wallets, signing correctly, and retrying in the right order.
 * **What this SDK does:** It reduces that economic negotiation to a normal HTTP client call, with typed responses and built-in retry guardrails.
 
-As of v1.0.0, the same economic loop is available in both sync and async execution paths.
-
+As of v1.1.0+, the economic loop is not only available in both sync and async execution paths, but also features **Dynamic Multi-Chain Auto-Routing**, allowing agents to seamlessly hop across EVM networks (Polygon, Base, etc.) exactly as dictated by the server's HATEOAS challenge.
 ---
 
 ## 📚 Detailed Documentation
@@ -152,6 +151,16 @@ To observe and improve the autonomous agent ecosystem, this SDK includes minimal
   * `X-LN-Church-Request-Id`: An ephemeral UUID used strictly to correlate 402 retry loops and request flows.
 
 ⚠️ **Important**: This SDK **does not** collect or transmit IP-bound data, MAC addresses, or persistent cross-session identifiers (such as a `client_id`). Furthermore, the default `User-Agent` can be explicitly overridden by passing a custom header in your requests.
+
+---
+
+## 📝 Changelog
+
+* **v1.1.0**
+  * **Dynamic EVM Auto-Routing**: Enhanced `x402` and `x402-direct` schemes. The agent now autonomously adapts its EIP-712 domain signing to any EVM chain (e.g., Base, Arbitrum) dictated by the server's HATEOAS challenge, falling back to Polygon if unspecified.
+  * **Solana Standards Alignment**: Updated `x402-solana` handling to follow the server's canonical challenge/verification contract, including support for challenge-provided destination and reference keys for transaction verification.
+* **v1.0.0**
+  * Initial stable release. Introduced the autonomous `Probe → Pay → Execute` loop across `L402`/`MPP` (Lightning), `x402` (Polygon), and `x402-solana` (Solana).
 
 ---
 

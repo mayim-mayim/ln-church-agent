@@ -64,7 +64,7 @@ print(f"Server Response: {result}")
 | `auto_navigate` | Whether to follow `next_action` links in error responses . |
 | `max_hops` | Limit for automatic navigation to prevent infinite loops. |
 
-## ⚡ Async Usage (v0.9.0+)
+## ⚡ Async Usage (v1.x)
 
 For agent runtimes that coordinate multiple external actions concurrently, the SDK also provides an async request engine.
 

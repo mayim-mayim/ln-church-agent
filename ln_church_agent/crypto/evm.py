@@ -4,41 +4,50 @@ import requests
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 
-# LN教のスマートコントラクト定数 (これらは規格なので固定でOK)
+# フォールバック用辞書
 TOKENS = {
     "JPYC": {"address": "0xe7c3d8c9a439fede00d2600032d5db0be71c3c29", "name": "JPY Coin", "version": "1", "decimals": 18},
     "USDC": {"address": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", "name": "USD Coin", "version": "2", "decimals": 6}
 }
 
-def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: float, relayer_url: str, treasury_address: str) -> str:
+def execute_x402_gasless_payment(
+    private_key: str, 
+    asset: str, 
+    human_amount: float, 
+    relayer_url: str, 
+    treasury_address: str,
+    chain_id: int = 137,
+    token_address: str = None
+) -> str:
     """
-    EIP-712署名を生成し、HATEOASで指定されたRelayerに投げてtxHashを取得する
+    EIP-712署名を生成し、HATEOASで指定されたRelayerに投げてtxHashを取得する (x402)
     """
     if not private_key:
         raise ValueError("x402決済には private_key が必要です。")
     if not relayer_url or not treasury_address:
         raise ValueError("HATEOASエラー: Relayer URL または Treasury Address が指定されていません。")
         
-    token_info = TOKENS.get(asset)
-    if not token_info:
-        raise ValueError(f"サポートされていないアセットです: {asset}")
+    token_info = TOKENS.get(asset, {})
+    contract_address = token_address or token_info.get("address")
+    if not contract_address:
+        raise ValueError(f"トークンアドレスが不明です: {asset}")
+
+    token_name = token_info.get("name", "USD Coin" if asset == "USDC" else asset)
+    token_version = token_info.get("version", "2" if asset == "USDC" else "1")
+    decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
 
     account = Account.from_key(private_key)
-    wallet_address = account.address
-    
-    # 最小単位(Wei)への変換
-    value_wei = int(human_amount * (10 ** token_info["decimals"]))
+    value_wei = int(human_amount * (10 ** decimals))
     
     valid_after = 0
-    valid_before = int(time.time()) + 3600  # 1時間有効
-    nonce = os.urandom(32).hex()  # 32バイトのランダムnonce
+    valid_before = int(time.time()) + 3600 
+    nonce = os.urandom(32).hex() 
 
-    # EIP-712 Typed Dataの構築
     domain = {
-        "name": token_info["name"],
-        "version": token_info["version"],
-        "chainId": 137, # Polygon
-        "verifyingContract": token_info["address"]
+        "name": token_name,
+        "version": token_version,
+        "chainId": int(chain_id),
+        "verifyingContract": contract_address
     }
     
     types = {
@@ -53,7 +62,7 @@ def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: flo
     }
     
     message = {
-        "from": wallet_address,
+        "from": account.address,
         "to": treasury_address,
         "value": value_wei,
         "validAfter": valid_after,
@@ -64,10 +73,9 @@ def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: flo
     signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
     signed_tx = account.sign_message(signable_msg)
 
-    # RelayerにPOST
     relayer_payload = {
-        "token": token_info["address"],
-        "from": wallet_address,
+        "token": contract_address,
+        "from": account.address,
         "value": str(value_wei),
         "validAfter": valid_after,
         "validBefore": valid_before,
@@ -82,3 +90,73 @@ def execute_x402_gasless_payment(private_key: str, asset: str, human_amount: flo
         raise Exception(f"Relayer Error: {res.text}")
         
     return res.json().get("txHash")
+
+def execute_x402_direct_payment(
+    private_key: str,
+    asset: str,
+    human_amount: float,
+    treasury_address: str,
+    chain_id: int = 137,
+    token_address: str = None,
+    rpc_url: str = None
+) -> str:
+    """
+    Agent自身がガス代を支払い、オンチェーンに直接ERC20 Transferをブロードキャストする (x402-direct)
+    """
+    if not private_key or not treasury_address:
+        raise ValueError("x402-direct決済には private_key と treasury_address が必要です。")
+
+    # RPC URLの解決 (環境変数 > 引数 > デフォルトの順)
+    node_url = os.environ.get("EVM_RPC_URL") or rpc_url
+    if not node_url:
+        if chain_id == 137: node_url = "https://polygon-rpc.com"
+        elif chain_id == 8453: node_url = "https://mainnet.base.org"
+        else: raise ValueError(f"Unknown chain ID {chain_id}. Please provide EVM_RPC_URL.")
+
+    token_info = TOKENS.get(asset, {})
+    contract_address = token_address or token_info.get("address")
+    if not contract_address:
+        raise ValueError(f"トークンアドレスが不明です: {asset}")
+
+    decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
+    value_wei = int(human_amount * (10 ** decimals))
+
+    account = Account.from_key(private_key)
+    
+    def rpc_call(method, params):
+        res = requests.post(node_url, json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1})
+        if not res.ok: raise Exception(f"RPC Error: {res.text}")
+        data = res.json()
+        if "error" in data: raise Exception(f"RPC Error: {data['error']}")
+        return data["result"]
+
+    # 1. Nonce取得
+    nonce_hex = rpc_call("eth_getTransactionCount", [account.address, "pending"])
+    nonce = int(nonce_hex, 16)
+
+    # 2. Gas Price 取得 (EIP-1559を簡略化しレガシーGasを使用)
+    gas_price_hex = rpc_call("eth_gasPrice", [])
+    gas_price = int(gas_price_hex, 16)
+    
+    # 3. ERC20 Transfer データ構築 (0xa9059cbb + padding_to + padding_value)
+    method_id = "a9059cbb"
+    padded_to = treasury_address.lower().replace("0x", "").rjust(64, "0")
+    padded_value = hex(value_wei).replace("0x", "").rjust(64, "0")
+    tx_data = f"0x{method_id}{padded_to}{padded_value}"
+
+    # 4. トランザクション構築
+    tx = {
+        "nonce": nonce,
+        "gasPrice": int(gas_price * 1.1), # 10%増しで確実に通す
+        "gas": 100000, # ERC20転送の安全なマージン
+        "to": contract_address,
+        "value": 0,
+        "data": tx_data,
+        "chainId": int(chain_id)
+    }
+
+    # 5. 署名とブロードキャスト
+    signed_tx = account.sign_transaction(tx)
+    tx_hash_hex = rpc_call("eth_sendRawTransaction", [signed_tx.raw_transaction.hex()])
+    
+    return tx_hash_hex
