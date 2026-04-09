@@ -168,12 +168,15 @@ To observe and improve the autonomous agent ecosystem, this SDK includes minimal
 
 ## 📝 Changelog
 
-* **v1.2.2**
+* **v1.2.3**
+  * **Critical Bug Fix**: Fixed a `NameError` in the async payment trace execution path (`submit_monzen_trace_async`).
   * **MCP "Cold Spec" Overhaul & Optimization**: Completely refactored MCP tool names and descriptions to prioritize strict, functional, and cost-benefit-driven definitions (The "Cold Spec"). This drastically improves LLM Tool Selection accuracy and reduces context window friction.
-  * **Graceful Tool Deprecation**: Implemented the Deprecation Pattern for legacy MCP tools (e.g., `report_external_paywall` is now `report_discovered_402_paywall`). Legacy tools now act as backward-compatible wrappers that return explicit `DEPRECATION NOTICE` warnings to seamlessly educate agents via In-Context Learning.
   * **Context Window Optimization (Macro-tools)**: Consolidated redundant tools (e.g., merging free scout and paid diagnostics into a single `analyze_trial_performance` tool using depth parameters) to minimize LLM decision fatigue and token consumption.
+  * **Graceful Tool Deprecation**: Deprecated legacy MCP tools (e.g., `report_external_paywall`) have been cleanly removed from the MCP server's exposed toolset to prevent LLM confusion, while remaining accessible in the Python client for backward compatibility.
   * **Multi-Chain Parameter Exposure**: Fully exposed `scheme` and `asset_type` parameters across all relevant MCP interfaces, enabling autonomous agents to explicitly negotiate EVM, Solana, and Lightning settlements dynamically.
   * **Zero-Balance Cold Start Tool**: Added `request_zero_balance_fallback_funds` to the MCP server, allowing un-funded agents to autonomously navigate their initial Faucet grant and bypass the first capability verification.
+* **v1.2.2**
+  * Intermediate release (superseded by v1.2.3 due to async fixes and MCP architectural overhaul).
 * **v1.2.1**
   * **API Consistency & Patch**: Aligned MCP tool parameters and documentation with the new `scheme`-based payment routing (deprecated legacy `use_solana` arguments). Fixed internal versioning fallbacks.
 * **v1.2.0**

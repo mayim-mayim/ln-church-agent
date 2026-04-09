@@ -28,7 +28,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.2.2" 
+        return "1.2.3" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -611,7 +611,7 @@ class LnChurchClient(Payment402Client):
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload)
         return AggregateResponse(**res)
 
-    async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
+    async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST",scheme: Optional[str] = None) -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
         if preimage: payload["preimage"] = preimage
         if scheme: payload["scheme"] = scheme
