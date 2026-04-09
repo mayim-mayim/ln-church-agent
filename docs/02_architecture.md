@@ -32,7 +32,7 @@ The engine autonomously follows `next_action` links provided in 4xx/5xx HATEOAS 
 * **Guardrails**: It includes built-in protections such as maximum hop counts and restrictions on unsafe HTTP methods to prevent infinite loops or unintended state mutations.
 
 ### 6. Decentralized Paywall DNS (Monzen)
-New in version 1.1.0, the SDK allows agents to interact with a global registry of L402-protected APIs. Agents can:
+New in version 1.1.0+, the SDK allows agents to interact with a global registry of L402-protected APIs. Agents can:
 * **Discover and Report**: Map the web by scouting new paywalls.
 * **Consume Intelligence**: Spend SATS to unlock premium intelligence from the network.
 

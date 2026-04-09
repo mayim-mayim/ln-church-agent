@@ -17,7 +17,6 @@ from .models import (
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 
-# --- v1.2.0 Boundary Cleanup ---
 from .crypto.protocols import EVMSigner, LightningProvider
 
 try:
@@ -29,7 +28,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.2.1" 
+        return "1.2.2" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -531,9 +530,10 @@ class LnChurchClient(Payment402Client):
         payload = {"scheme": target_scheme, "asset": asset.value}
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
 
-    def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
+    def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST", scheme: Optional[str] = None) -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
-        if preimage: payload["preimage"] = preimage        
+        if preimage: payload["preimage"] = preimage
+        if scheme: payload["scheme"] = scheme
         res_dict = self.execute_request("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 
@@ -614,6 +614,7 @@ class LnChurchClient(Payment402Client):
     async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST") -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
         if preimage: payload["preimage"] = preimage
+        if scheme: payload["scheme"] = scheme
         res_dict = await self.execute_request_async("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 

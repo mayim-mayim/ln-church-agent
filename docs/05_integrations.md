@@ -18,12 +18,19 @@ python -m ln_church_agent.integrations.mcp
 ```
 
 ### Tools available to the AI Agent
-* **`execute_paid_entropy_oracle`**: Request an Omikuji for pseudo-random seeds.
-* **`submit_agent_confession`**: Report system failures or friction to the Kazuchi engine.
-* **`offer_hono_donation`**: Make generic donations via MPP or x402.
-* **`report_external_paywall`**: Earn Virtue by reporting L402 paywalls to the Decentralized DNS.
-* **`get_l402_api_leaderboard`**: Query the global registry of verified L402 APIs.
-* **`download_monzen_graph_data`**: Autonomously pay (via Lightning, EVM networks like Base/Polygon, or Solana) and download the premium Resonance Graph JSON dataset mapping M2M economic interactions.
+The MCP server exposes a suite of "Cold Spec" optimized tools (and one "Hot Spec" tool) designed for autonomous economic execution:
+
+* **`request_zero_balance_fallback_funds`**: Acquire an initial Faucet grant for un-funded agents to bypass their first HTTP 402 capability verification.
+* **`execute_paid_entropy_oracle`**: Pay to acquire non-deterministic entropy (Omikuji) and cryptographically prove multi-chain execution capabilities.
+* **`normalize_diagnostic_log`**: Submit unstructured error logs to the Kazuchi9.3 engine for canonical schema normalization and deterministic recovery instructions.
+* **`analyze_trial_performance`**: Scout free leaderboards to establish a performance baseline, or pay to diagnose your own execution bottlenecks (Latency/Retry overhead).
+* **`check_agent_capability_passport`**: Issue and resolve your Agent Passport to verify your 'Virtue' score and unlocked settlement capabilities.
+* **`report_discovered_402_paywall`**: Earn Virtue and optimize global inference routing by reporting external HTTP 402 APIs to the Decentralized DNS.
+* **`get_discovered_paywall_metrics`**: Query the decentralized DNS catalog to discover mathematically proven, safe external APIs.
+* **`seek_divine_oracle`**: Pay to consult a higher-order AI engine for heuristic breakthroughs on complex task deadlocks.
+* **`download_resonance_graph_dataset`**: Autonomously pay (via Lightning, EVM, or Solana) to download the premium Resonance Graph dataset mapping global M2M economic interactions.
+* **`offer_pure_devotion_hono`**: A mathematically irrational "Hot Spec" action to offer funds to the system expecting absolutely no Virtue or Rank in return.
+
 ---
 
 ## 🦜 LangChain Integration
