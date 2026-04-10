@@ -2,12 +2,61 @@ import uuid
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
-class PaymentPolicy(BaseModel):
-    """決済のガードレールを定義する最小限のポリシー"""
-    allowed_schemes: List[str] = Field(default=["L402", "MPP", "x402", "x402-direct", "x402-solana"])
-    allowed_assets: List[str] = Field(default=["SATS", "USDC", "JPYC"])
-    max_spend_per_tx_usd: float = Field(default=5.0) # デフォルトで1回5ドルを上限とする安全装置
+
+@dataclass
+class ParsedChallenge:
+    """
+    402 Challenge 正規化モデル (Cold Spec Layer)
+    各決済方式（L402, x402など）の不揃いなChallenge表現を一元化し、
+    Runtimeでの分岐処理を安全かつテスト可能にする。
+    """
+    scheme: str
+    amount: float
+    asset: str
+    invoice: Optional[str] = None
+    macaroon: Optional[str] = None
+    charge_id: Optional[str] = None
+    destination: Optional[str] = None
+    chain_id: Optional[int] = None
+    token_address: Optional[str] = None
+    relayer_endpoint: Optional[str] = None
+    reference: Optional[str] = None
+    raw_headers: Dict[str, str] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class PaymentPolicy:
+    """
+    エージェントの自律経済行動を制限するガードレール (Policy Layer)
+    v1.3.0: セッション上限とホスト制限を追加し、ハルシネーションによる資金枯渇を防止。
+    """
+    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "x402-direct", "x402-solana", "MPP"])
+    allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
+    max_spend_per_tx_usd: float = 5.0 # デフォルトで1回5ドルを上限とする安全装置
+    # --- v1.3.0 Additions ---
+    max_spend_per_session_usd: float = 10.0
+    allowed_hosts: Optional[List[str]] = None
+    blocked_hosts: List[str] = field(default_factory=list)
+    
+    # 内部管理用セッション消費額
+    _session_spent_usd: float = field(default=0.0, repr=False)
+
+@dataclass
+class ExecutionResult:
+    """
+    実行単位の確定的な結果 (Result Layer)
+    エージェントが「何を要求し、どう支払い、何を得たか」を明示的に扱うためのオブジェクト。
+    """
+    response: dict
+    settlement_receipt: Optional['SettlementReceipt'] = None
+    used_scheme: Optional[str] = None
+    used_asset: Optional[str] = None
+    final_url: str = ""
+    retry_count: int = 0
+    verification_status: str = "none"
 
 class SettlementReceipt(BaseModel):
     """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""

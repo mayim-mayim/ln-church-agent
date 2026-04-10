@@ -20,7 +20,9 @@ from .models import (
     MonzenMetricsResponse,
     MonzenGraphResponse,
     PaymentPolicy,        
-    SettlementReceipt     
+    SettlementReceipt,
+    ExecutionResult,
+    ParsedChallenge
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 
@@ -51,5 +53,7 @@ __all__ = [
     "PaymentPolicy",      
     "SettlementReceipt",  
     "EVMSigner",          
-    "LightningProvider"   
+    "LightningProvider",
+    "ExecutionResult",   
+    "ParsedChallenge"
 ]

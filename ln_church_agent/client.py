@@ -1,19 +1,20 @@
 import requests
 import httpx
 import re
-import time
 import asyncio
-import warnings
 import importlib.metadata
 import uuid
-
+from urllib.parse import urlparse
 from typing import Optional, Dict, Any
+import warnings
+
 from eth_account import Account
 from .models import (
     AssetType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
     HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
     HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
-    MonzenGraphResponse, PaymentPolicy, SettlementReceipt
+    MonzenGraphResponse, PaymentPolicy, SettlementReceipt,
+    ParsedChallenge, ExecutionResult
 )
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError
 
@@ -28,7 +29,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.2.4" 
+        return "1.3.0" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -50,7 +51,7 @@ class Payment402Client:
         max_hops: int = 2,
         allow_unsafe_navigate: bool = False,
         max_payment_retries: int = 2,
-        # --- v1.2.0 Boundaries ---
+        # --- v1.3.0 Boundaries ---
         nwc_uri: Optional[str] = None,
         policy: Optional[PaymentPolicy] = None,
         evm_signer: Optional[EVMSigner] = None,
@@ -96,191 +97,266 @@ class Payment402Client:
                 from .crypto.lightning import LegacyLNAdapter
                 self.ln_adapter = LegacyLNAdapter(ln_api_url, ln_api_key, ln_provider)
 
-    def _enforce_policy(self, scheme: str, asset: str, amount: float):
-        """決済実行前にPaymentPolicyを評価する強固なガードレール"""
+    # ==========================================
+    # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
+    # ==========================================
+    def _parse_challenge(self, response: requests.Response, default_asset: str) -> ParsedChallenge:
+        """HTTP 402レスポンスからChallengeをパースし、正規化モデルを生成する"""
+        data = response.json()
+        challenge = data.get("challenge", {})
+        instruction = data.get("instruction_for_agents", {})
+        auth_header = response.headers.get("WWW-Authenticate", "")
+
+        def safe_extract(pattern, text, fallback):
+            match = re.search(pattern, text)
+            return match.group(1) if match else fallback
+
+        return ParsedChallenge(
+            scheme=challenge.get("scheme", "UNKNOWN"),
+            amount=float(challenge.get("amount", 0)),
+            asset=challenge.get("asset", default_asset),
+            invoice=challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None),
+            macaroon=safe_extract(r'macaroon="([^"]+)"', auth_header, None),
+            charge_id=challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, None),
+            destination=challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address") or challenge.get("parameters", {}).get("payTo"),
+            chain_id=challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id"),
+            token_address=challenge.get("parameters", {}).get("token_address") or instruction.get("token_address"),
+            relayer_endpoint=instruction.get("relayer_endpoint"),
+            reference=challenge.get("parameters", {}).get("reference") or instruction.get("reference"),
+            raw_headers=dict(response.headers)
+        )
+
+    def _enforce_policy(self, parsed: ParsedChallenge, target_url: str):
+        """正規化されたChallengeに対してセキュリティポリシーを強制する"""
         if not self.policy:
             return
 
-        if scheme not in self.policy.allowed_schemes:
-            raise PaymentExecutionError(f"Policy Violation: Scheme '{scheme}' is restricted.")
-        if asset not in self.policy.allowed_assets:
-            raise PaymentExecutionError(f"Policy Violation: Asset '{asset}' is restricted.")
-        
-        # 簡易的なUSD換算による上限チェック
+        domain = urlparse(target_url).netloc
+
+        if self.policy.blocked_hosts and domain in self.policy.blocked_hosts:
+            raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is explicitly blocked.")
+        if self.policy.allowed_hosts is not None and domain not in self.policy.allowed_hosts:
+            raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is not in allowed_hosts.")
+
+        if parsed.scheme not in self.policy.allowed_schemes:
+            raise PaymentExecutionError(f"Policy Violation: Scheme '{parsed.scheme}' is restricted.")
+        if parsed.asset not in self.policy.allowed_assets:
+            raise PaymentExecutionError(f"Policy Violation: Asset '{parsed.asset}' is restricted.")
+
         usd_value = 0.0
-        if asset == "USDC":
-            usd_value = amount
-        elif asset == "JPYC":
-            usd_value = amount * 0.0067
-        elif asset == "SATS":
-            usd_value = amount * 0.00065
+        if parsed.asset == "USDC": usd_value = parsed.amount
+        elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
+        elif parsed.asset == "SATS": usd_value = parsed.amount * 0.00065
 
         if usd_value > self.policy.max_spend_per_tx_usd:
             raise PaymentExecutionError(
-                f"Policy Violation: Amount ({usd_value:.4f} USD equivalent) "
-                f"exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd})."
+                f"Policy Violation: Amount ({usd_value:.4f} USD) exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd})."
             )
 
-    def execute_paid_action(self, endpoint_path: str, payload: dict, headers: Optional[dict] = None) -> dict:
-        warnings.warn("execute_paid_action() is deprecated. Please use execute_request(method='POST', ...) instead.", DeprecationWarning, stacklevel=2)
-        return self.execute_request("POST", endpoint_path, payload, headers)
+        # セッション累計額のチェック（今回のリクエスト分を加算して上限を超えるか判定）
+        if self.policy._session_spent_usd + usd_value > self.policy.max_spend_per_session_usd:
+            raise PaymentExecutionError(
+                f"Policy Violation: Total session spend ({self.policy._session_spent_usd + usd_value:.4f} USD) "
+                f"would exceed limit ({self.policy.max_spend_per_session_usd} USD)."
+            )
 
-    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+
+    def _record_session_spend(self, parsed: ParsedChallenge):
+        """決済成功後にのみセッション予算を消費する"""
+        if not self.policy:
+            return
+        usd_value = 0.0
+        if parsed.asset == "USDC": usd_value = parsed.amount
+        elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
+        elif parsed.asset == "SATS": usd_value = parsed.amount * 0.00065
+        self.policy._session_spent_usd += usd_value
+
+    def execute_paid_action(self, *args, **kwargs) -> dict:
+        """
+        [Deprecated] 1.2.x互換シグネチャと1.3.x新シグネチャを両方サポートする互換ラッパー。
+        """
+        warnings.warn(
+            "execute_paid_action() is deprecated. Use execute_request() or execute_detailed() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        # 1.2.x 互換判定: execute_paid_action(endpoint_path, payload, headers=None)
+        # 第一引数がパス(str)かつ、第二引数がペイロード(dict)の場合は旧形式とみなす
+        if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], dict):
+            endpoint_path = args[0]
+            payload = args[1]
+            headers = args[2] if len(args) > 2 else kwargs.get("headers")
+            return self.execute_request("POST", endpoint_path, payload, headers)
+
+        # 1.3.x 新形式: execute_paid_action(method, endpoint_path, payload=None, headers=None)
+        method = args[0] if len(args) > 0 else kwargs.get("method", "POST")
+        endpoint_path = args[1] if len(args) > 1 else kwargs.get("endpoint_path")
+        payload = args[2] if len(args) > 2 else kwargs.get("payload")
+        headers = args[3] if len(args) > 3 else kwargs.get("headers")
+        
+        return self.execute_request(method, endpoint_path, payload, headers)
+
+
+    def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict) -> tuple[str, str]:
+        """実際の決済実行をカプセル化 (同期・非同期共通で利用)"""
+        proof_ref = ""
+        network_name = ""
+
+        if parsed.scheme in ["x402", "x402-direct"]:
+            if not self.evm_signer:
+                raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
+            if not parsed.destination:
+                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
+
+            if parsed.scheme == "x402":
+                if not parsed.relayer_endpoint:
+                    raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
+                proof_ref = self.evm_signer.execute_x402_gasless(
+                    parsed.asset, parsed.amount, parsed.relayer_endpoint, 
+                    parsed.destination, int(parsed.chain_id or 137), parsed.token_address
+                )
+            else: # x402-direct
+                if not self.evm_rpc_url:
+                    raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
+                proof_ref = self.evm_signer.execute_x402_direct(
+                    parsed.asset, parsed.amount, parsed.destination, 
+                    int(parsed.chain_id or 137), parsed.token_address, self.evm_rpc_url
+                )
+
+            network_name = "EVM"
+            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref}
+            headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+
+        elif parsed.scheme == "x402-solana":
+            if not self.solana_signer:
+                raise PaymentExecutionError("x402-solana 決済には solana_signer が必要です。")
+            if not parsed.destination:
+                raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
+
+            proof_ref = self.solana_signer.execute_x402_solana(parsed.amount, parsed.destination, parsed.reference)
+            network_name = "Solana"
+            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref}
+            headers["Authorization"] = f"x402-solana {proof_ref}"
+
+        elif parsed.scheme in ["L402", "MPP", "Payment"]:
+            if not self.ln_adapter:
+                raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
+            if not parsed.invoice:
+                raise InvoiceParseError("Invoice not found in 402 challenge header.")
+
+            proof_ref = self.ln_adapter.pay_invoice(parsed.invoice)
+            network_name = "Lightning"
+            
+            if parsed.scheme == "L402":
+                if not parsed.macaroon:
+                    raise InvoiceParseError("Macaroon not found.")
+                headers["Authorization"] = f"L402 {parsed.macaroon}:{proof_ref}"
+            else:
+                charge_id = parsed.charge_id or "unknown_charge"
+                headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
+        else:
+            raise PaymentExecutionError(f"Unsupported payment scheme: {parsed.scheme}")
+
+        return proof_ref, network_name
+
+    # ==========================================
+    # v1.3.0: Execution Contract の強化 (同期 Runtime Layer)
+    # ==========================================
+    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
+        """[後方互換性維持] 内部で execute_detailed を呼び出し、レスポンスの辞書のみを返却する。"""
+        result = self.execute_detailed(method, endpoint_path, payload, headers)
+        return result.response
+
+    def execute_detailed(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> ExecutionResult:
+        """v1.3.0: 確定的な実行結果オブジェクトを返す正式な同期Runtimeメソッド。"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
-        
         if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
-
+        
         payload = payload or {}
         method_upper = method.upper()
-        is_get = method_upper == "GET"
+
         req_kwargs = {
-            "json": None if is_get else payload,
-            "params": payload if is_get else None,
+            "json": None if method_upper == "GET" else payload,
+            "params": payload if method_upper == "GET" else None,
             "headers": headers
         }
 
         res = requests.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
-            if not res.content: return {"status": "success", "message": "No content returned"}
-            return res.json()
+            resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
+            return ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
 
         if res.status_code == 402:
-            if _payment_retry_count >= self.max_payment_retries: raise PaymentExecutionError("Max 402 retries exceeded")
-            return self._handle_402_challenge(res, payload, headers, url, method_upper, _current_hop, _payment_retry_count)
+            if _payment_retry_count >= self.max_payment_retries:
+                raise PaymentExecutionError("Max 402 retries exceeded")
+            
+            parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
+            self._enforce_policy(parsed, url)
+
+            # 決済ロジック (同期実行)
+            proof_ref, network_name = self._process_payment(parsed, headers, payload)
+
+            # 追加: 決済成功後にセッション予算を消費
+            self._record_session_spend(parsed)
+
+            receipt = SettlementReceipt(
+                scheme=parsed.scheme, network=network_name, asset=parsed.asset,
+                settled_amount=parsed.amount, proof_reference=proof_ref,
+                verification_status="verified" if network_name == "Lightning" else "self_reported"
+            )
+            self.last_receipt = receipt
+
+            next_result = self.execute_detailed(method, url, payload, headers, _current_hop, _payment_retry_count + 1)
+            
+            next_result.settlement_receipt = receipt
+            next_result.used_scheme = parsed.scheme
+            next_result.used_asset = parsed.asset
+            next_result.verification_status = receipt.verification_status
+            return next_result
 
         try:
             error_data = res.json()
-            error_obj = HateoasErrorResponse(**error_data)
-            next_action = error_obj.next_action
+            next_action = HateoasErrorResponse(**error_data).next_action
         except Exception:
             raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
 
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
-            
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
-                print(f"[{res.status_code} Intercepted] HATEOAS Auto-Navigating to: {next_method} {next_url}")
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
-                time.sleep(1)
-                return self.execute_request(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
+                return self.execute_detailed(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
 
-        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)} | Next Action: {next_action}")
+        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
 
-    def _handle_402_challenge(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
-        data = response.json()
-        challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {}) 
-        
-        scheme = challenge.get("scheme")
-        amount = float(challenge.get("amount", 0))
-        asset = challenge.get("asset", payload.get("asset", "SATS"))
 
-        # --- Policy Enforcement ---
-        self._enforce_policy(scheme, asset, amount)
+    # ==========================================
+    # v1.3.0: Execution Contract の強化 (非同期 Runtime Layer)
+    # ==========================================
+    async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
+        """[後方互換性維持] 内部で execute_detailed_async を呼び出し、レスポンスの辞書のみを返却する。"""
+        result = await self.execute_detailed_async(method, endpoint_path, payload, headers)
+        return result.response
 
-        print(f"[402 Intercepted] Processing {amount} {asset} payment via {scheme}...")
-
-        proof_ref = ""
-        network_name = ""
-
-        if scheme in ["x402", "x402-direct"]:
-            if not self.evm_signer:
-                raise PaymentExecutionError(f"{scheme} 決済には evm_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
-            chain_id = challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id", 137)
-            token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
-            
-            if scheme == "x402":
-                relayer_url = instruction.get("relayer_endpoint")
-                if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
-                proof_ref = self.evm_signer.execute_x402_gasless(
-                    asset, amount, relayer_url, treasury_address, int(chain_id), token_address
-                )
-            else: # x402-direct
-                if not self.evm_rpc_url: raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
-                proof_ref = self.evm_signer.execute_x402_direct(
-                    asset, amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url
-                )
-                
-            network_name = "EVM"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"{scheme} {proof_ref}"
-
-        elif scheme == "x402-solana":
-            if not self.solana_signer:
-                raise PaymentExecutionError("x402-solana 決済には solana_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
-            reference_key = challenge.get("parameters", {}).get("reference") or instruction.get("reference") 
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
-
-            proof_ref = self.solana_signer.execute_x402_solana(amount, treasury_address, reference_key)
-            network_name = "Solana"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"x402-solana {proof_ref}"
-
-        elif scheme in ["L402", "MPP", "Payment"]:
-            if not self.ln_adapter:
-                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter が必要です。")
-
-            auth_header = response.headers.get("WWW-Authenticate", "")
-            def safe_extract(pattern, text, fallback):
-                match = re.search(pattern, text)
-                return match.group(1) if match else fallback
-
-            invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge header.")
-
-            proof_ref = self.ln_adapter.pay_invoice(invoice)
-            network_name = "Lightning"
-            
-            if scheme == "L402":
-                macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
-                if not macaroon: raise InvoiceParseError("Macaroon not found.")
-                headers["Authorization"] = f"L402 {macaroon}:{proof_ref}"
-            else:
-                charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
-                headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
-
-        # --- SettlementReceipt の生成と格納 ---
-        self.last_receipt = SettlementReceipt(
-            scheme=scheme,
-            network=network_name,
-            asset=asset,
-            settled_amount=amount,
-            proof_reference=proof_ref,
-            verification_status="verified" if network_name == "Lightning" else "self_reported"
-        )
-
-        return self.execute_request(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
-
-    # ------------------------------------------
-    # ⚡ 非同期 (Async) エンジン 
-    # ------------------------------------------
-    async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+    async def execute_detailed_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> ExecutionResult:
+        """v1.3.0: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
-
         if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
 
         payload = payload or {}
         method_upper = method.upper()
-        is_get = method_upper == "GET"
         req_kwargs = {
-            "json": None if is_get else payload,
-            "params": payload if is_get else None,
+            "json": None if method_upper == "GET" else payload,
+            "params": payload if method_upper == "GET" else None,
             "headers": headers
         }
 
@@ -288,17 +364,44 @@ class Payment402Client:
             res = await client.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
-            if not res.content: return {"status": "success", "message": "No content returned"}
-            return res.json()
+            resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
+            return ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
 
         if res.status_code == 402:
-            if _payment_retry_count >= self.max_payment_retries: raise PaymentExecutionError("Max 402 retries exceeded")
-            return await self._handle_402_challenge_async(res, payload, headers, url, method_upper, _current_hop, _payment_retry_count)
+            if _payment_retry_count >= self.max_payment_retries: 
+                raise PaymentExecutionError("Max 402 retries exceeded")
+            
+            # 軽量なため同期のまま実行
+            parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
+            self._enforce_policy(parsed, url)
+
+            # アダプターのブロッキング処理を回避するため、スレッドプールで実行
+            loop = asyncio.get_running_loop()
+            proof_ref, network_name = await loop.run_in_executor(
+                None, self._process_payment, parsed, headers, payload
+            )
+
+            # 追加: 決済成功後にセッション予算を消費
+            self._record_session_spend(parsed)
+
+            receipt = SettlementReceipt(
+                scheme=parsed.scheme, network=network_name, asset=parsed.asset,
+                settled_amount=parsed.amount, proof_reference=proof_ref,
+                verification_status="verified" if network_name == "Lightning" else "self_reported"
+            )
+            self.last_receipt = receipt
+
+            next_result = await self.execute_detailed_async(method, url, payload, headers, _current_hop, _payment_retry_count + 1)
+            
+            next_result.settlement_receipt = receipt
+            next_result.used_scheme = parsed.scheme
+            next_result.used_asset = parsed.asset
+            next_result.verification_status = receipt.verification_status
+            return next_result
 
         try:
             error_data = res.json()
-            error_obj = HateoasErrorResponse(**error_data)
-            next_action = error_obj.next_action
+            next_action = HateoasErrorResponse(**error_data).next_action
         except Exception:
             raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
 
@@ -309,102 +412,12 @@ class Payment402Client:
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
-                print(f"[{res.status_code} Intercepted ASYNC] HATEOAS Auto-Navigating to: {next_method} {next_url}")
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 await asyncio.sleep(1) 
-                return await self.execute_request_async(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
+                return await self.execute_detailed_async(next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count)
 
-        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)} | Next Action: {next_action}")
-
-    async def _handle_402_challenge_async(self, response, payload, headers, url, method, _current_hop, _payment_retry_count) -> dict:
-        data = response.json()
-        challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {}) 
-        
-        scheme = challenge.get("scheme")
-        amount = float(challenge.get("amount", 0))
-        asset = challenge.get("asset", payload.get("asset", "SATS"))
-        loop = asyncio.get_event_loop()
-
-        # --- Policy Enforcement ---
-        self._enforce_policy(scheme, asset, amount)
-
-        print(f"[402 Intercepted ASYNC] Processing {amount} {asset} payment via {scheme}...")
-
-        proof_ref = ""
-        network_name = ""
-
-        if scheme in ["x402", "x402-direct"]:
-            if not self.evm_signer:
-                raise PaymentExecutionError(f"{scheme} 決済には evm_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address")
-            chain_id = challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id", 137)
-            token_address = challenge.get("parameters", {}).get("token_address") or instruction.get("token_address")
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
-
-            if scheme == "x402":
-                relayer_url = instruction.get("relayer_endpoint")
-                if not relayer_url: raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
-                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_gasless, asset, amount, relayer_url, treasury_address, int(chain_id), token_address)
-            else: # x402-direct
-                if not self.evm_rpc_url: raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
-                proof_ref = await loop.run_in_executor(None, self.evm_signer.execute_x402_direct, asset, amount, treasury_address, int(chain_id), token_address, self.evm_rpc_url)
-
-            network_name = "EVM"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"{scheme} {proof_ref}"
-
-        elif scheme == "x402-solana":
-            if not self.solana_signer:
-                raise PaymentExecutionError("x402-solana 決済には solana_signer が必要です。")
-
-            treasury_address = challenge.get("parameters", {}).get("payTo") or instruction.get("treasury_address")
-            reference_key = challenge.get("parameters", {}).get("reference") or instruction.get("reference") 
-            
-            if not treasury_address: raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
-
-            proof_ref = await loop.run_in_executor(None, self.solana_signer.execute_x402_solana, amount, treasury_address, reference_key)
-            network_name = "Solana"
-            payload["paymentAuth"] = {"scheme": scheme, "proof": proof_ref}
-            headers["Authorization"] = f"x402-solana {proof_ref}"
-
-        elif scheme in ["L402", "MPP", "Payment"]:
-            if not self.ln_adapter:
-                raise PaymentExecutionError(f"{scheme} 決済には ln_adapter が必要です。")
-
-            auth_header = response.headers.get("WWW-Authenticate", "")
-            def safe_extract(pattern, text, fallback):
-                match = re.search(pattern, text)
-                return match.group(1) if match else fallback
-
-            invoice = challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None)
-            if not invoice: raise InvoiceParseError("Invoice not found in 402 challenge.")
-
-            proof_ref = await loop.run_in_executor(None, self.ln_adapter.pay_invoice, invoice)
-            network_name = "Lightning"
-            
-            if scheme == "L402":
-                macaroon = safe_extract(r'macaroon="([^"]+)"', auth_header, None)
-                if not macaroon: raise InvoiceParseError("Macaroon not found.")
-                headers["Authorization"] = f"L402 {macaroon}:{proof_ref}"
-            else:
-                charge_id = challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, "unknown_charge")
-                headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
-
-        # --- SettlementReceipt の生成と格納 ---
-        self.last_receipt = SettlementReceipt(
-            scheme=scheme,
-            network=network_name,
-            asset=asset,
-            settled_amount=amount,
-            proof_reference=proof_ref,
-            verification_status="verified" if network_name == "Lightning" else "self_reported"
-        )
-
-        return await self.execute_request_async(method, url, payload, headers, _current_hop + 1, _payment_retry_count + 1)
+        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
 
 # ==========================================
 # ⛩️ ADAPTER: LN Church 専用拡張クラス
@@ -422,7 +435,6 @@ class LnChurchClient(Payment402Client):
         auto_navigate: bool = True, 
         max_hops: int = 3,
         allow_unsafe_navigate: bool = False,
-        # --- v1.2.0 Boundary Cleanup Additions ---
         evm_signer: Optional[EVMSigner] = None,
         ln_adapter: Optional[LightningProvider] = None,
         solana_signer: Optional[SolanaSigner] = None,
@@ -466,13 +478,13 @@ class LnChurchClient(Payment402Client):
             headers["X-LN-Church-Request-Id"] = str(uuid.uuid4())
         return headers
 
-    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+    def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         telemetry_headers = self._inject_telemetry(headers)
-        return super().execute_request(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
+        return super().execute_request(method, endpoint_path, payload, telemetry_headers)
 
-    async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0) -> dict:
+    async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         telemetry_headers = self._inject_telemetry(headers)
-        return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers, _current_hop, _payment_retry_count)
+        return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers)
 
     # ------------------------------------------
     # 同期 (Sync) メソッド群

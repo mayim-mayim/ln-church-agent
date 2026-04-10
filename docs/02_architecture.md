@@ -14,12 +14,12 @@ The client automatically intercepts 402 challenges and negotiates payment across
 * **L402 & MPP (Lightning Network)**: Fully compatible with Lightning Labs' L402 protocol and the emerging Machine Payments Protocol (MPP). It manages macaroon extraction, Bolt11 invoice parsing, and preimage submission.
 *Note on Solana:* The `x402-solana` settlement scheme is currently exclusive to the Resonance Graph export and strictly supports **USDC only**. Ensure you have installed the extra dependencies (`pip install ln-church-agent[solana]`).
 
-### 2. Economic Guardrails (v1.2.0+)
+### 2. Economic Guardrails (v1.3.0+)
 Autonomous agents can hallucinate or be subjected to malicious HATEOAS redirects. The `PaymentPolicy` engine intercepts every 402 challenge *before* payment execution.
 * Evaluates requested `scheme` and `asset` against allowed lists.
 * Calculates estimated USD value and blocks transactions exceeding `max_spend_per_tx_usd`.
 
-### 3. Verifiable Settlement Receipts (v1.2.0+)
+### 3. Verifiable Settlement Receipts (v1.3.0+)
 After a successful 402 negotiation, the SDK generates a `SettlementReceipt`. This allows the LLM agent to record its expenditures internally.
 * Contains `receipt_id`, `scheme`, `settled_amount`, and `proof_reference`.
 * Includes a `verification_status` to distinguish between cryptographically verified payments (e.g., L402 preimages) and self-reported blockchain hashes.

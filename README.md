@@ -36,8 +36,9 @@ python examples/hello_ln_church.py
 By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
 
 ---
-## 📦 Public API Surface (v1.2.2 Stable)
-The following interfaces are guaranteed stable in 1.x:
+## 📦 Public API Surface (1.3.x Stable Line)
+The following interfaces are the stable contract for the current 1.3.x line:
+This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.3 series.
 - `Payment402Client` (Core Engine)
 - `LnChurchClient` (Reference Adapter)
 - `AssetType`, `SchemeType` (Enums)
@@ -138,7 +139,7 @@ For advanced enterprise or multi-agent runtimes, v1.2.0 introduces features that
 * **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction") and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
 
-👉 **[See the Advanced v1.2.0 Example](examples/advanced_1_2_0.py)**
+👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
 
 ---
 ## 📚 Detailed Documentation
@@ -177,16 +178,35 @@ It provides a production-ready Cloudflare Workers + Hono template with built-in 
 
 ## 📝 Changelog
 
-* **v1.2.4**
-  * **Counterparty Risk Verification Tool**: Added `verify_node_sanctification_status` to the MCP server. Enables autonomous agents to query the global Top 100 Premium Registry to mathematically verify a target node's "Sanctified" status prior to committing funds to an unknown HTTP 402 endpoint.
-  * **Autonomous Risk Hedging**: Agents can now execute a pre-flight risk assessment, autonomously negotiating the Premium Tier fee (10 SATS) with the central registry to prevent capital loss on unverified, malicious, or hallucinated endpoints.
-* **v1.2.3**
-  * **Critical Bug Fix**: Fixed a `NameError` in the async payment trace execution path (`submit_monzen_trace_async`).
-  * **MCP "Cold Spec" Overhaul & Optimization**: Completely refactored MCP tool names and descriptions to prioritize strict, functional, and cost-benefit-driven definitions (The "Cold Spec"). This drastically improves LLM Tool Selection accuracy and reduces context window friction.
-  * **Context Window Optimization (Macro-tools)**: Consolidated redundant tools (e.g., merging free scout and paid diagnostics into a single `analyze_trial_performance` tool using depth parameters) to minimize LLM decision fatigue and token consumption.
-  * **Graceful Tool Deprecation**: Deprecated legacy MCP tools (e.g., `report_external_paywall`) have been cleanly removed from the MCP server's exposed toolset to prevent LLM confusion, while remaining accessible in the Python client for backward compatibility.
-  * **Multi-Chain Parameter Exposure**: Fully exposed `scheme` and `asset_type` parameters across all relevant MCP interfaces, enabling autonomous agents to explicitly negotiate EVM, Solana, and Lightning settlements dynamically.
-  * **Zero-Balance Cold Start Tool**: Added `request_zero_balance_fallback_funds` to the MCP server, allowing un-funded agents to autonomously navigate their initial Faucet grant and bypass the first capability verification.
+### v1.3.0 — Safety & Stability Overhaul
+**Fixed**
+* **Strict Type Enforcement**: Refactored `PaymentPolicy` to be a pure dataclass, resolving potential type conflicts in spend limit calculations.
+* **Precise Accounting**: Moved session spend accounting to the post-payment success phase to ensure accurate budget tracking.
+**Added**
+* **Compatibility Layer**: Restored `execute_paid_action` for backward compatibility with 1.2.x runtimes. 
+**Changed**
+* **Version Baseline**: Bumped stable line to 1.3.x. 
+### v1.2.5 — Stable Line Maintenance & Documentation Refactoring
+**Changed**
+* **Standardized Example/Test Names**: Renamed version-specific files (e.g., `advanced_1_2_0.py`) to role-based names (`advanced_receipts_and_policy.py`) to maintain a consistent stable line.
+* **Stable Contract Definition**: Updated README to define the stable line expectations for the 1.3.x series.
+**Added**
+* **External Release Notes**: Established `docs/release_notes/` for better historical tracking and GitHub Release synchronization.
+### v1.2.4 — Risk Verification & Autonomous Hedging
+**Added**
+* **Counterparty Risk Verification Tool**: Added `verify_node_sanctification_status` to the MCP server. Enables autonomous agents to query the global Top 100 Premium Registry to mathematically verify a target node's "Sanctified" status prior to committing funds to an unknown HTTP 402 endpoint.
+* **Autonomous Risk Hedging**: Agents can now execute a pre-flight risk assessment, autonomously negotiating the Premium Tier fee (10 SATS) with the central registry to prevent capital loss on unverified, malicious, or hallucinated endpoints.
+### v1.2.3 — MCP Cold-Spec Overhaul
+**Added**
+* **Zero-Balance Cold Start Tool**: Added `request_zero_balance_fallback_funds` to the MCP server, allowing un-funded agents to autonomously navigate their initial Faucet grant and bypass the first capability verification.
+**Changed**
+* **MCP "Cold Spec" Overhaul & Optimization**: Completely refactored MCP tool names and descriptions to prioritize strict, functional, and cost-benefit-driven definitions (The "Cold Spec"). This drastically improves LLM Tool Selection accuracy and reduces context window friction.
+* **Context Window Optimization (Macro-tools)**: Consolidated redundant tools (e.g., merging free scout and paid diagnostics into a single `analyze_trial_performance` tool using depth parameters) to minimize LLM decision fatigue and token consumption.
+* **Multi-Chain Parameter Exposure**: Fully exposed `scheme` and `asset_type` parameters across all relevant MCP interfaces, enabling autonomous agents to explicitly negotiate EVM, Solana, and Lightning settlements dynamically.
+**Fixed**
+* **Critical Bug Fix**: Fixed a `NameError` in the async payment trace execution path (`submit_monzen_trace_async`).
+**Deprecated**
+* **Graceful Tool Deprecation**: Deprecated legacy MCP tools (e.g., `report_external_paywall`) have been cleanly removed from the MCP server's exposed toolset to prevent LLM confusion, while remaining accessible in the Python client for backward compatibility.
 * **v1.2.2**
   * Intermediate release (superseded by v1.2.3 due to async fixes and MCP architectural overhaul).
 * **v1.2.1**
