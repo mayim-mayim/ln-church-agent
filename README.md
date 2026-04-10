@@ -1,10 +1,11 @@
 # ln-church-agent
 
-**Python SDK for calling L402 / HTTP 402 pay-per-use APIs with automatic payment, retry, and async support.**
+**Python SDK for calling HTTP 402-compatible pay-per-use APIs with automatic payment, retry, and async support.**
 
 Designed for Autonomous AI Agents.
 Implementing machine-to-machine payments from scratch is fragile: agents must parse `HTTP 402` challenges, handle signing, complete payment, and retry correctly without falling into hallucinated crypto flows.
 This SDK abstracts that loop into a single client call. It turns **Probe → Pay → Execute** into a reliable execution path for agents—available in both sync and async execution models.
+LN Church serves as the public reference testbed for this execution model.
 
 ---
 
