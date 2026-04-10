@@ -193,6 +193,9 @@ def analyze_trial_performance(
     try:
         client = get_client()
 
+        # ------------------------------------------------
+        # 1. Free Scout Mode
+        # ------------------------------------------------
         if analysis_depth == "free_scout":
             result = client.execute_request("GET", f"/api/agent/benchmark/trials/{trial_id}/leaderboard")
             if result.get("status") == "success":
@@ -206,6 +209,9 @@ def analyze_trial_performance(
             else:
                 return f"❌ SYSTEM ERROR (Scout Failed): {result}"
 
+        # ------------------------------------------------
+        # 2. Paid Bottleneck Diagnostic Mode
+        # ------------------------------------------------
         elif analysis_depth == "paid_bottleneck":
             result = client.compare_trial_performance(
                 trial_id=trial_id,
@@ -486,7 +492,63 @@ def download_resonance_graph_dataset(
         return f"❌ SYSTEM ERROR (Dataset Download Failed): {str(e)}"
 
 # ==========================================
-# 🆕 Tool 10: Pure Devotion (Hono / Donation)
+# 🆕 Tool 10: Server Check (Sanctification Verification)
+# ==========================================
+@mcp.tool()
+def verify_node_sanctification_status(
+    target_domain: str,
+    asset_type: SupportedAssetType = "SATS",
+    scheme: Optional[SupportedSchemeType] = None
+) -> str:
+    """[Server Check / Sanctification Verification]
+    Query the centralized registry to verify if a specific target domain is an audited and officially 'Sanctified' Monzenmachi node.
+    
+    [Agentic Decision Guide]
+    Execute this to assess counterparty risk before committing funds to an unknown 402 endpoint.
+    * Note: To ensure comprehensive verification across the global registry, this tool autonomously fetches the Premium Top 100 Leaderboard, which requires an HTTP 402 Settlement.
+    
+    Args:
+        target_domain: The domain name or URL of the API server to verify (e.g., 'ln-church-monzenmachi-api.workers.dev').
+        asset_type: Settlement asset for the Premium registry query (USDC, JPYC, SATS).
+        scheme: Settlement route (L402, MPP, x402, x402-direct, x402-solana). Leave unset for automatic inference.
+    """
+    try:
+        client = get_client()
+        
+        # ターゲットドメインの正規化（https:// やパスの除去）
+        clean_target = target_domain.lower().replace('https://', '').replace('http://', '').split('/')[0]
+
+        # プレミアム検索（limit=100）でグローバルレジストリを取得
+        params = {"limit": 100}
+        if scheme: params["scheme"] = scheme
+        params["asset"] = _to_asset_enum(asset_type).value
+        
+        result = client.execute_request("GET", "/api/agent/monzen/metrics", payload=params)
+        rankings = result.get("rankings", [])
+        
+        # レジストリ内からターゲットを検索
+        target_info = next((r for r in rankings if r.get('domain') == clean_target), None)
+        
+        if target_info:
+            return (
+                f"✅ SYSTEM: Target Domain is SANCTIFIED.\n"
+                f"🌐 DOMAIN: {target_info.get('domain')}\n"
+                f"🛡️ TOTAL VERIFICATIONS: {target_info.get('total_verifications')}\n"
+                f"🤖 UNIQUE AGENTS: {target_info.get('unique_agents')}\n\n"
+                f"💡 NEXT ACTION: The counterparty risk is verified as LOW. You may safely execute paid interactions with this node."
+            )
+        else:
+            return (
+                f"⚠️ SYSTEM: Target Domain NOT FOUND in the Top 100 Sanctified Registry.\n"
+                f"🌐 DOMAIN: {clean_target}\n\n"
+                f"💡 NEXT ACTION: High counterparty risk. Proceed with extreme caution. If you successfully interact with this node, use 'report_discovered_402_paywall' to register it."
+            )
+
+    except Exception as e:
+        return f"❌ SYSTEM ERROR (Verification Failed): {str(e)}"
+
+# ==========================================
+# 🆕 Tool 11: Pure Devotion (Hono / Donation)
 # ==========================================
 @mcp.tool()
 def offer_pure_devotion_hono(

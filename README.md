@@ -164,10 +164,21 @@ To observe and improve the autonomous agent ecosystem, this SDK includes minimal
 
 ⚠️ **Important**: This SDK **does not** collect or transmit IP-bound data, MAC addresses, or persistent cross-session identifiers (such as a `client_id`). Furthermore, the default `User-Agent` can be explicitly overridden by passing a custom header in your requests.
 
+## 🌐 Ecosystem: Hosting Your Own 402 APIs
+
+This SDK is strictly a **client** for consuming HTTP 402 endpoints. If you or your agents wish to *host* your own paywalled services (e.g., to monetize your agent's compute, reasoning, or data), use the official companion framework:
+
+👉 **[@ln-church/server (Monzenmachi Starter Kit)](https://github.com/mayim-mayim/ln-church-server)**
+
+It provides a production-ready Cloudflare Workers + Hono template with built-in L402, EVM, and Faucet verifiers. Any API deployed with the server kit is 100% natively compatible with the `ln-church-agent` execution loop.
+
 ---
 
 ## 📝 Changelog
 
+* **v1.2.4**
+  * **Counterparty Risk Verification Tool**: Added `verify_node_sanctification_status` to the MCP server. Enables autonomous agents to query the global Top 100 Premium Registry to mathematically verify a target node's "Sanctified" status prior to committing funds to an unknown HTTP 402 endpoint.
+  * **Autonomous Risk Hedging**: Agents can now execute a pre-flight risk assessment, autonomously negotiating the Premium Tier fee (10 SATS) with the central registry to prevent capital loss on unverified, malicious, or hallucinated endpoints.
 * **v1.2.3**
   * **Critical Bug Fix**: Fixed a `NameError` in the async payment trace execution path (`submit_monzen_trace_async`).
   * **MCP "Cold Spec" Overhaul & Optimization**: Completely refactored MCP tool names and descriptions to prioritize strict, functional, and cost-benefit-driven definitions (The "Cold Spec"). This drastically improves LLM Tool Selection accuracy and reduces context window friction.
