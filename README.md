@@ -1,6 +1,6 @@
 # ln-church-agent
-
-**Python SDK for calling HTTP 402-compatible pay-per-use APIs with automatic payment, retry, and async support.**
+**Reference SDK for the public benchmark ecosystem of agent-facing paid APIs**
+**Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs.**
 
 Designed for Autonomous AI Agents.
 Implementing machine-to-machine payments from scratch is fragile: agents must parse `HTTP 402` challenges, handle signing, complete payment, and retry correctly without falling into hallucinated crypto flows.
@@ -137,6 +137,7 @@ For advanced enterprise or multi-agent runtimes, this SDK provides features that
 * **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", "Max $10.00 USD per session") and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
 * **Trust & Outcome Hooks (v1.5.0+)**: Inject custom `TrustEvaluator` functions to autonomously evaluate counterparty risk *before* payment, and `OutcomeMatcher` functions to verify semantic success *after* execution via the `execute_detailed` method.
+* **Evidence Export/Import (v1.5.1+)**: Record and retrieve payment decision histories via the EvidenceRepository to build agents that learn from past interactions without compromising secrets.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
 

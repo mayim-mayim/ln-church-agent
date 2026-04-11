@@ -3,7 +3,9 @@ import os
 import requests
 from typing import Optional, Protocol
 from eth_account import Account
-from eth_account.messages import encode_typed_data
+
+# 🚨 修正: トップレベルインポートを削除
+# from eth_account.messages import encode_typed_data
 from .protocols import EVMSigner
 
 # フォールバック用辞書
@@ -29,6 +31,7 @@ class LocalKeyAdapter(EVMSigner):
         self, asset: str, human_amount: float, relayer_url: str, treasury_address: str,
         chain_id: int = 137, token_address: str = None
     ) -> str:
+        from eth_account.messages import encode_typed_data
         if not relayer_url or not treasury_address:
             raise ValueError("HATEOASエラー: Relayer URL または Treasury Address が指定されていません。")
             

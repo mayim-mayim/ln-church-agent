@@ -1,11 +1,20 @@
 # Changelog
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
+
+## [1.5.1] - Experimental Evidence Export/Import Layer
+* **Added**: `EvidenceRepository` base class with `export_evidence` and `import_evidence` hooks (sync/async).
+* **Added**: `PaymentEvidenceRecord` to safely encapsulate the lifecycle of a 402 interaction (intentionally excluding secrets like preimages).
+* **Changed**: Core execution engine automatically imports past evidence into `context.past_evidence` and exports records upon completion or failure.
+* **Details**: [v1.5.1 Release Notes](docs/release_notes/v1.5.1.md)
+* **Fixed**: Normalized `ValueError` bubbling during client initialization. Invalid private keys now consistently return a unified, predictable error message regardless of the underlying cryptographic adapter, squashing a latent initialization bug.
+
 ## [1.5.0] - Source-Agnostic Trust & Provider-Agnostic Outcome
 * **Added**: `TrustEvidence` model to abstract trust evaluation inputs (URL, metadata, agent hints).
 * **Changed**: `OutcomeMatcher` can now accept `SettlementReceipt` to perform cross-verification between the payment proof and the host's response.
 * **Changed**: `ExecutionContext` now supports `hints` for passing top-down agent knowledge into hooks.
 * **Compatibility**: Evaluators and Matchers written for v1.4 remain 100% backward compatible via dynamic signature inspection.
+* **Details**: [v1.5.0 Release Notes](docs/release_notes/v1.5.0.md)
 
 ## [1.4.0] - Trust & Outcome Layer (Decide & Verify)
 * **Added**: `TrustEvaluator` hooks to evaluate counterparty risk before payment.

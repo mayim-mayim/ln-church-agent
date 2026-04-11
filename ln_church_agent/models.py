@@ -4,6 +4,94 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
+import time
+
+
+# ==========================================
+# v1.4 / v1.5: Trust, Outcome & Evidence Layer Models
+# (※依存順序による前方参照エラーを防ぐためトポロジカルに配置)
+# ==========================================
+
+class TrustDecision(BaseModel):
+    """支払い前の相手先信用評価結果"""
+    is_trusted: bool
+    reason: str = ""
+
+class OutcomeSummary(BaseModel):
+    """決済後の期待状態（Outcome）の評価結果"""
+    is_success: bool
+    observed_state: str = ""
+    message: str = ""
+    external_evidence: dict = Field(default_factory=dict)
+
+class PaymentEvidenceRecord(BaseModel):
+    """v1.5.1 Experimental: 支払い判断と結果の証跡レコード"""
+    timestamp: float = Field(default_factory=time.time)
+    session_id: str
+    correlation_id: str
+    target_url: str
+    method: str
+    scheme: Optional[str] = None
+    asset: Optional[str] = None
+    amount: Optional[float] = None
+    trust_decision: Optional[TrustDecision] = None
+    receipt_summary: Optional[dict] = None
+    outcome: Optional[OutcomeSummary] = None
+    error_message: Optional[str] = None
+
+class ExecutionContext(BaseModel):
+    """軽量な意図とセッションのコンテキスト"""
+    intent_label: str = "default_intent"
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    hints: dict = Field(default_factory=dict)
+    # v1.5.1 Experimental: 明示的かつ型安全な Evidence 引き回し用フィールド
+    past_evidence: Optional[List[PaymentEvidenceRecord]] = None
+
+class ParsedChallenge(BaseModel):
+    scheme: str
+    amount: float
+    asset: str
+    invoice: Optional[str] = None
+    macaroon: Optional[str] = None
+    charge_id: Optional[str] = None
+    destination: Optional[str] = None
+    chain_id: Optional[str] = None
+    token_address: Optional[str] = None
+    relayer_endpoint: Optional[str] = None
+    reference: Optional[str] = None
+    raw_headers: dict = Field(default_factory=dict)
+
+class TrustEvidence(BaseModel):
+    """評価の根拠を束ねるコンテナ（Source-Agnostic）"""
+    url: str
+    challenge: ParsedChallenge
+    host_metadata: dict = Field(default_factory=dict)
+    agent_hints: dict = Field(default_factory=dict)
+
+class ExecutionResult(BaseModel):
+    response: dict
+    final_url: str
+    retry_count: int = 0
+    settlement_receipt: Optional[Any] = None
+    used_scheme: Optional[str] = None
+    used_asset: Optional[str] = None
+    verification_status: Optional[str] = None
+    outcome: Optional[OutcomeSummary] = None
+
+class EvidenceRepository:
+    """v1.5.1 Experimental: Evidenceの保存と取得を行うための抽象インターフェース"""
+    def export_evidence(self, record: PaymentEvidenceRecord, context: ExecutionContext) -> None:
+        pass
+
+    def import_evidence(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
+        return []
+
+    async def export_evidence_async(self, record: PaymentEvidenceRecord, context: ExecutionContext) -> None:
+        self.export_evidence(record, context)
+
+    async def import_evidence_async(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
+        return self.import_evidence(target_url, context)
 
 @dataclass
 class PaymentPolicy:
@@ -21,65 +109,6 @@ class PaymentPolicy:
     
     # 内部管理用セッション消費額
     _session_spent_usd: float = field(default=0.0, repr=False)
-
-# ==========================================
-# v1.5: Trust & Outcome Layer Models
-# ==========================================
-
-class ExecutionContext(BaseModel):
-    """軽量な意図とセッションのコンテキスト"""
-    intent_label: str = "default_intent"
-    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    # v1.5: エージェントの事前知識や動的な指示を運ぶ補助フィールド
-    hints: dict = Field(default_factory=dict)
-
-class ParsedChallenge(BaseModel):
-    scheme: str
-    amount: float
-    asset: str
-    invoice: Optional[str] = None
-    macaroon: Optional[str] = None
-    charge_id: Optional[str] = None
-    destination: Optional[str] = None
-    chain_id: Optional[str] = None
-    token_address: Optional[str] = None
-    relayer_endpoint: Optional[str] = None
-    reference: Optional[str] = None
-    raw_headers: dict = Field(default_factory=dict)
-
-class TrustEvidence(BaseModel):
-    """v1.5: 評価の根拠を束ねるコンテナ（Source-Agnostic）"""
-    url: str
-    challenge: ParsedChallenge
-    host_metadata: dict = Field(default_factory=dict)
-    agent_hints: dict = Field(default_factory=dict)
-
-class TrustDecision(BaseModel):
-    """支払い前の相手先信用評価結果"""
-    is_trusted: bool
-    reason: str = ""
-
-class OutcomeSummary(BaseModel):
-    """決済後の期待状態（Outcome）の評価結果"""
-    is_success: bool
-    observed_state: str = ""
-    message: str = ""
-    # v1.5: 外部の検証結果やReceiptの内容など、付加的な証拠を格納
-    external_evidence: dict = Field(default_factory=dict)
-
-# ==========================================
-# ExecutionResult
-# ==========================================
-class ExecutionResult(BaseModel):
-    response: dict
-    final_url: str
-    retry_count: int = 0
-    settlement_receipt: Optional[Any] = None
-    used_scheme: Optional[str] = None
-    used_asset: Optional[str] = None
-    verification_status: Optional[str] = None
-    outcome: Optional[OutcomeSummary] = None
 
 class SettlementReceipt(BaseModel):
     """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""

@@ -1,5 +1,5 @@
 import pytest
-# v1.5でトップレベルに昇格した概念をすべてインポート
+# 1. 完全に Public Stable な概念のみトップレベルからインポート
 from ln_church_agent import (
     Payment402Client,
     LnChurchClient,
@@ -10,9 +10,11 @@ from ln_church_agent import (
     OutcomeSummary,
     TrustEvidence
 )
+# 2. Experimental な概念は .models から明示的にインポート
+from ln_church_agent.models import PaymentEvidenceRecord, EvidenceRepository
 
 def test_public_api_imports_and_instantiation():
-    """トップレベルからインポートしたモデルがスキーマエラーなく生成できるか確認"""
+    """トップレベルからインポートした Stable なモデルがスキーマエラーなく生成できるか確認"""
     
     # 1. ParsedChallenge
     pc = ParsedChallenge(scheme="L402", amount=10.0, asset="SATS")
@@ -47,3 +49,21 @@ def test_public_api_imports_and_instantiation():
     )
     assert er.outcome is not None
     assert er.outcome.is_success is True
+
+def test_experimental_evidence_models_instantiation():
+    """v1.5.1 の Experimental 概念が依存関係エラーなく .models 経由で生成できるか確認"""
+    
+    # EvidenceRepository (抽象クラスのデフォルト挙動)
+    repo = EvidenceRepository()
+    assert repo.import_evidence("http://dummy", ExecutionContext()) == []
+
+    # PaymentEvidenceRecord
+    record = PaymentEvidenceRecord(
+        session_id="sess_123",
+        correlation_id="corr_123",
+        target_url="http://dummy",
+        method="POST"
+    )
+    assert record.session_id == "sess_123"
+    assert record.timestamp > 0
+    assert record.trust_decision is None

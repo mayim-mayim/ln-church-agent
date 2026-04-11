@@ -16,7 +16,8 @@ from .models import (
     HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
     MonzenGraphResponse, PaymentPolicy, SettlementReceipt,
     ParsedChallenge, ExecutionResult, 
-    ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence
+    ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
+    PaymentEvidenceRecord, EvidenceRepository 
 )
 # v1.4: CounterpartyTrustError を追加
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, CounterpartyTrustError
@@ -31,7 +32,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.0" 
+        return "1.5.1" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -61,6 +62,8 @@ class Payment402Client:
         solana_signer: Optional[SolanaSigner] = None,
         # --- v1.4 Boundaries ---
         trust_evaluators: Optional[List[Callable]] = None,
+        # --- v1.5.1 Boundaries ---
+        evidence_repo: Optional[EvidenceRepository] = None,
     ):
         self.private_key = private_key
         self.ln_api_url = ln_api_url
@@ -105,6 +108,8 @@ class Payment402Client:
         self._async_client: Optional[httpx.AsyncClient] = None
         # v1.4.0
         self.trust_evaluators = trust_evaluators or []
+        # v1.5.1
+        self.evidence_repo = evidence_repo
 
     # ==========================================
     # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
@@ -285,8 +290,11 @@ class Payment402Client:
         _current_hop: int = 0, _payment_retry_count: int = 0,
         context: Optional[ExecutionContext] = None,
         outcome_matcher: Optional[Callable] = None,
-        _current_receipt: Optional[SettlementReceipt] = None # v1.5: Matcherに渡すための内部状態
+        _current_receipt: Optional[SettlementReceipt] = None
     ) -> ExecutionResult:
+        
+        # ★ v1.5.1: Contextが未指定の場合、フロー全体で同一のセッションを維持するためにここで初期化
+        context = context or ExecutionContext()
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
@@ -304,24 +312,18 @@ class Payment402Client:
 
         res = requests.request(method_upper, url, **req_kwargs)
 
-        # 🟢 Outcome Verification (200 OK)
         if 200 <= res.status_code < 300:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
-            # v1.5: 決済後の結果（Outcome）を意味づけする（Provider-Agnostic）
             if outcome_matcher:
                 sig = inspect.signature(outcome_matcher)
                 if len(sig.parameters) == 3:
-                    # v1.5 Signature: (response, receipt, context)
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
                 else:
-                    # v1.4 Fallback Signature: (response, context)
                     result.outcome = outcome_matcher(resp_data, context)
-                
             return result
 
-        # 🔴 Counterparty Trust Evaluation (402 Payment Required)
         if res.status_code == 402:
             if _payment_retry_count >= self.max_payment_retries:
                 raise PaymentExecutionError("Max 402 retries exceeded")
@@ -329,55 +331,78 @@ class Payment402Client:
             parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
             self._enforce_policy(parsed, url)
 
-            # v1.5: TrustEvidence の構築（Source-Agnostic）
+            # ★ 修正: sync 側も context.past_evidence を主経路にする (hints 代入をやめる)
+            if self.evidence_repo:
+                past_records = self.evidence_repo.import_evidence(url, context)
+                if past_records:
+                    context.past_evidence = past_records
+
             evidence = TrustEvidence(
                 url=url,
                 challenge=parsed,
-                host_metadata={}, # 将来的にHATEOAS等から抽出可能
-                agent_hints=context.hints if context else {}
+                host_metadata={},
+                agent_hints=context.hints
             )
 
-            # 支払い前に相手の信用度を評価する
-            for evaluator in self.trust_evaluators:
-                sig = inspect.signature(evaluator)
-                if len(sig.parameters) == 2:
-                    # v1.5 Signature: (evidence, context)
-                    decision: TrustDecision = evaluator(evidence, context)
-                else:
-                    # v1.4 Fallback Signature: (url, challenge, context)
-                    decision: TrustDecision = evaluator(url, parsed, context)
+            decision = None
+            try:
+                # Trust Evaluation
+                for evaluator in self.trust_evaluators:
+                    sig = inspect.signature(evaluator)
+                    if len(sig.parameters) == 2:
+                        decision = evaluator(evidence, context)
+                    else:
+                        decision = evaluator(url, parsed, context)
+                    
+                    if not decision.is_trusted:
+                        raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
+
+                # Payment Execution
+                proof_ref, network_name = self._process_payment(parsed, headers, payload)
+                self._record_session_spend(parsed)
+
+                receipt = SettlementReceipt(
+                    scheme=parsed.scheme, network=network_name, asset=parsed.asset,
+                    settled_amount=parsed.amount, proof_reference=proof_ref,
+                    verification_status="verified" if network_name == "Lightning" else "self_reported"
+                )
+                self.last_receipt = receipt
+
+                # Recursion
+                next_result = self.execute_detailed(
+                    method, url, payload, headers, _current_hop, _payment_retry_count + 1,
+                    context=context, outcome_matcher=outcome_matcher,
+                    _current_receipt=receipt
+                )
                 
-                if not decision.is_trusted:
-                    raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
+                next_result.settlement_receipt = receipt
+                next_result.used_scheme = parsed.scheme
+                next_result.used_asset = parsed.asset
+                next_result.verification_status = receipt.verification_status
+                
+                # ★ v1.5.1: 正常完了時の Evidence Export
+                if self.evidence_repo:
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                        trust_decision=decision,
+                        receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
+                        outcome=next_result.outcome
+                    )
+                    self.evidence_repo.export_evidence(record, context)
 
-            proof_ref, network_name = self._process_payment(parsed, headers, payload)
-            self._record_session_spend(parsed)
+                return next_result
 
-            receipt = SettlementReceipt(
-                scheme=parsed.scheme, network=network_name, asset=parsed.asset,
-                settled_amount=parsed.amount, proof_reference=proof_ref,
-                verification_status="verified" if network_name == "Lightning" else "self_reported"
-            )
-            self.last_receipt = receipt
-
-            # ★ v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
-            next_result = self.execute_detailed(
-                method, url, payload, headers, _current_hop, _payment_retry_count + 1,
-                context=context, outcome_matcher=outcome_matcher,
-                _current_receipt=receipt
-            )
-            
-            next_result.settlement_receipt = receipt
-            next_result.used_scheme = parsed.scheme
-            next_result.used_asset = parsed.asset
-            next_result.verification_status = receipt.verification_status
-            return next_result
-
-        try:
-            error_data = res.json()
-            next_action = HateoasErrorResponse(**error_data).next_action
-        except Exception:
-            raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
+            except Exception as e:
+                # ★ v1.5.1: エラー時（Trust Block等）の Evidence Export
+                if self.evidence_repo:
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                        trust_decision=decision, error_message=str(e)
+                    )
+                    self.evidence_repo.export_evidence(record, context)
+                raise
 
         # 🟡 HATEOAS Navigation
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
@@ -399,7 +424,7 @@ class Payment402Client:
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
 
     # ==========================================
-    # v1.3.0: Execution Contract の強化 (非同期 Runtime Layer)
+    # ⚡ 非同期 (Async) Runtime Layer
     # ==========================================
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         """[後方互換性維持] 内部で execute_detailed_async を呼び出し、レスポンスの辞書のみを返却する。"""
@@ -413,7 +438,11 @@ class Payment402Client:
         outcome_matcher: Optional[Callable] = None,
         _current_receipt: Optional[SettlementReceipt] = None # v1.5: Matcherに渡すための内部状態
     ) -> ExecutionResult:
-        """v1.3.0: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
+        """v1.3.0+: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
+        
+        # ★ v1.5.1: Contextが未指定の場合、フロー全体で同一のセッションを維持するためにここで初期化
+        context = context or ExecutionContext()
+        
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
         if not any(k.lower() == "user-agent" for k in headers.keys()):
@@ -458,55 +487,91 @@ class Payment402Client:
             parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
             self._enforce_policy(parsed, url)
 
+            if getattr(self, "evidence_repo", None):
+                if hasattr(self.evidence_repo, "import_evidence_async"):
+                    past_records = await self.evidence_repo.import_evidence_async(url, context)
+                else:
+                    past_records = self.evidence_repo.import_evidence(url, context)
+                
+                if past_records:
+                    # 修正: Magic Stringを排除し、型安全な専用フィールドへ格納
+                    context.past_evidence = past_records
+
             # v1.5: TrustEvidence の構築（Source-Agnostic）
             evidence = TrustEvidence(
                 url=url,
                 challenge=parsed,
-                host_metadata={}, # 将来的にHATEOAS等から抽出可能
-                agent_hints=context.hints if context else {}
+                host_metadata={},
+                agent_hints=context.hints # hints はそのまま補助用として渡す
             )
 
-            # 支払い前に相手の信用度を評価する
-            for evaluator in self.trust_evaluators:
-                sig = inspect.signature(evaluator)
-                if len(sig.parameters) == 2:
-                    # v1.5 Signature: (evidence, context)
-                    decision: TrustDecision = evaluator(evidence, context)
-                else:
-                    # v1.4 Fallback Signature: (url, challenge, context)
-                    decision: TrustDecision = evaluator(url, parsed, context)
+            decision = None
+            try:
+                # 支払い前に相手の信用度を評価する
+                for evaluator in self.trust_evaluators:
+                    sig = inspect.signature(evaluator)
+                    if len(sig.parameters) == 2:
+                        decision = evaluator(evidence, context)
+                    else:
+                        decision = evaluator(url, parsed, context)
+                    
+                    if not decision.is_trusted:
+                        raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
+
+                # アダプターのブロッキング処理を回避するため、スレッドプールで実行
+                loop = asyncio.get_running_loop()
+                proof_ref, network_name = await loop.run_in_executor(
+                    None, self._process_payment, parsed, headers, payload
+                )
+
+                self._record_session_spend(parsed)
+
+                receipt = SettlementReceipt(
+                    scheme=parsed.scheme, network=network_name, asset=parsed.asset,
+                    settled_amount=parsed.amount, proof_reference=proof_ref,
+                    verification_status="verified" if network_name == "Lightning" else "self_reported"
+                )
+                self.last_receipt = receipt
+
+                # v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
+                next_result = await self.execute_detailed_async(
+                    method, url, payload, headers, _current_hop, _payment_retry_count + 1,
+                    context=context, outcome_matcher=outcome_matcher,
+                    _current_receipt=receipt
+                )
                 
-                if not decision.is_trusted:
-                    raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
+                next_result.settlement_receipt = receipt
+                next_result.used_scheme = parsed.scheme
+                next_result.used_asset = parsed.asset
+                next_result.verification_status = receipt.verification_status
 
-            # アダプターのブロッキング処理を回避するため、スレッドプールで実行
-            loop = asyncio.get_running_loop()
-            proof_ref, network_name = await loop.run_in_executor(
-                None, self._process_payment, parsed, headers, payload
-            )
+                if getattr(self, "evidence_repo", None):
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                        trust_decision=decision,
+                        receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
+                        outcome=next_result.outcome
+                    )
+                    if hasattr(self.evidence_repo, "export_evidence_async"):
+                        await self.evidence_repo.export_evidence_async(record, context)
+                    else:
+                        self.evidence_repo.export_evidence(record, context)
 
-            self._record_session_spend(parsed)
+                return next_result
 
-            receipt = SettlementReceipt(
-                scheme=parsed.scheme, network=network_name, asset=parsed.asset,
-                settled_amount=parsed.amount, proof_reference=proof_ref,
-                verification_status="verified" if network_name == "Lightning" else "self_reported"
-            )
-            self.last_receipt = receipt
-
-            # ★ v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
-            next_result = await self.execute_detailed_async(
-                method, url, payload, headers, _current_hop, _payment_retry_count + 1,
-                context=context, outcome_matcher=outcome_matcher,
-                _current_receipt=receipt
-            )
-            
-            next_result.settlement_receipt = receipt
-            next_result.used_scheme = parsed.scheme
-            next_result.used_asset = parsed.asset
-            next_result.verification_status = receipt.verification_status
-            return next_result
-
+            except Exception as e:
+                if getattr(self, "evidence_repo", None):
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                        trust_decision=decision, error_message=str(e)
+                    )
+                    if hasattr(self.evidence_repo, "export_evidence_async"):
+                        await self.evidence_repo.export_evidence_async(record, context)
+                    else:
+                        self.evidence_repo.export_evidence(record, context)
+                raise
         try:
             error_data = res.json()
             next_action = HateoasErrorResponse(**error_data).next_action
@@ -570,6 +635,8 @@ class LnChurchClient(Payment402Client):
         ln_adapter: Optional[LightningProvider] = None,
         solana_signer: Optional[SolanaSigner] = None,
         policy: Optional[PaymentPolicy] = None,
+        *args,
+        **kwargs
     ):
         # 1. v1.3.1: 親クラスを呼ぶ前に、鍵の検証と agent_id の導出を完了させる
         derived_agent_id = agent_id
@@ -590,22 +657,32 @@ class LnChurchClient(Payment402Client):
         else:
             derived_agent_id = agent_id or "Anonymous_Agent"
 
-        # 2. 安全が確認された状態で、親クラスの初期化を実行
-        super().__init__(
-            private_key=private_key, 
-            ln_api_url=ln_api_url, 
-            ln_api_key=ln_api_key, 
-            ln_provider=ln_provider, 
-            base_url=base_url, 
-            evm_rpc_url=evm_rpc_url, 
-            auto_navigate=auto_navigate, 
-            max_hops=max_hops, 
-            allow_unsafe_navigate=allow_unsafe_navigate,
-            evm_signer=evm_signer,
-            ln_adapter=ln_adapter,
-            solana_signer=solana_signer,
-            policy=policy
-        )
+
+        # ★ 修正: 親クラスの初期化（下層アダプタの生成）で発生するパースエラーを捕捉し、
+        # LnChurchClient として意図したエラーメッセージに正規化（バブリング順の調整）
+        try:
+            # 🚨 修正: 必要な引数をすべて親クラスにしっかり引き継ぐ！
+            super().__init__(
+                private_key=private_key, 
+                ln_api_url=ln_api_url, 
+                ln_api_key=ln_api_key, 
+                ln_provider=ln_provider, 
+                base_url=base_url, 
+                evm_rpc_url=evm_rpc_url, 
+                auto_navigate=auto_navigate, 
+                max_hops=max_hops, 
+                allow_unsafe_navigate=allow_unsafe_navigate,
+                evm_signer=evm_signer,
+                ln_adapter=ln_adapter,
+                solana_signer=solana_signer,
+                policy=policy,
+                *args,
+                **kwargs
+            )
+        except ValueError as e:
+            # LocalKeyAdapter や LocalSolanaAdapter が発した ValueError をキャッチし、
+            # テストが期待する "Invalid private_key format ..." に統一して投げ直す
+            raise ValueError(f"Invalid private_key format. Details: {str(e)}") from e
 
         # 3. 導出したIDと初期プロパティをセット
         self.agent_id = derived_agent_id
