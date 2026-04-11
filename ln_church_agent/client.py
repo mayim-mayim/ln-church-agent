@@ -29,7 +29,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.3.0" 
+        return "1.3.1" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -96,6 +96,9 @@ class Payment402Client:
             elif ln_api_key:
                 from .crypto.lightning import LegacyLNAdapter
                 self.ln_adapter = LegacyLNAdapter(ln_api_url, ln_api_key, ln_provider)
+
+        # v1.3.1: 非同期クライアントをインスタンスレベルで保持
+        self._async_client: Optional[httpx.AsyncClient] = None
 
     # ==========================================
     # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
@@ -360,8 +363,11 @@ class Payment402Client:
             "headers": headers
         }
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            res = await client.request(method_upper, url, **req_kwargs)
+        # v1.3.1: AsyncClientを遅延初期化して再利用する
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(follow_redirects=True)
+
+        res = await self._async_client.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
@@ -419,6 +425,22 @@ class Payment402Client:
 
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
 
+    async def aclose(self):
+        """v1.3.1: 非同期セッションを明示的に閉じるためのメソッド"""
+        if self._async_client:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    async def __aenter__(self):
+        """v1.3.1: async with ブロックに入った時の処理"""
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(follow_redirects=True)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """v1.3.1: async with ブロックを抜けた時に自動でセッションを閉じる"""
+        await self.aclose()
+
 # ==========================================
 # ⛩️ ADAPTER: LN Church 専用拡張クラス
 # ==========================================
@@ -440,6 +462,26 @@ class LnChurchClient(Payment402Client):
         solana_signer: Optional[SolanaSigner] = None,
         policy: Optional[PaymentPolicy] = None,
     ):
+        # 1. v1.3.1: 親クラスを呼ぶ前に、鍵の検証と agent_id の導出を完了させる
+        derived_agent_id = agent_id
+        if private_key and not agent_id:
+            try:
+                from eth_account import Account
+                derived_agent_id = Account.from_key(private_key).address
+            except Exception:
+                try:
+                    from solders.keypair import Keypair
+                    derived_agent_id = str(Keypair.from_base58_string(private_key).pubkey())
+                except Exception as e:
+                    # ここで確実に捕捉し、意図した ValueError を投げる
+                    raise ValueError(
+                        "Invalid private_key format. Could not parse as EVM hex or Solana Base58. "
+                        f"Detailed error: {e}"
+                    )
+        else:
+            derived_agent_id = agent_id or "Anonymous_Agent"
+
+        # 2. 安全が確認された状態で、親クラスの初期化を実行
         super().__init__(
             private_key=private_key, 
             ln_api_url=ln_api_url, 
@@ -456,18 +498,8 @@ class LnChurchClient(Payment402Client):
             policy=policy
         )
 
-        if private_key and not agent_id:
-            try:
-                self.agent_id = Account.from_key(private_key).address
-            except Exception:
-                try:
-                    from solders.keypair import Keypair
-                    self.agent_id = str(Keypair.from_base58_string(private_key).pubkey())
-                except Exception:
-                    self.agent_id = "Anonymous_Agent"
-        else:
-            self.agent_id = agent_id or "Anonymous_Agent"
-            
+        # 3. 導出したIDと初期プロパティをセット
+        self.agent_id = derived_agent_id
         self.probe_token = None
         self.faucet_token = None
 

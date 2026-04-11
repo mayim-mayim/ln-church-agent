@@ -11,13 +11,14 @@ from ln_church_agent.adapters.nwc import NWCAdapter
 def main():
     print("🛡️ Initializing Agent with Strict Policies & Remote NWC Wallet...")
 
-    # 1. Define strict policy (e.g., Only allow L402, max 1.0 USD)
+    # 1. Define strict policy (e.g., Only allow L402, max 1.0 USD per tx, max 10.0 USD per session)
     strict_policy = PaymentPolicy(
         allowed_schemes=["L402"],
         allowed_assets=["SATS"],
-        max_spend_per_tx_usd=1.0 
+        max_spend_per_tx_usd=1.0,
+        max_spend_per_session_usd=10.0 
     )
-
+    
     # 2. Setup NWC Adapter (Agent holds NO private keys)
     nwc_uri = os.environ.get("NWC_URI", "nostr+walletconnect://mock...")
     nwc_bridge = os.environ.get("NWC_BRIDGE_URL", "https://your-nwc-bridge.com/api/nwc")

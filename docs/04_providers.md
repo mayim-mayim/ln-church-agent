@@ -38,7 +38,7 @@ client = Payment402Client(
 
 ---
 
-## 🔹 Nostr Wallet Connect (NWC) - Experimental v1.2.0
+## 🔹 Nostr Wallet Connect (NWC) - Experimental
 
 NWC (NIP-47) allows an agent to request payments from a remote Lightning wallet without holding the private keys. 
 
@@ -50,7 +50,7 @@ from ln_church_agent.adapters.nwc import NWCAdapter
 
 nwc_adapter = NWCAdapter(
     nwc_uri="nostr+walletconnect://<pubkey>?relay=<relay>&secret=<secret>",
-    bridge_url="[https://your-secure-nwc-bridge.internal/api/pay](https://your-secure-nwc-bridge.internal/api/pay)"
+    bridge_url="https://your-secure-nwc-bridge.internal/api/pay"
 )
 
 client = Payment402Client(ln_adapter=nwc_adapter)

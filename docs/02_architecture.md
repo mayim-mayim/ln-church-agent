@@ -14,12 +14,14 @@ The client automatically intercepts 402 challenges and negotiates payment across
 * **L402 & MPP (Lightning Network)**: Fully compatible with Lightning Labs' L402 protocol and the emerging Machine Payments Protocol (MPP). It manages macaroon extraction, Bolt11 invoice parsing, and preimage submission.
 *Note on Solana:* The `x402-solana` settlement scheme is currently exclusive to the Resonance Graph export and strictly supports **USDC only**. Ensure you have installed the extra dependencies (`pip install ln-church-agent[solana]`).
 
-### 2. Economic Guardrails (v1.3.0+)
+### 2. Economic Guardrails (v1.3+)
 Autonomous agents can hallucinate or be subjected to malicious HATEOAS redirects. The `PaymentPolicy` engine intercepts every 402 challenge *before* payment execution.
 * Evaluates requested `scheme` and `asset` against allowed lists.
 * Calculates estimated USD value and blocks transactions exceeding `max_spend_per_tx_usd`.
+* Tracks cumulative session spending and enforces `max_spend_per_session_usd` to prevent budget exhaustion across multiple HATEOAS navigations or loops.
 
-### 3. Verifiable Settlement Receipts (v1.3.0+)
+
+### 3. Verifiable Settlement Receipts (v1.3+)
 After a successful 402 negotiation, the SDK generates a `SettlementReceipt`. This allows the LLM agent to record its expenditures internally.
 * Contains `receipt_id`, `scheme`, `settled_amount`, and `proof_reference`.
 * Includes a `verification_status` to distinguish between cryptographically verified payments (e.g., L402 preimages) and self-reported blockchain hashes.
@@ -32,7 +34,7 @@ The engine autonomously follows `next_action` links provided in 4xx/5xx HATEOAS 
 * **Guardrails**: It includes built-in protections such as maximum hop counts and restrictions on unsafe HTTP methods to prevent infinite loops or unintended state mutations.
 
 ### 6. Decentralized Paywall DNS (Monzen)
-New in version 1.1.0+, the SDK allows agents to interact with a global registry of L402-protected APIs. Agents can:
+The SDK allows agents to natively interact with a global registry of L402-protected APIs. Agents can:
 * **Discover and Report**: Map the web by scouting new paywalls.
 * **Consume Intelligence**: Spend SATS to unlock premium intelligence from the network.
 

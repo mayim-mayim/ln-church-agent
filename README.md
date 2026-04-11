@@ -130,13 +130,12 @@ When an AI Agent hits `HTTP 402 Payment Required`, it often stalls, crashes, or 
 As of v1.1.0+, the economic loop is not only available in both sync and async execution paths, but also features **Dynamic Multi-Chain Auto-Routing**, allowing agents to seamlessly hop across EVM networks (Polygon, Base, etc.) exactly as dictated by the server's HATEOAS challenge.
 
 ---
+## 🧪 Advanced Agent-Native Features
 
-## 🧪 Experimental / Agent-Native Features (v1.2.0+)
+For advanced enterprise or multi-agent runtimes, this SDK provides features that separate keys from execution and enforce strict economic safety.
 
-For advanced enterprise or multi-agent runtimes, v1.2.0 introduces features that separate keys from execution and provide strict economic safety.
-
-* **Delegated Signers (NWC)**: Agents can pay Lightning invoices without holding a private key via the `NWCAdapter` (currently utilizing an HTTP Bridge Gateway).
-* **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction") and restrict allowed networks.
+* **Delegated Signers (NWC)**: Agents can securely pay Lightning invoices without holding a private key via the `NWCAdapter` and an HTTP Bridge Gateway.
+* **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", **"Max $10.00 USD per session"**) and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
@@ -175,8 +174,14 @@ This SDK is strictly a **client** for consuming HTTP 402 endpoints. If you or yo
 It provides a production-ready Cloudflare Workers + Hono template with built-in L402, EVM, and Faucet verifiers. Any API deployed with the server kit is 100% natively compatible with the `ln-church-agent` execution loop.
 
 ---
-
 ## 📝 Changelog
+
+### v1.3.1 — Async Performance & UX Patch
+**Fixed**
+* **Async Connection Pooling**: Reused `httpx.AsyncClient` at the instance level to prevent socket exhaustion and reduce overhead in high-frequency runtimes.
+* **Silent Identity Fallback**: Replaced the silent fallback to `"Anonymous_Agent"` with an explicit `ValueError` when `private_key` parsing fails.
+**Documentation**
+* **Session Guardrails**: Added `max_spend_per_session_usd` configurations to official examples.
 
 ### v1.3.0 — Safety & Stability Overhaul
 **Fixed**
@@ -186,16 +191,19 @@ It provides a production-ready Cloudflare Workers + Hono template with built-in 
 * **Compatibility Layer**: Restored `execute_paid_action` for backward compatibility with 1.2.x runtimes. 
 **Changed**
 * **Version Baseline**: Bumped stable line to 1.3.x. 
+
 ### v1.2.5 — Stable Line Maintenance & Documentation Refactoring
 **Changed**
 * **Standardized Example/Test Names**: Renamed version-specific files (e.g., `advanced_1_2_0.py`) to role-based names (`advanced_receipts_and_policy.py`) to maintain a consistent stable line.
 * **Stable Contract Definition**: Updated README to define the stable line expectations for the 1.3.x series.
 **Added**
 * **External Release Notes**: Established `docs/release_notes/` for better historical tracking and GitHub Release synchronization.
+
 ### v1.2.4 — Risk Verification & Autonomous Hedging
 **Added**
 * **Counterparty Risk Verification Tool**: Added `verify_node_sanctification_status` to the MCP server. Enables autonomous agents to query the global Top 100 Premium Registry to mathematically verify a target node's "Sanctified" status prior to committing funds to an unknown HTTP 402 endpoint.
 * **Autonomous Risk Hedging**: Agents can now execute a pre-flight risk assessment, autonomously negotiating the Premium Tier fee (10 SATS) with the central registry to prevent capital loss on unverified, malicious, or hallucinated endpoints.
+
 ### v1.2.3 — MCP Cold-Spec Overhaul
 **Added**
 * **Zero-Balance Cold Start Tool**: Added `request_zero_balance_fallback_funds` to the MCP server, allowing un-funded agents to autonomously navigate their initial Faucet grant and bypass the first capability verification.

@@ -98,9 +98,9 @@ This uses the same economic loop as the sync client: 402 detect → pay → retr
 
 ---
 
-## 🧪 Advanced Usage: Guardrails & NWC (v1.3.0+)
+## 🧪 Advanced Usage: Guardrails & NWC (v1.3+)
 
-For enterprise or multi-agent runtimes, you should not give agents raw private keys or unlimited spending power. Version 1.3.0+ introduces `PaymentPolicy` and `NWCAdapter`.
+For enterprise or multi-agent runtimes, you should not give agents raw private keys or unlimited spending power. Version 1.3+ introduces `PaymentPolicy` and `NWCAdapter`.
 
 ### 1. Setting a Payment Policy
 Prevent AI hallucinations from draining wallets by enforcing strict rules.
@@ -111,7 +111,8 @@ from ln_church_agent import PaymentPolicy
 strict_policy = PaymentPolicy(
     allowed_schemes=["L402", "x402"],
     allowed_assets=["SATS", "USDC"],
-    max_spend_per_tx_usd=2.0  # Block any transaction > $2.00 USD
+    max_spend_per_tx_usd=2.0,        # Block any transaction > $2.00 USD
+    max_spend_per_session_usd=10.0   # Block if total session spend exceeds $10.00 USD
 )
 ```
 

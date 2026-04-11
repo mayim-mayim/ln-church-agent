@@ -49,3 +49,30 @@ def test_execute_paid_action_compatibility():
         assert len(w) >= 1
         assert issubclass(w[-1].category, DeprecationWarning)
         assert "execute_paid_action" in str(w[-1].message)
+
+import pytest
+from ln_church_agent import Payment402Client, LnChurchClient
+
+# --- v1.3.1 挙動担保テスト ---
+
+def test_invalid_private_key_raises_value_error():
+    """不正な秘密鍵を渡した際、Silent Fallbackせずに明示的なエラーが出ることを確認"""
+    with pytest.raises(ValueError, match="Invalid private_key format"):
+        # 明らかにEVMでもSolanaでもない文字列
+        LnChurchClient(private_key="this_is_a_completely_invalid_key_string")
+
+@pytest.mark.asyncio
+async def test_async_client_lifecycle():
+    """AsyncClientの初期化、再利用、および aclose の挙動を確認"""
+    client = Payment402Client(base_url="https://dummy.local")
+    
+    # 最初はNone
+    assert client._async_client is None
+    
+    # コンテキストマネージャーに入ると初期化される
+    async with client as c:
+        assert c._async_client is not None
+        assert not c._async_client.is_closed
+    
+    # コンテキストマネージャーを抜けると自動で閉じられ、Noneに戻る
+    assert client._async_client is None
