@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
+## [1.5.0] - Source-Agnostic Trust & Provider-Agnostic Outcome
+* **Added**: `TrustEvidence` model to abstract trust evaluation inputs (URL, metadata, agent hints).
+* **Changed**: `OutcomeMatcher` can now accept `SettlementReceipt` to perform cross-verification between the payment proof and the host's response.
+* **Changed**: `ExecutionContext` now supports `hints` for passing top-down agent knowledge into hooks.
+* **Compatibility**: Evaluators and Matchers written for v1.4 remain 100% backward compatible via dynamic signature inspection.
 
 ## [1.4.0] - Trust & Outcome Layer (Decide & Verify)
 * **Added**: `TrustEvaluator` hooks to evaluate counterparty risk before payment.

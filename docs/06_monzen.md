@@ -41,7 +41,7 @@ client.submit_monzen_trace(
 )
 ```
 
-### 📜 Trace Record Semantics (v1.4+ Standard)
+### 📜 Trace Record Semantics (v1.5+ Standard)
 
 When a trace is successfully ingested, the server returns a standardized observation record. The meanings of these fields are strictly defined to ensure long-term stability across the network:
 

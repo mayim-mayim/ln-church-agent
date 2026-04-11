@@ -6,27 +6,6 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 @dataclass
-class ParsedChallenge:
-    """
-    402 Challenge 正規化モデル (Cold Spec Layer)
-    各決済方式（L402, x402など）の不揃いなChallenge表現を一元化し、
-    Runtimeでの分岐処理を安全かつテスト可能にする。
-    """
-    scheme: str
-    amount: float
-    asset: str
-    invoice: Optional[str] = None
-    macaroon: Optional[str] = None
-    charge_id: Optional[str] = None
-    destination: Optional[str] = None
-    chain_id: Optional[int] = None
-    token_address: Optional[str] = None
-    relayer_endpoint: Optional[str] = None
-    reference: Optional[str] = None
-    raw_headers: Dict[str, str] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
 class PaymentPolicy:
     """
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
@@ -44,14 +23,37 @@ class PaymentPolicy:
     _session_spent_usd: float = field(default=0.0, repr=False)
 
 # ==========================================
-# v1.4: Trust & Outcome Layer Models
+# v1.5: Trust & Outcome Layer Models
 # ==========================================
 
 class ExecutionContext(BaseModel):
-    """軽量な意図とセッションのコンテキスト（Workflow engineではなく、単なるタグ）"""
+    """軽量な意図とセッションのコンテキスト"""
     intent_label: str = "default_intent"
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    # v1.5: エージェントの事前知識や動的な指示を運ぶ補助フィールド
+    hints: dict = Field(default_factory=dict)
+
+class ParsedChallenge(BaseModel):
+    scheme: str
+    amount: float
+    asset: str
+    invoice: Optional[str] = None
+    macaroon: Optional[str] = None
+    charge_id: Optional[str] = None
+    destination: Optional[str] = None
+    chain_id: Optional[str] = None
+    token_address: Optional[str] = None
+    relayer_endpoint: Optional[str] = None
+    reference: Optional[str] = None
+    raw_headers: dict = Field(default_factory=dict)
+
+class TrustEvidence(BaseModel):
+    """v1.5: 評価の根拠を束ねるコンテナ（Source-Agnostic）"""
+    url: str
+    challenge: ParsedChallenge
+    host_metadata: dict = Field(default_factory=dict)
+    agent_hints: dict = Field(default_factory=dict)
 
 class TrustDecision(BaseModel):
     """支払い前の相手先信用評価結果"""
@@ -63,6 +65,8 @@ class OutcomeSummary(BaseModel):
     is_success: bool
     observed_state: str = ""
     message: str = ""
+    # v1.5: 外部の検証結果やReceiptの内容など、付加的な証拠を格納
+    external_evidence: dict = Field(default_factory=dict)
 
 # ==========================================
 # ExecutionResult
@@ -75,7 +79,6 @@ class ExecutionResult(BaseModel):
     used_scheme: Optional[str] = None
     used_asset: Optional[str] = None
     verification_status: Optional[str] = None
-    # v1.4: 軽量なOutcome層の追加 (OutcomeSummaryもBaseModelなので安全にネスト可能)
     outcome: Optional[OutcomeSummary] = None
 
 class SettlementReceipt(BaseModel):

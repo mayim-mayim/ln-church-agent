@@ -4,6 +4,7 @@ import re
 import asyncio
 import importlib.metadata
 import uuid
+import inspect
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, Callable, List
 import warnings
@@ -15,7 +16,7 @@ from .models import (
     HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
     MonzenGraphResponse, PaymentPolicy, SettlementReceipt,
     ParsedChallenge, ExecutionResult, 
-    ExecutionContext, TrustDecision, OutcomeSummary
+    ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence
 )
 # v1.4: CounterpartyTrustError を追加
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, CounterpartyTrustError
@@ -30,7 +31,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.4.0" 
+        return "1.5.0" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -276,11 +277,17 @@ class Payment402Client:
         result = self.execute_detailed(method, endpoint_path, payload, headers)
         return result.response
 
-    def execute_detailed(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0,
-        context: Optional[ExecutionContext] = None,         # v1.4 追加
-        outcome_matcher: Optional[Callable] = None          # v1.4 追加
+    # ==========================================
+    # 同期 (Sync) Runtime Layer
+    # ==========================================
+    def execute_detailed(
+        self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, 
+        _current_hop: int = 0, _payment_retry_count: int = 0,
+        context: Optional[ExecutionContext] = None,
+        outcome_matcher: Optional[Callable] = None,
+        _current_receipt: Optional[SettlementReceipt] = None # v1.5: Matcherに渡すための内部状態
     ) -> ExecutionResult:
-        """v1.3.0: 確定的な実行結果オブジェクトを返す正式な同期Runtimeメソッド。"""
+        
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
         if not any(k.lower() == "user-agent" for k in headers.keys()):
@@ -296,33 +303,54 @@ class Payment402Client:
         }
 
         res = requests.request(method_upper, url, **req_kwargs)
+
+        # 🟢 Outcome Verification (200 OK)
         if 200 <= res.status_code < 300:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
-            # v1.4: 決済後の結果（Outcome）を意味づけする
+            
+            # v1.5: 決済後の結果（Outcome）を意味づけする（Provider-Agnostic）
             if outcome_matcher:
-                result.outcome = outcome_matcher(resp_data, context)
+                sig = inspect.signature(outcome_matcher)
+                if len(sig.parameters) == 3:
+                    # v1.5 Signature: (response, receipt, context)
+                    result.outcome = outcome_matcher(resp_data, _current_receipt, context)
+                else:
+                    # v1.4 Fallback Signature: (response, context)
+                    result.outcome = outcome_matcher(resp_data, context)
                 
             return result
 
+        # 🔴 Counterparty Trust Evaluation (402 Payment Required)
         if res.status_code == 402:
             if _payment_retry_count >= self.max_payment_retries:
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
             parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
             self._enforce_policy(parsed, url)
-            # v1.4: 支払い前に相手の信用度を評価する
+
+            # v1.5: TrustEvidence の構築（Source-Agnostic）
+            evidence = TrustEvidence(
+                url=url,
+                challenge=parsed,
+                host_metadata={}, # 将来的にHATEOAS等から抽出可能
+                agent_hints=context.hints if context else {}
+            )
+
+            # 支払い前に相手の信用度を評価する
             for evaluator in self.trust_evaluators:
-                decision: TrustDecision = evaluator(url, parsed, context)
+                sig = inspect.signature(evaluator)
+                if len(sig.parameters) == 2:
+                    # v1.5 Signature: (evidence, context)
+                    decision: TrustDecision = evaluator(evidence, context)
+                else:
+                    # v1.4 Fallback Signature: (url, challenge, context)
+                    decision: TrustDecision = evaluator(url, parsed, context)
+                
                 if not decision.is_trusted:
-                    raise CounterpartyTrustError(
-                        f"Trust Evaluation Blocked Payment: {decision.reason}"
-                    )
+                    raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-            # 決済ロジック (同期実行)
             proof_ref, network_name = self._process_payment(parsed, headers, payload)
-
-            # 追加: 決済成功後にセッション予算を消費
             self._record_session_spend(parsed)
 
             receipt = SettlementReceipt(
@@ -332,11 +360,13 @@ class Payment402Client:
             )
             self.last_receipt = receipt
 
+            # ★ v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
             next_result = self.execute_detailed(
                 method, url, payload, headers, _current_hop, _payment_retry_count + 1,
-                context=context, outcome_matcher=outcome_matcher
+                context=context, outcome_matcher=outcome_matcher,
+                _current_receipt=receipt
             )
-
+            
             next_result.settlement_receipt = receipt
             next_result.used_scheme = parsed.scheme
             next_result.used_asset = parsed.asset
@@ -349,6 +379,7 @@ class Payment402Client:
         except Exception:
             raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
 
+        # 🟡 HATEOAS Navigation
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
@@ -357,13 +388,15 @@ class Payment402Client:
             elif next_url and next_method != "NONE":
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
+                
+                # ★ v1.5: context, outcome_matcher, receipt を引き継ぐ
                 return self.execute_detailed(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
-                    context=context, outcome_matcher=outcome_matcher
+                    context=context, outcome_matcher=outcome_matcher,
+                    _current_receipt=_current_receipt
                 )
 
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
-
 
     # ==========================================
     # v1.3.0: Execution Contract の強化 (非同期 Runtime Layer)
@@ -373,9 +406,12 @@ class Payment402Client:
         result = await self.execute_detailed_async(method, endpoint_path, payload, headers)
         return result.response
 
-    async def execute_detailed_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, _current_hop: int = 0, _payment_retry_count: int = 0,
-        context: Optional[ExecutionContext] = None,         # v1.4 追加
-        outcome_matcher: Optional[Callable] = None          # v1.4 追加
+    async def execute_detailed_async(
+        self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, 
+        _current_hop: int = 0, _payment_retry_count: int = 0,
+        context: Optional[ExecutionContext] = None,
+        outcome_matcher: Optional[Callable] = None,
+        _current_receipt: Optional[SettlementReceipt] = None # v1.5: Matcherに渡すための内部状態
     ) -> ExecutionResult:
         """v1.3.0: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -391,37 +427,57 @@ class Payment402Client:
             "headers": headers
         }
 
-        # v1.3.1: AsyncClientを遅延初期化して再利用する
+        # v1.3.1: 非同期クライアントの再利用
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(follow_redirects=True)
 
         res = await self._async_client.request(method_upper, url, **req_kwargs)
 
+        # 🟢 Outcome Verification (200 OK)
         if 200 <= res.status_code < 300:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
-            # v1.4: 決済後の結果（Outcome）を意味づけする
+            # v1.5: 決済後の結果（Outcome）を意味づけする（Provider-Agnostic）
             if outcome_matcher:
-                result.outcome = outcome_matcher(resp_data, context)
-                
+                sig = inspect.signature(outcome_matcher)
+                if len(sig.parameters) == 3:
+                    # v1.5 Signature: (response, receipt, context)
+                    result.outcome = outcome_matcher(resp_data, _current_receipt, context)
+                else:
+                    # v1.4 Fallback Signature: (response, context)
+                    result.outcome = outcome_matcher(resp_data, context)
+                    
             return result
 
+        # 🔴 Counterparty Trust Evaluation (402 Payment Required)
         if res.status_code == 402:
             if _payment_retry_count >= self.max_payment_retries: 
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
-            # 軽量なため同期のまま実行
             parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
             self._enforce_policy(parsed, url)
 
-            # v1.4: 支払い前に相手の信用度を評価する
+            # v1.5: TrustEvidence の構築（Source-Agnostic）
+            evidence = TrustEvidence(
+                url=url,
+                challenge=parsed,
+                host_metadata={}, # 将来的にHATEOAS等から抽出可能
+                agent_hints=context.hints if context else {}
+            )
+
+            # 支払い前に相手の信用度を評価する
             for evaluator in self.trust_evaluators:
-                decision: TrustDecision = evaluator(url, parsed, context)
+                sig = inspect.signature(evaluator)
+                if len(sig.parameters) == 2:
+                    # v1.5 Signature: (evidence, context)
+                    decision: TrustDecision = evaluator(evidence, context)
+                else:
+                    # v1.4 Fallback Signature: (url, challenge, context)
+                    decision: TrustDecision = evaluator(url, parsed, context)
+                
                 if not decision.is_trusted:
-                    raise CounterpartyTrustError(
-                        f"Trust Evaluation Blocked Payment: {decision.reason}"
-                    )
+                    raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
             # アダプターのブロッキング処理を回避するため、スレッドプールで実行
             loop = asyncio.get_running_loop()
@@ -429,7 +485,6 @@ class Payment402Client:
                 None, self._process_payment, parsed, headers, payload
             )
 
-            # 追加: 決済成功後にセッション予算を消費
             self._record_session_spend(parsed)
 
             receipt = SettlementReceipt(
@@ -439,9 +494,11 @@ class Payment402Client:
             )
             self.last_receipt = receipt
 
+            # ★ v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
             next_result = await self.execute_detailed_async(
                 method, url, payload, headers, _current_hop, _payment_retry_count + 1,
-                context=context, outcome_matcher=outcome_matcher
+                context=context, outcome_matcher=outcome_matcher,
+                _current_receipt=receipt
             )
             
             next_result.settlement_receipt = receipt
@@ -456,6 +513,7 @@ class Payment402Client:
         except Exception:
             raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
 
+        # 🟡 HATEOAS Navigation
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
@@ -466,9 +524,12 @@ class Payment402Client:
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 await asyncio.sleep(1) 
+                
+                # ★ v1.5: context, outcome_matcher, receipt を引き継ぐ
                 return await self.execute_detailed_async(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
-                    context=context, outcome_matcher=outcome_matcher
+                    context=context, outcome_matcher=outcome_matcher,
+                    _current_receipt=_current_receipt
                 )
 
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")

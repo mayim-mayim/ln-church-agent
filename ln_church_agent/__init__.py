@@ -3,7 +3,8 @@ from .exceptions import (
     PaymentChallengeError,
     PaymentExecutionError,
     NavigationGuardrailError,
-    InvoiceParseError
+    InvoiceParseError,
+    CounterpartyTrustError # v1.4+
 )
 from .models import (
     AssetType, 
@@ -22,7 +23,12 @@ from .models import (
     PaymentPolicy,        
     SettlementReceipt,
     ExecutionResult,
-    ParsedChallenge
+    ParsedChallenge,
+    # --- v1.5 Public API Surface ---
+    ExecutionContext,
+    TrustDecision,
+    OutcomeSummary,
+    TrustEvidence
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 
@@ -55,5 +61,10 @@ __all__ = [
     "EVMSigner",          
     "LightningProvider",
     "ExecutionResult",   
-    "ParsedChallenge"
+    "ParsedChallenge",
+    # --- v1.5 ---
+    "ExecutionContext",
+    "TrustDecision",
+    "OutcomeSummary",
+    "TrustEvidence"
 ]

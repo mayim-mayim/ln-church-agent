@@ -36,9 +36,9 @@ python examples/hello_ln_church.py
 By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
 
 ---
-## 📦 Public API Surface (1.4.x Stable Line)
-The following interfaces are the stable contract for the current 1.4.x line:
-This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.4 series.
+## 📦 Public API Surface (1.5.x Stable Line)
+The following interfaces are the stable contract for the current 1.5.x line:
+This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.5 series.
 - `Payment402Client` (Core Engine)
 - `LnChurchClient` (Reference Adapter)
 - `AssetType`, `SchemeType` (Enums)
@@ -80,7 +80,7 @@ pip install ln-church-agent[solana]
 Call any 402-protected API. The SDK handles the challenge, payment, and retry under the hood.
 
 ```python
-from ln_church_agent import Payment402Client
+from ln_church_agent import Payment402Client, TrustDecision, OutcomeSummary
 
 client = Payment402Client(
     base_url="https://your-402-api.com",
@@ -101,7 +101,7 @@ For agent runtimes that need concurrent execution, async is supported in v1.1.0+
 
 ```python
 import asyncio
-from ln_church_agent import Payment402Client
+from ln_church_agent import Payment402Client, TrustDecision, OutcomeSummary
 
 async def main():
     client = Payment402Client(
@@ -136,7 +136,7 @@ For advanced enterprise or multi-agent runtimes, this SDK provides features that
 * **Delegated Signers (NWC)**: Agents can securely pay Lightning invoices without holding a private key via the `NWCAdapter` and an HTTP Bridge Gateway.
 * **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", "Max $10.00 USD per session") and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
-* **Trust & Outcome Hooks (v1.4.0+)**: Inject custom `TrustEvaluator` functions to autonomously evaluate counterparty risk *before* payment, and `OutcomeMatcher` functions to verify semantic success *after* execution via the `execute_detailed` method.
+* **Trust & Outcome Hooks (v1.5.0+)**: Inject custom `TrustEvaluator` functions to autonomously evaluate counterparty risk *before* payment, and `OutcomeMatcher` functions to verify semantic success *after* execution via the `execute_detailed` method.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
 

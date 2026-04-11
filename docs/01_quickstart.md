@@ -98,9 +98,9 @@ This uses the same economic loop as the sync client: 402 detect → pay → retr
 
 ---
 
-## 🧪 Advanced Usage: Guardrails & NWC (v1.4+)
+## 🧪 Advanced Usage: Guardrails & NWC (v1.5+)
 
-For enterprise or multi-agent runtimes, you should not give agents raw private keys or unlimited spending power. Version 1.3+ introduces `PaymentPolicy` and `NWCAdapter`.
+For enterprise or multi-agent runtimes, you should not give agents raw private keys or unlimited spending power. Version 1.5+ introduces `PaymentPolicy` and `NWCAdapter`.
 
 ### 1. Setting a Payment Policy
 Prevent AI hallucinations from draining wallets by enforcing strict rules.
