@@ -5,7 +5,6 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-
 @dataclass
 class ParsedChallenge:
     """
@@ -44,19 +43,40 @@ class PaymentPolicy:
     # 内部管理用セッション消費額
     _session_spent_usd: float = field(default=0.0, repr=False)
 
-@dataclass
-class ExecutionResult:
-    """
-    実行単位の確定的な結果 (Result Layer)
-    エージェントが「何を要求し、どう支払い、何を得たか」を明示的に扱うためのオブジェクト。
-    """
+# ==========================================
+# v1.4: Trust & Outcome Layer Models
+# ==========================================
+
+class ExecutionContext(BaseModel):
+    """軽量な意図とセッションのコンテキスト（Workflow engineではなく、単なるタグ）"""
+    intent_label: str = "default_intent"
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+class TrustDecision(BaseModel):
+    """支払い前の相手先信用評価結果"""
+    is_trusted: bool
+    reason: str = ""
+
+class OutcomeSummary(BaseModel):
+    """決済後の期待状態（Outcome）の評価結果"""
+    is_success: bool
+    observed_state: str = ""
+    message: str = ""
+
+# ==========================================
+# ExecutionResult
+# ==========================================
+class ExecutionResult(BaseModel):
     response: dict
-    settlement_receipt: Optional['SettlementReceipt'] = None
+    final_url: str
+    retry_count: int = 0
+    settlement_receipt: Optional[Any] = None
     used_scheme: Optional[str] = None
     used_asset: Optional[str] = None
-    final_url: str = ""
-    retry_count: int = 0
-    verification_status: str = "none"
+    verification_status: Optional[str] = None
+    # v1.4: 軽量なOutcome層の追加 (OutcomeSummaryもBaseModelなので安全にネスト可能)
+    outcome: Optional[OutcomeSummary] = None
 
 class SettlementReceipt(BaseModel):
     """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""

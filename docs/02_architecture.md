@@ -40,4 +40,42 @@ The SDK allows agents to natively interact with a global registry of L402-protec
 
 ### 7. Strongly Typed Responses
 Every API interaction is modeled using Pydantic. This eliminates "cryptographic hallucinations" where an agent might misinterpret raw JSON, ensuring the agent's internal state remains grounded and accurate.
+
+### 8. Trust & Outcome Layer (v1.4+)
+To enable truly autonomous M2M economic loops, the SDK provides a "Decide & Verify" architecture via thin hooks. This allows agents to evaluate the counterparty *before* payment, and verify the semantic result *after* execution, without relying on heavy workflow engines.
+
+* **Counterparty Trust Layer (`TrustEvaluator`)**: Intercepts the HTTP 402 challenge. You can inject custom logic to verify if the host, required payment, or past interactions meet your safety criteria before committing funds. If the evaluator returns a `TrustDecision` with `is_trusted=False`, the SDK aborts the transaction and raises a `CounterpartyTrustError`.
+* **Outcome Verification Layer (`OutcomeMatcher`)**: Intercepts the HTTP 2xx response. Evaluates the actual business data returned to determine if the expected "Outcome" was achieved, generating an `OutcomeSummary` that is attached to the final `ExecutionResult`.
+
+**Example Usage:**
+```python
+from ln_church_agent import Payment402Client
+from ln_church_agent.models import TrustDecision, OutcomeSummary
+
+# Decide: Evaluate the counterparty before paying
+def strict_evaluator(url, challenge, context):
+    if "unverified" in url:
+        return TrustDecision(is_trusted=False, reason="Unverified Host")
+    return TrustDecision(is_trusted=True)
+
+# Verify: Check if the response contains the expected intelligence
+def data_matcher(response, context):
+    success = "premium_data" in response
+    return OutcomeSummary(is_success=success, observed_state="Data Extracted")
+
+client = Payment402Client(
+    base_url="https://api.example.com",
+    trust_evaluators=[strict_evaluator]
+)
+
+# Execute the request with an outcome matcher
+result = client.execute_detailed(
+    method="POST",
+    endpoint_path="/data",
+    outcome_matcher=data_matcher
+)
+
+print(f"Receipt Status: {result.settlement_receipt.verification_status}")
+print(f"Outcome Status: {result.outcome.is_success}")
+```
 ---

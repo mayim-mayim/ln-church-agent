@@ -36,9 +36,9 @@ python examples/hello_ln_church.py
 By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
 
 ---
-## 📦 Public API Surface (1.3.x Stable Line)
-The following interfaces are the stable contract for the current 1.3.x line:
-This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.3 series.
+## 📦 Public API Surface (1.4.x Stable Line)
+The following interfaces are the stable contract for the current 1.4.x line:
+This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.4 series.
 - `Payment402Client` (Core Engine)
 - `LnChurchClient` (Reference Adapter)
 - `AssetType`, `SchemeType` (Enums)
@@ -133,10 +133,10 @@ As of v1.1.0+, the economic loop is not only available in both sync and async ex
 ## 🧪 Advanced Agent-Native Features
 
 For advanced enterprise or multi-agent runtimes, this SDK provides features that separate keys from execution and enforce strict economic safety.
-
 * **Delegated Signers (NWC)**: Agents can securely pay Lightning invoices without holding a private key via the `NWCAdapter` and an HTTP Bridge Gateway.
-* **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", **"Max $10.00 USD per session"**) and restrict allowed networks.
+* **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", "Max $10.00 USD per session") and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
+* **Trust & Outcome Hooks (v1.4.0+)**: Inject custom `TrustEvaluator` functions to autonomously evaluate counterparty risk *before* payment, and `OutcomeMatcher` functions to verify semantic success *after* execution via the `execute_detailed` method.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
 
@@ -176,58 +176,8 @@ It provides a production-ready Cloudflare Workers + Hono template with built-in 
 ---
 ## 📝 Changelog
 
-### v1.3.1 — Async Performance & UX Patch
-**Fixed**
-* **Async Connection Pooling**: Reused `httpx.AsyncClient` at the instance level to prevent socket exhaustion and reduce overhead in high-frequency runtimes.
-* **Silent Identity Fallback**: Replaced the silent fallback to `"Anonymous_Agent"` with an explicit `ValueError` when `private_key` parsing fails.
-**Documentation**
-* **Session Guardrails**: Added `max_spend_per_session_usd` configurations to official examples.
-
-### v1.3.0 — Safety & Stability Overhaul
-**Fixed**
-* **Strict Type Enforcement**: Refactored `PaymentPolicy` to be a pure dataclass, resolving potential type conflicts in spend limit calculations.
-* **Precise Accounting**: Moved session spend accounting to the post-payment success phase to ensure accurate budget tracking.
-**Added**
-* **Compatibility Layer**: Restored `execute_paid_action` for backward compatibility with 1.2.x runtimes. 
-**Changed**
-* **Version Baseline**: Bumped stable line to 1.3.x. 
-
-### v1.2.5 — Stable Line Maintenance & Documentation Refactoring
-**Changed**
-* **Standardized Example/Test Names**: Renamed version-specific files (e.g., `advanced_1_2_0.py`) to role-based names (`advanced_receipts_and_policy.py`) to maintain a consistent stable line.
-* **Stable Contract Definition**: Updated README to define the stable line expectations for the 1.3.x series.
-**Added**
-* **External Release Notes**: Established `docs/release_notes/` for better historical tracking and GitHub Release synchronization.
-
-### v1.2.4 — Risk Verification & Autonomous Hedging
-**Added**
-* **Counterparty Risk Verification Tool**: Added `verify_node_sanctification_status` to the MCP server. Enables autonomous agents to query the global Top 100 Premium Registry to mathematically verify a target node's "Sanctified" status prior to committing funds to an unknown HTTP 402 endpoint.
-* **Autonomous Risk Hedging**: Agents can now execute a pre-flight risk assessment, autonomously negotiating the Premium Tier fee (10 SATS) with the central registry to prevent capital loss on unverified, malicious, or hallucinated endpoints.
-
-### v1.2.3 — MCP Cold-Spec Overhaul
-**Added**
-* **Zero-Balance Cold Start Tool**: Added `request_zero_balance_fallback_funds` to the MCP server, allowing un-funded agents to autonomously navigate their initial Faucet grant and bypass the first capability verification.
-**Changed**
-* **MCP "Cold Spec" Overhaul & Optimization**: Completely refactored MCP tool names and descriptions to prioritize strict, functional, and cost-benefit-driven definitions (The "Cold Spec"). This drastically improves LLM Tool Selection accuracy and reduces context window friction.
-* **Context Window Optimization (Macro-tools)**: Consolidated redundant tools (e.g., merging free scout and paid diagnostics into a single `analyze_trial_performance` tool using depth parameters) to minimize LLM decision fatigue and token consumption.
-* **Multi-Chain Parameter Exposure**: Fully exposed `scheme` and `asset_type` parameters across all relevant MCP interfaces, enabling autonomous agents to explicitly negotiate EVM, Solana, and Lightning settlements dynamically.
-**Fixed**
-* **Critical Bug Fix**: Fixed a `NameError` in the async payment trace execution path (`submit_monzen_trace_async`).
-**Deprecated**
-* **Graceful Tool Deprecation**: Deprecated legacy MCP tools (e.g., `report_external_paywall`) have been cleanly removed from the MCP server's exposed toolset to prevent LLM confusion, while remaining accessible in the Python client for backward compatibility.
-* **v1.2.2**
-  * Intermediate release (superseded by v1.2.3 due to async fixes and MCP architectural overhaul).
-* **v1.2.1**
-  * **API Consistency & Patch**: Aligned MCP tool parameters and documentation with the new `scheme`-based payment routing (deprecated legacy `use_solana` arguments). Fixed internal versioning fallbacks.
-* **v1.2.0**
-  * **Economic Guardrails**: Introduced `PaymentPolicy` for strict asset, scheme, and USD-equivalent spend limits.
-  * **Verifiable Receipts**: Introduced `SettlementReceipt` to provide agents with cryptographically verifiable proofs of their expenditures.
-  * **NWC Adapter (Experimental)**: Added support for NIP-47 Nostr Wallet Connect via HTTP Bridge, enabling keyless agent execution.
-* **v1.1.0**
-  * **Dynamic EVM Auto-Routing**: Enhanced `x402` and `x402-direct` schemes. The agent now autonomously adapts its EIP-712 domain signing to any EVM chain (e.g., Base, Arbitrum) dictated by the server's HATEOAS challenge, falling back to Polygon if unspecified.
-  * **Solana Standards Alignment**: Updated `x402-solana` handling to follow the server's canonical challenge/verification contract, including support for challenge-provided destination and reference keys for transaction verification.
-* **v1.0.0**
-  * Initial stable release. Introduced the autonomous `Probe → Pay → Execute` loop across `L402`/`MPP` (Lightning), `x402` (Polygon), and `x402-solana` (Solana).
+Detailed release history, feature additions, and migration guides have been moved to the dedicated **(CHANGELOG.md)**. 
+For granular patch notes, please see the `docs/release_notes/` directory.
 
   ---
 
