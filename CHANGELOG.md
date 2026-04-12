@@ -2,6 +2,16 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.2] - 2026-04-12 (x402 Foundation Alignment)
+* **Changed**: Achieved full compliance with x402 Foundation (Linux Foundation) standards and CAIP-2 network identifiers.
+* **Changed**: Updated `LnChurchClient` defaults to `L402` / `SATS`, prioritizing Lightning-native settlement.
+* **Changed**: Normalized custom routing identifiers to the `lnc-` prefix (`lnc-evm-transfer`, `lnc-solana-transfer`, `lnc-evm-relay`).
+* **Added**: Internal normalization layer (`_normalize_scheme`) for legacy scheme alias resolution to maintain backward compatibility.
+* **Added**: Regression tests for standard compliance and convenience defaults.
+* **Deprecated**: Legacy scheme Enum members (`x402-direct`, `x402-solana`).
+* **Fixed**: Removed legacy vocabulary from specification artifacts (`openapi.yaml`, `agent-api.json`) and documentation.
+* **Details**: [v1.5.2 Release Notes](docs/release_notes/v1.5.2.md)
+
 ## [1.5.1] - Experimental Evidence Export/Import Layer
 * **Added**: `EvidenceRepository` base class with `export_evidence` and `import_evidence` hooks (sync/async).
 * **Added**: `PaymentEvidenceRecord` to safely encapsulate the lifecycle of a 402 interaction (intentionally excluding secrets like preimages).

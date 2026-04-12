@@ -49,7 +49,7 @@ Note: The inner payload of MonzenGraphResponse.data may evolve based on the grap
 
 ### 🌟 Core Value: Execute, Prove, Observe
 
-This SDK is not just an HTTP client—it is an **execution client, proof layer, and observation pipeline** built into one unified tool. 
+This SDK is strictly built on **open standards (HTTP 402, L402, x402)**, ensuring your agents can interact with *any* compliant paywall on the open web without vendor lock-in. 
 
 1. **Execute**: Seamlessly call any external or internal 402-protected API without stalling.
 2. **Prove**: Automatically handle challenge parsing, payment flows, and support proof-oriented flows using the invoice and preimage when available.
@@ -69,10 +69,10 @@ This SDK is not just an HTTP client—it is an **execution client, proof layer, 
 
 ### 1. Install
 ```bash
-# Standard install (EVM & Lightning support)
+# Standard install (EVM x402 & Lightning L402 support)
 pip install ln-church-agent
 
-# Full install (Includes Solana support)
+# Extended install (Includes LN Church custom Solana routing)
 pip install ln-church-agent[solana]
 ```
 

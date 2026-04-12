@@ -102,7 +102,7 @@ class LocalKeyAdapter(EVMSigner):
         chain_id: int = 137, token_address: str = None, rpc_url: str = None
     ) -> str:
         if not treasury_address:
-            raise ValueError("x402-direct決済には treasury_address が必要です。")
+            raise ValueError("lnc-evm-transfer決済には treasury_address が必要です。")
 
         node_url = os.environ.get("EVM_RPC_URL") or rpc_url
         if not node_url:

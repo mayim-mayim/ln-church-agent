@@ -54,7 +54,9 @@ def main():
         print("[4] Executing Paid Endpoint (Omikuji Oracle)...")
         print("    (Intercepting HTTP 402 and negotiating payment under the hood...)")
         
-        result = client.draw_omikuji(asset=AssetType.USDC) 
+        # Note: By default, this uses the standard 'x402' scheme. 
+        # For LN Church optimized gasless routing, you could pass scheme="lnc-evm-relay".
+        result = client.draw_omikuji(asset=AssetType.USDC)
         
         # [5] Result
         print("\n==================================================")

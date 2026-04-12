@@ -21,7 +21,7 @@ def execute_x402_solana_payment(private_key_base58: str, amount: Union[int, floa
     Solanaネットワーク上でUSDCのSPLトークン転送を完遂し、Signatureを返す。
     """
     if not private_key_base58:
-        raise ValueError("x402-solana決済には private_key (Base58) が必要です。")
+        raise ValueError("lnc-solana-transfer決済には private_key (Base58) が必要です。")
 
     rpc_url = os.environ.get("SOLANA_RPC_URL", DEFAULT_RPC)
     client = Client(rpc_url)

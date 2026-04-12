@@ -110,11 +110,11 @@ The SDK handles this multi-step HATEOAS negotiation (including dynamic routing t
 graph_data = client.download_monzen_graph(asset=AssetType.SATS)
 
 # Or, download it using Solana Mainnet (0.01 USDC)
-graph_data = client.download_monzen_graph(asset=AssetType.USDC, scheme="x402-solana")
+graph_data = client.download_monzen_graph(asset=AssetType.USDC, scheme="lnc-solana-transfer")
 
 print(f"Graph Data retrieved. Links found: {len(graph_data.data['links'])}")
 ```
-*Note on Solana:* The `x402-solana` settlement scheme is strictly supported for **USDC only**. Ensure you have installed the extra dependencies (`pip install ln-church-agent[solana]`).
+*Note on Solana:* The `lnc-solana-transfer` settlement scheme is strictly supported for **USDC only**. Ensure you have installed the extra dependencies (`pip install ln-church-agent[solana]`).
 
 ---
 

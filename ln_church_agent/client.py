@@ -11,7 +11,7 @@ import warnings
 
 from eth_account import Account
 from .models import (
-    AssetType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
+    AssetType, SchemeType, OmikujiResponse, AgentIdentity, ConfessionResponse, 
     HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
     HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
     MonzenGraphResponse, PaymentPolicy, SettlementReceipt,
@@ -19,7 +19,6 @@ from .models import (
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
     PaymentEvidenceRecord, EvidenceRepository 
 )
-# v1.4: CounterpartyTrustError を追加
 from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, CounterpartyTrustError
 from .crypto.protocols import EVMSigner, LightningProvider
 
@@ -32,15 +31,28 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.1" 
+        return "1.5.2" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
+
+# 内部用のレガシーSchemeマッピングヘルパー
+# ⛩️ 本殿の新しい命名規則（語彙体系）へ追随
+def _normalize_scheme(raw_scheme: str) -> str:
+    s = raw_scheme.lower()
+    # 独自仕様のレガシーエイリアスを正規化
+    if s == "x402-direct": return SchemeType.lnc_evm_transfer.value
+    if s == "x402-solana": return SchemeType.lnc_solana_transfer.value
+    if s == "x402-relay":  return SchemeType.lnc_evm_relay.value
+    
+    # bare 'x402' は標準仕様としてそのまま通す
+    return raw_scheme
 
 # ==========================================
 # 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
 # ==========================================
 class Payment402Client:
+    # ... (init, parse_challenge, enforce_policy 等の内部実装は変更なし) ...
     def __init__(
         self, 
         private_key: Optional[str] = None, 
@@ -54,15 +66,12 @@ class Payment402Client:
         max_hops: int = 2,
         allow_unsafe_navigate: bool = False,
         max_payment_retries: int = 2,
-        # --- v1.3.0 Boundaries ---
         nwc_uri: Optional[str] = None,
         policy: Optional[PaymentPolicy] = None,
         evm_signer: Optional[EVMSigner] = None,
         ln_adapter: Optional[LightningProvider] = None,
         solana_signer: Optional[SolanaSigner] = None,
-        # --- v1.4 Boundaries ---
         trust_evaluators: Optional[List[Callable]] = None,
-        # --- v1.5.1 Boundaries ---
         evidence_repo: Optional[EvidenceRepository] = None,
     ):
         self.private_key = private_key
@@ -76,12 +85,9 @@ class Payment402Client:
         self.max_hops = max_hops
         self.allow_unsafe_navigate = allow_unsafe_navigate
         self.max_payment_retries = max_payment_retries
-
-        # [1] Policy & Receipt
         self.policy = policy or PaymentPolicy()
         self.last_receipt: Optional[SettlementReceipt] = None 
 
-        # [2] Default Adapter Pattern
         self.evm_signer = evm_signer
         if not self.evm_signer and private_key:
             from .crypto.evm import LocalKeyAdapter
@@ -104,11 +110,8 @@ class Payment402Client:
                 from .crypto.lightning import LegacyLNAdapter
                 self.ln_adapter = LegacyLNAdapter(ln_api_url, ln_api_key, ln_provider)
 
-        # v1.3.1: 非同期クライアントをインスタンスレベルで保持
         self._async_client: Optional[httpx.AsyncClient] = None
-        # v1.4.0
         self.trust_evaluators = trust_evaluators or []
-        # v1.5.1
         self.evidence_repo = evidence_repo
 
     # ==========================================
@@ -120,20 +123,29 @@ class Payment402Client:
         challenge = data.get("challenge", {})
         instruction = data.get("instruction_for_agents", {})
         auth_header = response.headers.get("WWW-Authenticate", "")
+        # ★ 改修: x-402-payment-required ヘッダーから network (CAIP-2) などの情報を抽出
+        x402_header = response.headers.get("x-402-payment-required", "")
 
         def safe_extract(pattern, text, fallback):
             match = re.search(pattern, text)
             return match.group(1) if match else fallback
 
+        raw_scheme = challenge.get("scheme", "UNKNOWN")
+        normalized_scheme = _normalize_scheme(raw_scheme)
+        
+        # CAIP-2 ネットワークの抽出 (ヘッダー優先、ペイロードフォールバック)
+        network_id = safe_extract(r'network="?([^";]+)"?', x402_header, None) or challenge.get("network")
+
         return ParsedChallenge(
-            scheme=challenge.get("scheme", "UNKNOWN"),
+            scheme=normalized_scheme,
+            network=network_id, # ★ 追加
             amount=float(challenge.get("amount", 0)),
             asset=challenge.get("asset", default_asset),
             invoice=challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None),
             macaroon=safe_extract(r'macaroon="([^"]+)"', auth_header, None),
             charge_id=challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, None),
             destination=challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address") or challenge.get("parameters", {}).get("payTo"),
-            chain_id=challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id"),
+            chain_id=str(challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id") or ""), # ★ strにキャスト
             token_address=challenge.get("parameters", {}).get("token_address") or instruction.get("token_address"),
             relayer_endpoint=instruction.get("relayer_endpoint"),
             reference=challenge.get("parameters", {}).get("reference") or instruction.get("reference"),
@@ -152,8 +164,10 @@ class Payment402Client:
         if self.policy.allowed_hosts is not None and domain not in self.policy.allowed_hosts:
             raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is not in allowed_hosts.")
 
-        if parsed.scheme not in self.policy.allowed_schemes:
+        # Scheme validation (Canonical mapping)
+        if parsed.scheme not in self.policy.allowed_schemes and raw_scheme not in self.policy.allowed_schemes:
             raise PaymentExecutionError(f"Policy Violation: Scheme '{parsed.scheme}' is restricted.")
+            
         if parsed.asset not in self.policy.allowed_assets:
             raise PaymentExecutionError(f"Policy Violation: Asset '{parsed.asset}' is restricted.")
 
@@ -215,45 +229,61 @@ class Payment402Client:
     def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict) -> tuple[str, str]:
         """実際の決済実行をカプセル化 (同期・非同期共通で利用)"""
         proof_ref = ""
-        network_name = ""
+        network_name = parsed.network or "UNKNOWN" # CAIP-2を優先
 
-        if parsed.scheme in ["x402", "x402-direct"]:
+        # ★ 改修: Canonical Scheme と CAIP-2 ネットワーク指定に基づく決済ルーティング
+        if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
             if not parsed.destination:
                 raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
 
-            if parsed.scheme == "x402":
+            # CAIP-2 の eip155:137 等から chain_id を推測（指定があれば）
+            chain_id_to_use = 137 # default fallback
+            if parsed.chain_id and parsed.chain_id.isdigit():
+                chain_id_to_use = int(parsed.chain_id)
+            elif parsed.network and parsed.network.startswith("eip155:"):
+                try:
+                    chain_id_to_use = int(parsed.network.split(":")[1])
+                except ValueError:
+                    pass
+
+            if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value]:
                 if not parsed.relayer_endpoint:
                     raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
                 proof_ref = self.evm_signer.execute_x402_gasless(
                     parsed.asset, parsed.amount, parsed.relayer_endpoint, 
-                    parsed.destination, int(parsed.chain_id or 137), parsed.token_address
+                    parsed.destination, chain_id_to_use, parsed.token_address
                 )
-            else: # x402-direct
+                network_name = network_name if network_name != "UNKNOWN" else f"EVM-Relay({chain_id_to_use})"
+            
+            elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
                 if not self.evm_rpc_url:
-                    raise PaymentExecutionError("RPC URL is required for x402-direct payment.")
+                    raise PaymentExecutionError("RPC URL is required for lnc-evm-transfer payment.")
                 proof_ref = self.evm_signer.execute_x402_direct(
                     parsed.asset, parsed.amount, parsed.destination, 
-                    int(parsed.chain_id or 137), parsed.token_address, self.evm_rpc_url
+                    chain_id_to_use, parsed.token_address, self.evm_rpc_url
                 )
+                network_name = network_name if network_name != "UNKNOWN" else f"EVM-Direct({chain_id_to_use})"
 
-            network_name = "EVM"
-            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref}
+            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "chainId": str(chain_id_to_use)}
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        elif parsed.scheme == "x402-solana":
+        elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
-                raise PaymentExecutionError("x402-solana 決済には solana_signer が必要です。")
+                raise PaymentExecutionError("lnc-solana-transfer 決済には solana_signer が必要です。")
             if not parsed.destination:
                 raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
 
             proof_ref = self.solana_signer.execute_x402_solana(parsed.amount, parsed.destination, parsed.reference)
-            network_name = "Solana"
-            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref}
-            headers["Authorization"] = f"x402-solana {proof_ref}"
+            network_name = network_name if network_name != "UNKNOWN" else "Solana"
+            
+            # Solanaの要件: agentIdを含める
+            agent_id = getattr(self, "agent_id", "Anonymous")
+            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "agentId": agent_id}
+            headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        elif parsed.scheme in ["L402", "MPP", "Payment"]:
+        elif parsed.scheme in [SchemeType.L402.value, SchemeType.MPP.value, SchemeType.PAYMENT.value]:
             if not self.ln_adapter:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
             if not parsed.invoice:
@@ -262,7 +292,7 @@ class Payment402Client:
             proof_ref = self.ln_adapter.pay_invoice(parsed.invoice)
             network_name = "Lightning"
             
-            if parsed.scheme == "L402":
+            if parsed.scheme == SchemeType.L402.value:
                 if not parsed.macaroon:
                     raise InvoiceParseError("Macaroon not found.")
                 headers["Authorization"] = f"L402 {parsed.macaroon}:{proof_ref}"
@@ -404,6 +434,12 @@ class Payment402Client:
                     self.evidence_repo.export_evidence(record, context)
                 raise
 
+        try:
+            error_data = res.json()
+            next_action = HateoasErrorResponse(**error_data).next_action
+        except Exception:
+            raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
+
         # 🟡 HATEOAS Navigation
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
@@ -411,7 +447,11 @@ class Payment402Client:
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
+                # ★ HATEOASペイロードのスキームも正規化する安全装置
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
+                if "scheme" in merged_payload:
+                    merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
+
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 
                 # ★ v1.5: context, outcome_matcher, receipt を引き継ぐ
@@ -586,7 +626,11 @@ class Payment402Client:
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
+                # ★ HATEOASペイロードのスキームも正規化
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
+                if "scheme" in merged_payload:
+                    merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
+
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 await asyncio.sleep(1) 
                 
@@ -704,8 +748,9 @@ class LnChurchClient(Payment402Client):
         telemetry_headers = self._inject_telemetry(headers)
         return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers)
 
+
     # ------------------------------------------
-    # 同期 (Sync) メソッド群
+    # 同期 (Sync) メソッド群: Convenience Defaults 修正
     # ------------------------------------------
     def init_probe(self):
         res = self.execute_request("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk")
@@ -720,8 +765,10 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             print(f"[System] Faucet skipped or failed: {str(e)}")
 
-    def draw_omikuji(self, asset: AssetType = AssetType.USDC, scheme: Optional[str] = None) -> OmikujiResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+
+    def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
+        # デフォルトは旗艦導線の 'L402' (非SATSの場合は市場標準の 'x402')
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
             payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
@@ -729,12 +776,14 @@ class LnChurchClient(Payment402Client):
         return OmikujiResponse(**self.execute_request("POST", "/api/agent/omikuji", payload, headers))
 
     def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
 
     def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
-        target_scheme = scheme or ("MPP" if asset == AssetType.SATS else "x402-direct")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         return HonoResponse(**self.execute_request("POST", "/api/agent/hono", payload))
 
@@ -751,12 +800,14 @@ class LnChurchClient(Payment402Client):
         return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}"))
 
     def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         return CompareResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload))
 
     def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
 
@@ -774,13 +825,15 @@ class LnChurchClient(Payment402Client):
         return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
 
     def download_monzen_graph(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        # (Solanaの場合は明示指定で 'lnc-solana-transfer' を使うようドキュメントで誘導)
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
     # ------------------------------------------
-    # ⚡ 非同期 (Async) メソッド群
+    # ⚡ 非同期 (Async) メソッド群: Convenience Defaults 修正
     # ------------------------------------------
     async def init_probe_async(self):
         res = await self.execute_request_async("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk_async")
@@ -795,8 +848,9 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             print(f"[System ASYNC] Faucet skipped or failed: {str(e)}")
 
-    async def draw_omikuji_async(self, asset: AssetType = AssetType.USDC, scheme: Optional[str] = None) -> OmikujiResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+    async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
             payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
@@ -805,13 +859,15 @@ class LnChurchClient(Payment402Client):
         return OmikujiResponse(**res)
 
     async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", "/api/agent/confession", payload)
         return ConfessionResponse(**res)
 
     async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
-        target_scheme = scheme or ("MPP" if asset == AssetType.SATS else "x402-direct")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         res = await self.execute_request_async("POST", "/api/agent/hono", payload)
         return HonoResponse(**res)
@@ -830,13 +886,15 @@ class LnChurchClient(Payment402Client):
         return BenchmarkOverviewResponse(**res)
 
     async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload)
         return CompareResponse(**res)
 
     async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload)
         return AggregateResponse(**res)
@@ -856,7 +914,8 @@ class LnChurchClient(Payment402Client):
         return MonzenMetricsResponse(**res)
 
     async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
-        target_scheme = scheme or ("L402" if asset == AssetType.SATS else "x402")
+        # デフォルトは標準仕様のx402 / L402を維持
+        target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)

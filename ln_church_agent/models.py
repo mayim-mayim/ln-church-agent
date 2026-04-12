@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 import time
 
-
 # ==========================================
 # v1.4 / v1.5: Trust, Outcome & Evidence Layer Models
 # (※依存順序による前方参照エラーを防ぐためトポロジカルに配置)
@@ -50,6 +49,8 @@ class ExecutionContext(BaseModel):
 
 class ParsedChallenge(BaseModel):
     scheme: str
+    # ★ 改修: CAIP-2 ネットワーク指定をパースするためのフィールドを追加
+    network: Optional[str] = None
     amount: float
     asset: str
     invoice: Optional[str] = None
@@ -99,7 +100,8 @@ class PaymentPolicy:
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
     v1.3.0: セッション上限とホスト制限を追加し、ハルシネーションによる資金枯渇を防止。
     """
-    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "x402-direct", "x402-solana", "MPP"])
+    # ★ 改修: デフォルトの許容スキームを Canonical な名称に変更
+    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP"])
     allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
     max_spend_per_tx_usd: float = 5.0 # デフォルトで1回5ドルを上限とする安全装置
     # --- v1.3.0 Additions ---
@@ -127,16 +129,29 @@ class AssetType(str, Enum):
     FAUCET_CREDIT = "FAUCET_CREDIT"
 
 class SchemeType(str, Enum):
+    # Standard Protocols
+    l402 = "L402"
+    mpp = "MPP"
     x402 = "x402"
+    
+    # LN Church Canonical Routings
+    lnc_evm_relay = "lnc-evm-relay"
+    lnc_evm_transfer = "lnc-evm-transfer"
+    lnc_solana_transfer = "lnc-solana-transfer"
+    
+    # --- Legacy Aliases (DEPRECATED: Mapped to lnc-* equivalents internally) ---
+    # @deprecated: Use lnc_evm_transfer instead.
     x402_direct = "x402-direct"
+    # @deprecated: Use lnc_solana_transfer instead.
     x402_solana = "x402-solana"
-    L402 = "L402"
-    MPP = "MPP"
-    PAYMENT = "Payment"
+
 
 class PaymentAuth(BaseModel):
+    # ★ 改修: SchemeType の参照を維持しつつ、CAIP-2対応の chainId や agentId を追加
     scheme: SchemeType
     proof: str
+    chainId: Optional[str] = None # CAIP-2 ネットワーク識別子 (e.g. "eip155:137") を許容するため str に
+    agentId: Optional[str] = None # lnc-solana-transfer の要件
 
 # ==========================================
 # 🧭 HATEOAS & Common Models

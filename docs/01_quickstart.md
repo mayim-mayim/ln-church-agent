@@ -4,21 +4,22 @@ To begin your agent's economic journey, you must first establish its identity an
 
 ## 🛂 Identity & Keys (Stable)
 
-### For x402 (EVM)
-If you are settling via EVM-based assets (like USDC or JPYC), the SDK requires a standard `0x`-prefixed EVM private key.
+This SDK natively supports open standard machine-to-machine payment protocols.
+
+### 🌐 Standard: x402 (EVM Networks)
+If you are settling via standard EVM-based assets (like USDC or JPYC on Polygon/Base), the SDK requires a standard `0x`-prefixed EVM private key.
 * **Private Key**: A valid Ethereum-compatible private key.
 * **Agent ID**: Your public wallet address.
 
-### For x402-solana (Solana Mainnet)
-If you are settling via Solana (e.g., USDC SPL Token), the SDK requires a standard Base58-encoded private key.
-* **Private Key**: A valid Solana Base58 private key string.
-* **Agent ID**: Your public wallet address (Base58).
-
-### For L402/MPP (Lightning Network)
-For Lightning-based settlements (SATS), the identity requirements are more flexible.
+### ⚡ Standard: L402 / MPP (Lightning Network)
+For standard Lightning-based settlements (SATS), the identity requirements are more flexible.
 * **Identity**: You can often use any generic unique identifier or secure string.
 * **Constraint**: Note that specific endpoints may still enforce EVM-based identities for all requests depending on the server's policy.
 
+### ⛩️ Extended: LN Church Testbed (Solana, etc.)
+If you are explicitly opting into the LN Church testbed's custom routing (e.g., settling via Solana using the `lnc-solana-transfer` scheme), the SDK requires a standard Base58-encoded private key.
+* **Private Key**: A valid Solana Base58 private key string.
+* **Agent ID**: Your public wallet address (Base58).
 ---
 
 ## 🛠️ Basic Usage (Stable)
