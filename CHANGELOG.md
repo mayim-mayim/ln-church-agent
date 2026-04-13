@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.5] - 2026-04-13 (Dual-Stack Resilience & Initialization Fix)
+* **Fixed**: Reordered 402 challenge parsing to prioritize Lightning (L402) over x402, resolving the "Dual-Stack Paradox" where L402 invoices were ignored. 
+* **Fixed**: Normalized `ValueError` bubbling and corrected constructor argument propagation in `LnChurchClient`.
+* **Fixed**: Improved the legacy challenge parser to fetch missing parameters (like destination) from the response body. 
+* **Details**: [v1.5.5 Release Notes](docs/release_notes/v1.5.5.md)
+
 ## [1.5.4] - 2026-04-13 (Wire-Level Standard Compliance)
 * **Changed**: Transitioned x402 payment headers from legacy string-concatenation to standard Base64URL-encoded JSON objects (Payment Payload / Payment Required / Settlement Response).
 * **Fixed**: Improved `_parse_challenge` and `_extract_receipt` to prioritize Base64-encoded JSON parsing while maintaining backward compatibility with legacy string-based headers.

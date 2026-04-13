@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.4" 
+        return "1.5.5" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -145,9 +145,16 @@ class Payment402Client:
     def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC") -> ParsedChallenge:
         h = response.headers
         
+        # ★ 1. Lightning系 (L402/MPP) を最優先で処理
+        # Dual-Stack環境では PAYMENT-REQUIRED よりも、インボイスを含むこちらが重要
+        auth_h = h.get("WWW-Authenticate", "")
+        if auth_h.startswith(("L402", "Payment", "PAYMENT")):
+            return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
+
+        # ★ 2. x402系 (PAYMENT-REQUIRED)
         if "PAYMENT-REQUIRED" in h:
             val = h["PAYMENT-REQUIRED"]
-            # ★ 新標準 (Base64 JSON) か 旧レガシー (network="..." 文字列) か判定
+            # 新標準 (Base64 JSON) か 旧レガシー (network="..." 文字列) か判定
             if not val.startswith('network='):
                 payload = _b64url_decode(val)
                 if payload:
@@ -156,8 +163,15 @@ class Payment402Client:
                         "amount": payload.get("amount", 0),
                         "asset": payload.get("asset", expected_asset),
                         "destination": payload.get("destination", ""),
-                        "challenge": payload.get("challenge", "") # サーバーから渡されたMacaroon
+                        "challenge": payload.get("challenge", "")
                     }
+                    # 念のためボディからも不足パラメータを補完
+                    try:
+                        body_params = response.json().get("challenge", {}).get("parameters", {})
+                        params.update(body_params)
+                    except Exception:
+                        pass
+
                     return ParsedChallenge(
                         scheme="x402",
                         network=params["network"],
@@ -170,21 +184,23 @@ class Payment402Client:
             
             # フォールバック: レガシー文字列パース
             params = {k: v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
+            
+            # ★ 修正: レガシー文字列には destination が含まれないためボディから取得
+            try:
+                body_params = response.json().get("challenge", {}).get("parameters", {})
+                params.update(body_params)
+            except Exception:
+                pass
+
             return ParsedChallenge(
                 scheme="x402",
                 network=params.get("network", "unknown"),
                 amount=float(params.get("amount", 0)),
-                asset=params.get("asset", expected_asset), # Use the parameter here
+                asset=params.get("asset", expected_asset),
                 parameters=params,
                 source=ChallengeSource.STANDARD_X402,
                 raw_header=val
             )
-
-        # 2. 次点: WWW-Authenticate (L402 / MPP 標準)
-        auth_h = h.get("WWW-Authenticate", "")
-        if auth_h.startswith(("L402", "Payment", "PAYMENT")):
-            # L402パースロジック (既存のものを維持)
-            return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
 
         # 3. フォールバック: レスポンスボディ (LN教旧仕様)
         try:

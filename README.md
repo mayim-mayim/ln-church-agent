@@ -4,7 +4,7 @@
 Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs across the open web.
 
 ## 🌟 Core Philosophy: Standards First
-This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model[cite: 113, 115].
+This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model.
 
 ### Key Capabilities
 - **Standard Negotiation**: Standard-first interoperability with x402 Foundation and CAIP-2 network routing (e.g., `eip155:137`, `solana:mainnet`).
