@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.4] - 2026-04-13 (Wire-Level Standard Compliance)
+* **Changed**: Transitioned x402 payment headers from legacy string-concatenation to standard Base64URL-encoded JSON objects (Payment Payload / Payment Required / Settlement Response).
+* **Fixed**: Improved `_parse_challenge` and `_extract_receipt` to prioritize Base64-encoded JSON parsing while maintaining backward compatibility with legacy string-based headers.
+* **Added**: Native `_b64url_decode` and `_b64url_encode` helpers in the core client for robust payload handling.
+* **Details**: [v1.5.4 Release Notes](docs/release_notes/v1.5.4.md)
+
 ## [1.5.3] - 2026-04-13 (x402 Standard Stabilization)
 * **Fixed**: Resolved critical execution blockers (missing imports, `TypeError` in signature, `NameError` in policy enforcement) introduced during the 1.5.2 x402 Foundation alignment.
 * **Fixed**: Restored legacy header parsers (`WWW-Authenticate`, `x-402-payment-required`) to ensure backward compatibility while migrating to standard x402.

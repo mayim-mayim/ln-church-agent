@@ -8,6 +8,8 @@ import inspect
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, Callable, List
 import warnings
+import base64
+import json
 
 from eth_account import Account
 from .models import (
@@ -35,10 +37,27 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.3" 
+        return "1.5.4" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
+
+# base64対応
+def _b64url_decode(b64_str: str) -> dict:
+    """Base64URL文字列をデコードしてJSON辞書として返す安全なヘルパー"""
+    try:
+        # 足りないパディング(=)を自動補完
+        padded = b64_str + '=' * (-len(b64_str) % 4)
+        decoded_bytes = base64.urlsafe_b64decode(padded)
+        return json.loads(decoded_bytes.decode('utf-8'))
+    except Exception:
+        return {}
+
+def _b64url_encode(data_dict: dict) -> str:
+    """JSON辞書をBase64URL文字列（パディングなし）にエンコードするヘルパー"""
+    json_str = json.dumps(data_dict)
+    b64_bytes = base64.urlsafe_b64encode(json_str.encode('utf-8'))
+    return b64_bytes.decode('utf-8').rstrip('=')
 
 # 内部用のレガシーSchemeマッピングヘルパー
 # ⛩️ 本殿の新しい命名規則（語彙体系）へ追随
@@ -128,6 +147,28 @@ class Payment402Client:
         
         if "PAYMENT-REQUIRED" in h:
             val = h["PAYMENT-REQUIRED"]
+            # ★ 新標準 (Base64 JSON) か 旧レガシー (network="..." 文字列) か判定
+            if not val.startswith('network='):
+                payload = _b64url_decode(val)
+                if payload:
+                    params = {
+                        "network": payload.get("network", "unknown"),
+                        "amount": payload.get("amount", 0),
+                        "asset": payload.get("asset", expected_asset),
+                        "destination": payload.get("destination", ""),
+                        "challenge": payload.get("challenge", "") # サーバーから渡されたMacaroon
+                    }
+                    return ParsedChallenge(
+                        scheme="x402",
+                        network=params["network"],
+                        amount=float(params["amount"]),
+                        asset=params["asset"],
+                        parameters=params,
+                        source=ChallengeSource.STANDARD_X402,
+                        raw_header=val
+                    )
+            
+            # フォールバック: レガシー文字列パース
             params = {k: v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
             return ParsedChallenge(
                 scheme="x402",
@@ -311,7 +352,12 @@ class Payment402Client:
 
             # 【★重要: Dual Stack リトライの構成】
             if parsed.scheme == SchemeType.x402.value:
-                headers["PAYMENT-SIGNATURE"] = proof_ref # 標準ヘッダー
+                # ★ 新標準: Base64 JSON Payload の構築
+                payment_payload = {
+                    "proof": proof_ref,
+                    "challenge": parsed.parameters.get("challenge", "")
+                }
+                headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
             
             # LN教互換用ボディ (全EVM系で付与)
             payload["paymentAuth"] = {
@@ -405,9 +451,14 @@ class Payment402Client:
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
             if raw_response:
-                # status="success", receipt="<verify_token>" 形式から receipt の値を抽出
-                match = re.search(r'receipt="?([^",]+)"?', raw_response)
-                token = match.group(1) if match else raw_response
+                # ★ 新標準 (Base64 JSON) のパース
+                if not raw_response.startswith('status='):
+                    payload = _b64url_decode(raw_response)
+                    token = payload.get("receipt") if payload else raw_response
+                else:
+                    # レガシー文字列からの抽出
+                    match = re.search(r'receipt="?([^",]+)"?', raw_response)
+                    token = match.group(1) if match else raw_response
             else:
                 token = res.headers.get("Payment-Receipt")
 
@@ -582,9 +633,14 @@ class Payment402Client:
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
             if raw_response:
-                # status="success", receipt="<verify_token>" 形式から receipt の値を抽出
-                match = re.search(r'receipt="?([^",]+)"?', raw_response)
-                token = match.group(1) if match else raw_response
+                # ★ 新標準 (Base64 JSON) のパース
+                if not raw_response.startswith('status='):
+                    payload = _b64url_decode(raw_response)
+                    token = payload.get("receipt") if payload else raw_response
+                else:
+                    # レガシー文字列からの抽出
+                    match = re.search(r'receipt="?([^",]+)"?', raw_response)
+                    token = match.group(1) if match else raw_response
             else:
                 token = res.headers.get("Payment-Receipt")
 

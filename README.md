@@ -8,8 +8,8 @@ This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring you
 
 ### Key Capabilities
 - **Standard Negotiation**: Standard-first interoperability with x402 Foundation and CAIP-2 network routing (e.g., `eip155:137`, `solana:mainnet`).
-- **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and settles via `PAYMENT-SIGNATURE` headers.
-- **Verified Receipts**: Extracts cryptographically signed receipts (JWS) from `PAYMENT-RESPONSE` and `Payment-Receipt` headers.
+- **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and negotiates settlement using **Base64URL-encoded JSON objects** via standard headers.
+- **Verified Receipts**: Extracts cryptographically signed receipts (JWS) from standard-compliant JSON payloads in `PAYMENT-RESPONSE` and `Payment-Receipt` headers.
 - **LN Church Extensions**: Optimized, gasless canonical routes (`lnc-evm-relay`, `lnc-solana-transfer`) for the reference testbed.
 
 ---
