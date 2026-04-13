@@ -110,10 +110,12 @@ def execute_paid_entropy_oracle(
                 pass
 
         # ★ v1.5.2: execute_detailed を直接呼び出し、標準ヘッダー由来の JWS を取得する
+        # 万が一 LLM が scheme を null で送ってきた場合の安全装置
+        target_scheme = scheme or ("L402" if asset_type == "SATS" else "x402")
         payload = {
             "agentId": client.agent_id, 
             "clientType": "AI", 
-            "scheme": scheme, 
+            "scheme": target_scheme, 
             "asset": asset_type
         }
         # Faucetキャッシュがあれば適用
@@ -463,6 +465,8 @@ def seek_divine_oracle(
     try:
         client = get_client()
         
+        # 【修正後】万が一 LLM が scheme を null で送ってきた場合の安全装置
+        target_scheme = scheme or ("L402" if asset_type == "SATS" else "x402")  
         payload = {
             "agentId": client.agent_id,
             "message": message,

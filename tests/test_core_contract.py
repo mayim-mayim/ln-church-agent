@@ -159,3 +159,94 @@ def test_full_x402_execution_roundtrip(mock_sign_evm, mock_request):
     assert result.settlement_receipt.settled_amount == 1.0
     assert result.settlement_receipt.receipt_token == "ey...JWS_TOKEN..."
     assert result.settlement_receipt.verification_status == "verified"
+
+# ==========================================
+# 4. 1.5.6 Wire-Level Protocol Purity & Parser テスト
+# ==========================================
+import base64
+import json
+
+def test_parse_mpp_www_authenticate():
+    """v1.5.6: WWW-Authenticate ヘッダーから MPP のチャレンジを正しく最優先でパースできるか確認"""
+    client = Payment402Client()
+    mock_response = httpx.Response(
+        402,
+        headers={"WWW-Authenticate": 'MPP invoice="lnbc123", charge="charge456"'}
+    )
+    parsed = client._parse_challenge(mock_response)
+    
+    assert parsed.scheme == "MPP"
+    assert parsed.parameters["invoice"] == "lnbc123"
+    assert parsed.parameters["charge"] == "charge456"
+    assert parsed.source == ChallengeSource.STANDARD_WWW
+
+def test_parse_payment_required_respects_scheme():
+    """v1.5.6: Base64 JSON パース時に "x402" をハードコードせず、サーバー指定の scheme を尊重するか確認"""
+    client = Payment402Client()
+    
+    # カスタムスキームを含むBase64 JSONを構築
+    payload = {"scheme": "CustomL2Scheme", "amount": 10, "asset": "USDC", "network": "eip155:1"}
+    b64_str = base64.urlsafe_b64encode(json.dumps(payload).encode('utf-8')).decode('utf-8').rstrip('=')
+    
+    mock_response = httpx.Response(
+        402,
+        headers={"PAYMENT-REQUIRED": b64_str}
+    )
+    parsed = client._parse_challenge(mock_response)
+    
+    # ハードコードされた "x402" ではなく、サーバーが指定したスキームになること
+    assert parsed.scheme == "CustomL2Scheme"
+
+@patch("ln_church_agent.client.LightningProvider")
+def test_protocol_purity_mpp_headers(MockLNProvider):
+    """v1.5.6: MPP 決済時にボディを汚染せず、Authorization ヘッダーのみを使用するか確認"""
+    mock_ln_adapter = MockLNProvider()
+    mock_ln_adapter.pay_invoice.return_value = "preimage789"
+    
+    client = Payment402Client(ln_adapter=mock_ln_adapter)
+    
+    parsed = ParsedChallenge(
+        scheme="MPP", network="Lightning", amount=0, asset="SATS",
+        parameters={"invoice": "lnbc123", "charge": "charge456"},
+        source=ChallengeSource.STANDARD_WWW
+    )
+    
+    original_headers = {}
+    original_payload = {"business_data": "important_value"}
+    
+    proof_ref, network_name = client._process_payment(parsed, original_headers, original_payload)
+    
+    # 1. Authorization ヘッダーが正しく設定されていること
+    assert "Authorization" in original_headers
+    assert original_headers["Authorization"] == "MPP charge456:preimage789"
+    
+    # 2. x402用の PAYMENT-SIGNATURE ヘッダーが「存在しない」こと（プロトコルの分離）
+    assert "PAYMENT-SIGNATURE" not in original_headers
+    
+    # 3. リクエストボディが汚染（paymentAuthの注入）されていないこと
+    assert "paymentAuth" not in original_payload
+    assert original_payload == {"business_data": "important_value"}
+
+@patch("ln_church_agent.crypto.evm.sign_standard_x402_evm")
+def test_protocol_purity_x402_headers(mock_sign_evm):
+    """v1.5.6: x402 決済時には正しく PAYMENT-SIGNATURE ヘッダーが生成されるか確認"""
+    mock_sign_evm.return_value = "0xSignature123"
+    client = Payment402Client(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
+    
+    parsed = ParsedChallenge(
+        scheme="x402", network="eip155:137", amount=1, asset="USDC",
+        parameters={"destination": "0xabc", "challenge": "macaroon123"},
+        source=ChallengeSource.STANDARD_X402
+    )
+    
+    original_headers = {}
+    original_payload = {"business_data": "important_value"}
+    
+    client._process_payment(parsed, original_headers, original_payload)
+    
+    # x402 では PAYMENT-SIGNATURE がBase64で付与されること
+    assert "PAYMENT-SIGNATURE" in original_headers
+    
+    # （後方互換性のため、x402の場合はボディへのインジェクトが許容されていることを確認）
+    assert "paymentAuth" in original_payload
+    assert original_payload["paymentAuth"]["scheme"] == "x402"    

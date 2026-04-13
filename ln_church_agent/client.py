@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.5" 
+        return "1.5.6" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -148,7 +148,7 @@ class Payment402Client:
         # ★ 1. Lightning系 (L402/MPP) を最優先で処理
         # Dual-Stack環境では PAYMENT-REQUIRED よりも、インボイスを含むこちらが重要
         auth_h = h.get("WWW-Authenticate", "")
-        if auth_h.startswith(("L402", "Payment", "PAYMENT")):
+        if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
             return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
 
         # ★ 2. x402系 (PAYMENT-REQUIRED)
@@ -173,7 +173,7 @@ class Payment402Client:
                         pass
 
                     return ParsedChallenge(
-                        scheme="x402",
+                        scheme=payload.get("scheme", "x402"),
                         network=params["network"],
                         amount=float(params["amount"]),
                         asset=params["asset"],
@@ -193,7 +193,7 @@ class Payment402Client:
                 pass
 
             return ParsedChallenge(
-                scheme="x402",
+                scheme=params.get("scheme", "x402"),
                 network=params.get("network", "unknown"),
                 amount=float(params.get("amount", 0)),
                 asset=params.get("asset", expected_asset),
@@ -411,13 +411,13 @@ class Payment402Client:
                 mac = parsed.parameters.get("macaroon")
                 headers["Authorization"] = f"L402 {mac}:{proof_ref}"
             else:
-                # 【★重要: MPP標準形式】コロンなしの "Payment <preimage>"
+                # 【★重要: MPP標準形式】
                 # 旧LN教サーバー向けには parameters.charge をキーにする
                 charge_id = parsed.parameters.get("charge")
                 if charge_id:
-                    headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
+                    headers["Authorization"] = f"MPP {charge_id}:{proof_ref}"
                 else:
-                    headers["Authorization"] = f"Payment {proof_ref}"
+                    headers["Authorization"] = f"MPP {proof_ref}"
 
         return proof_ref, network_name
 
