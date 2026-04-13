@@ -17,9 +17,13 @@ from .models import (
     MonzenGraphResponse, PaymentPolicy, SettlementReceipt,
     ParsedChallenge, ExecutionResult, 
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
-    PaymentEvidenceRecord, EvidenceRepository 
+    PaymentEvidenceRecord, EvidenceRepository,
+    ChallengeSource, AttestationSource
 )
-from .exceptions import PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, CounterpartyTrustError
+from .exceptions import (
+    PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, 
+    CounterpartyTrustError, PaymentChallengeError
+)
 from .crypto.protocols import EVMSigner, LightningProvider
 
 try:
@@ -31,7 +35,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.2" 
+        return "1.5.3" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -45,7 +49,9 @@ def _normalize_scheme(raw_scheme: str) -> str:
     if s == "x402-solana": return SchemeType.lnc_solana_transfer.value
     if s == "x402-relay":  return SchemeType.lnc_evm_relay.value
     
-    # bare 'x402' は標準仕様としてそのまま通す
+    # 'x402' は標準仕様 (Foundation準拠) としてそのまま通す
+    if s == "x402": return SchemeType.x402.value
+    
     return raw_scheme
 
 # ==========================================
@@ -117,39 +123,79 @@ class Payment402Client:
     # ==========================================
     # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
     # ==========================================
-    def _parse_challenge(self, response: requests.Response, default_asset: str) -> ParsedChallenge:
-        """HTTP 402レスポンスからChallengeをパースし、正規化モデルを生成する"""
-        data = response.json()
-        challenge = data.get("challenge", {})
-        instruction = data.get("instruction_for_agents", {})
-        auth_header = response.headers.get("WWW-Authenticate", "")
-        # ★ 改修: x-402-payment-required ヘッダーから network (CAIP-2) などの情報を抽出
-        x402_header = response.headers.get("x-402-payment-required", "")
-
-        def safe_extract(pattern, text, fallback):
-            match = re.search(pattern, text)
-            return match.group(1) if match else fallback
-
-        raw_scheme = challenge.get("scheme", "UNKNOWN")
-        normalized_scheme = _normalize_scheme(raw_scheme)
+    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC") -> ParsedChallenge:
+        h = response.headers
         
-        # CAIP-2 ネットワークの抽出 (ヘッダー優先、ペイロードフォールバック)
-        network_id = safe_extract(r'network="?([^";]+)"?', x402_header, None) or challenge.get("network")
+        if "PAYMENT-REQUIRED" in h:
+            val = h["PAYMENT-REQUIRED"]
+            params = {k: v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
+            return ParsedChallenge(
+                scheme="x402",
+                network=params.get("network", "unknown"),
+                amount=float(params.get("amount", 0)),
+                asset=params.get("asset", expected_asset), # Use the parameter here
+                parameters=params,
+                source=ChallengeSource.STANDARD_X402,
+                raw_header=val
+            )
 
+        # 2. 次点: WWW-Authenticate (L402 / MPP 標準)
+        auth_h = h.get("WWW-Authenticate", "")
+        if auth_h.startswith(("L402", "Payment", "PAYMENT")):
+            # L402パースロジック (既存のものを維持)
+            return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
+
+        # 3. フォールバック: レスポンスボディ (LN教旧仕様)
+        try:
+            body = response.json()
+            if "challenge" in body:
+                c = body["challenge"]
+                return ParsedChallenge(
+                    scheme=c.get("scheme"),
+                    network=c.get("network"),
+                    amount=float(c.get("amount", 0)),
+                    asset=c.get("asset"),
+                    parameters=c.get("parameters", {}),
+                    source=ChallengeSource.BODY_CHALLENGE
+                )
+        except Exception:
+            pass
+
+        # 4. 最終手段: 旧カスタムヘッダー
+        if "x-402-payment-required" in h:
+            return self._parse_legacy_header(h["x-402-payment-required"])
+
+        raise PaymentChallengeError("No valid 402 challenge found in headers or body.")
+
+    def _parse_www_authenticate(self, auth_header: str, source: ChallengeSource) -> ParsedChallenge:
+        """WWW-Authenticate (L402 / MPP) ヘッダーのパース処理"""
+        parts = auth_header.split(" ", 1)
+        scheme = parts[0]
+        params = {}
+        if len(parts) > 1:
+            params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', parts[1])}
+            
         return ParsedChallenge(
-            scheme=normalized_scheme,
-            network=network_id, # ★ 追加
-            amount=float(challenge.get("amount", 0)),
-            asset=challenge.get("asset", default_asset),
-            invoice=challenge.get("parameters", {}).get("invoice") or safe_extract(r'invoice="([^"]+)"', auth_header, None),
-            macaroon=safe_extract(r'macaroon="([^"]+)"', auth_header, None),
-            charge_id=challenge.get("parameters", {}).get("charge") or safe_extract(r'charge="([^"]+)"', auth_header, None),
-            destination=challenge.get("parameters", {}).get("destination") or instruction.get("treasury_address") or challenge.get("parameters", {}).get("payTo"),
-            chain_id=str(challenge.get("parameters", {}).get("chain_id") or instruction.get("chain_id") or ""), # ★ strにキャスト
-            token_address=challenge.get("parameters", {}).get("token_address") or instruction.get("token_address"),
-            relayer_endpoint=instruction.get("relayer_endpoint"),
-            reference=challenge.get("parameters", {}).get("reference") or instruction.get("reference"),
-            raw_headers=dict(response.headers)
+            scheme=scheme,
+            network="Lightning", # デフォルトネットワーク
+            amount=0.0,          # 通常L402はインボイス内に金額が含まれるため0とする
+            asset="SATS",
+            parameters=params,
+            source=source,
+            raw_header=auth_header
+        )
+
+    def _parse_legacy_header(self, header_val: str) -> ParsedChallenge:
+        """旧カスタムヘッダー (x-402-payment-required) のパース処理"""
+        params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', header_val)}
+        return ParsedChallenge(
+            scheme=params.get("scheme", "unknown"),
+            network=params.get("network", "unknown"),
+            amount=float(params.get("amount", 0)),
+            asset=params.get("asset", "USDC"),
+            parameters=params,
+            source=ChallengeSource.LEGACY_CUSTOM,
+            raw_header=header_val
         )
 
     def _enforce_policy(self, parsed: ParsedChallenge, target_url: str):
@@ -165,7 +211,7 @@ class Payment402Client:
             raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is not in allowed_hosts.")
 
         # Scheme validation (Canonical mapping)
-        if parsed.scheme not in self.policy.allowed_schemes and raw_scheme not in self.policy.allowed_schemes:
+        if parsed.scheme not in self.policy.allowed_schemes:
             raise PaymentExecutionError(f"Policy Violation: Scheme '{parsed.scheme}' is restricted.")
             
         if parsed.asset not in self.policy.allowed_assets:
@@ -225,82 +271,91 @@ class Payment402Client:
         
         return self.execute_request(method, endpoint_path, payload, headers)
 
-
     def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict) -> tuple[str, str]:
         """実際の決済実行をカプセル化 (同期・非同期共通で利用)"""
         proof_ref = ""
-        network_name = parsed.network or "UNKNOWN" # CAIP-2を優先
+        network_name = parsed.network or "UNKNOWN"
 
-        # ★ 改修: Canonical Scheme と CAIP-2 ネットワーク指定に基づく決済ルーティング
+        # 1. EVM系 (x402, lnc-evm-*) の処理
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
-            if not parsed.destination:
+            
+            # 宛先等の取得 (ParsedChallenge.parameters 経由)
+            dest = parsed.parameters.get("destination") or parsed.parameters.get("payTo")
+            if not dest:
                 raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
 
-            # CAIP-2 の eip155:137 等から chain_id を推測（指定があれば）
-            chain_id_to_use = 137 # default fallback
-            if parsed.chain_id and parsed.chain_id.isdigit():
-                chain_id_to_use = int(parsed.chain_id)
-            elif parsed.network and parsed.network.startswith("eip155:"):
-                try:
-                    chain_id_to_use = int(parsed.network.split(":")[1])
-                except ValueError:
-                    pass
+            chain_id_to_use = 137
+            if parsed.parameters.get("chain_id"):
+                chain_id_to_use = int(parsed.parameters.get("chain_id"))
+            elif parsed.network.startswith("eip155:"):
+                chain_id_to_use = int(parsed.network.split(":")[1])
 
-            if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value]:
-                if not parsed.relayer_endpoint:
-                    raise PaymentExecutionError("HATEOAS Error: Relayer endpoint is missing.")
-                proof_ref = self.evm_signer.execute_x402_gasless(
-                    parsed.asset, parsed.amount, parsed.relayer_endpoint, 
-                    parsed.destination, chain_id_to_use, parsed.token_address
+            # 実際の執行
+            if parsed.scheme == SchemeType.lnc_evm_transfer.value:
+                proof_ref = self.evm_signer.execute_lnc_evm_transfer_settlement(
+                    parsed.asset, parsed.amount, dest, chain_id_to_use, 
+                    parsed.parameters.get("token_address"), self.evm_rpc_url
                 )
-                network_name = network_name if network_name != "UNKNOWN" else f"EVM-Relay({chain_id_to_use})"
+            else:
+                # 標準 x402 または lnc-evm-relay (ガスレス)
+                if parsed.scheme == SchemeType.x402.value:
+                    from .crypto.evm import sign_standard_x402_evm
+                    proof_ref = sign_standard_x402_evm(self.private_key, parsed)
+                else:
+                    proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
+                        parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
+                        dest, chain_id_to_use, parsed.parameters.get("token_address")
+                    )
+
+            # 【★重要: Dual Stack リトライの構成】
+            if parsed.scheme == SchemeType.x402.value:
+                headers["PAYMENT-SIGNATURE"] = proof_ref # 標準ヘッダー
             
-            elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
-                if not self.evm_rpc_url:
-                    raise PaymentExecutionError("RPC URL is required for lnc-evm-transfer payment.")
-                proof_ref = self.evm_signer.execute_x402_direct(
-                    parsed.asset, parsed.amount, parsed.destination, 
-                    chain_id_to_use, parsed.token_address, self.evm_rpc_url
-                )
-                network_name = network_name if network_name != "UNKNOWN" else f"EVM-Direct({chain_id_to_use})"
-
-            payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "chainId": str(chain_id_to_use)}
+            # LN教互換用ボディ (全EVM系で付与)
+            payload["paymentAuth"] = {
+                "scheme": parsed.scheme, 
+                "proof": proof_ref, 
+                "chainId": str(chain_id_to_use),
+                "standard_x402": (parsed.scheme == SchemeType.x402.value)
+            }
+            # 互換用 Authorization ヘッダー
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
+        # 2. Solana系の処理
         elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
-                raise PaymentExecutionError("lnc-solana-transfer 決済には solana_signer が必要です。")
-            if not parsed.destination:
-                raise PaymentExecutionError("HATEOAS Error: 'payTo' missing.")
-
-            proof_ref = self.solana_signer.execute_x402_solana(parsed.amount, parsed.destination, parsed.reference)
-            network_name = network_name if network_name != "UNKNOWN" else "Solana"
-            
-            # Solanaの要件: agentIdを含める
+                raise PaymentExecutionError("solana_signer が必要です。")
+            dest = parsed.parameters.get("payTo") or parsed.parameters.get("destination")
+            proof_ref = self.solana_signer.execute_lnc_solana_transfer_settlement(
+                parsed.asset, parsed.amount, dest, parsed.parameters.get("reference")
+            )
             agent_id = getattr(self, "agent_id", "Anonymous")
             payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "agentId": agent_id}
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        elif parsed.scheme in [SchemeType.L402.value, SchemeType.MPP.value, SchemeType.PAYMENT.value]:
+        # 3. Lightning系 (L402, MPP) の処理
+        elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
             if not self.ln_adapter:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
-            if not parsed.invoice:
-                raise InvoiceParseError("Invoice not found in 402 challenge header.")
+            invoice = parsed.parameters.get("invoice")
+            if not invoice:
+                raise InvoiceParseError("Challenge にインボイスが含まれていません。")
 
-            proof_ref = self.ln_adapter.pay_invoice(parsed.invoice)
-            network_name = "Lightning"
+            proof_ref = self.ln_adapter.pay_invoice(invoice)
             
-            if parsed.scheme == SchemeType.L402.value:
-                if not parsed.macaroon:
-                    raise InvoiceParseError("Macaroon not found.")
-                headers["Authorization"] = f"L402 {parsed.macaroon}:{proof_ref}"
+            if parsed.scheme == SchemeType.l402.value:
+                mac = parsed.parameters.get("macaroon")
+                headers["Authorization"] = f"L402 {mac}:{proof_ref}"
             else:
-                charge_id = parsed.charge_id or "unknown_charge"
-                headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
-        else:
-            raise PaymentExecutionError(f"Unsupported payment scheme: {parsed.scheme}")
+                # 【★重要: MPP標準形式】コロンなしの "Payment <preimage>"
+                # 旧LN教サーバー向けには parameters.charge をキーにする
+                charge_id = parsed.parameters.get("charge")
+                if charge_id:
+                    headers["Authorization"] = f"Payment {charge_id}:{proof_ref}"
+                else:
+                    headers["Authorization"] = f"Payment {proof_ref}"
 
         return proof_ref, network_name
 
@@ -345,6 +400,21 @@ class Payment402Client:
         if 200 <= res.status_code < 300:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
+            
+            # 標準ヘッダーからレシートトークン(JWS)を抽出してレシートを更新
+            raw_response = res.headers.get("PAYMENT-RESPONSE")
+            token = None
+            if raw_response:
+                # status="success", receipt="<verify_token>" 形式から receipt の値を抽出
+                match = re.search(r'receipt="?([^",]+)"?', raw_response)
+                token = match.group(1) if match else raw_response
+            else:
+                token = res.headers.get("Payment-Receipt")
+
+            if token and _current_receipt:
+                _current_receipt.receipt_token = token
+                _current_receipt.source = AttestationSource.SERVER_JWS
+                _current_receipt.verification_status = "verified"
             
             if outcome_matcher:
                 sig = inspect.signature(outcome_matcher)
@@ -392,6 +462,7 @@ class Payment402Client:
                 self._record_session_spend(parsed)
 
                 receipt = SettlementReceipt(
+                    receipt_id=str(uuid.uuid4()), # IDを生成
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
                     verification_status="verified" if network_name == "Lightning" else "self_reported"
@@ -507,6 +578,21 @@ class Payment402Client:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
+            # 標準ヘッダーからレシートトークン(JWS)を抽出してレシートを更新
+            raw_response = res.headers.get("PAYMENT-RESPONSE")
+            token = None
+            if raw_response:
+                # status="success", receipt="<verify_token>" 形式から receipt の値を抽出
+                match = re.search(r'receipt="?([^",]+)"?', raw_response)
+                token = match.group(1) if match else raw_response
+            else:
+                token = res.headers.get("Payment-Receipt")
+
+            if token and _current_receipt:
+                _current_receipt.receipt_token = token
+                _current_receipt.source = AttestationSource.SERVER_JWS
+                _current_receipt.verification_status = "verified"
+            
             # v1.5: 決済後の結果（Outcome）を意味づけする（Provider-Agnostic）
             if outcome_matcher:
                 sig = inspect.signature(outcome_matcher)
@@ -567,6 +653,7 @@ class Payment402Client:
                 self._record_session_spend(parsed)
 
                 receipt = SettlementReceipt(
+                    receipt_id=str(uuid.uuid4()), # IDを生成
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
                     verification_status="verified" if network_name == "Lightning" else "self_reported"

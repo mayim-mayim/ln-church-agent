@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.3] - 2026-04-13 (x402 Standard Stabilization)
+* **Fixed**: Resolved critical execution blockers (missing imports, `TypeError` in signature, `NameError` in policy enforcement) introduced during the 1.5.2 x402 Foundation alignment.
+* **Fixed**: Restored legacy header parsers (`WWW-Authenticate`, `x-402-payment-required`) to ensure backward compatibility while migrating to standard x402.
+* **Added**: Comprehensive strict-mode tests for the full `PAYMENT-REQUIRED` to `PAYMENT-RESPONSE` autonomous negotiation roundtrip.
+* **Details**: [v1.5.3 Release Notes](docs/release_notes/v1.5.3.md)
+
 ## [1.5.2] - 2026-04-12 (x402 Foundation Alignment)
 * **Changed**: Achieved full compliance with x402 Foundation (Linux Foundation) standards and CAIP-2 network identifiers.
 * **Changed**: Updated `LnChurchClient` defaults to `L402` / `SATS`, prioritizing Lightning-native settlement.

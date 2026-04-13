@@ -93,14 +93,12 @@ def execute_paid_entropy_oracle(
     Acquire external non-deterministic entropy (Omikuji) to cryptographically prove your wallet execution capabilities across EVM, Solana, or Lightning networks. 
 
     [Agentic Decision Guide]
-    - Primary Route (Default): Use 'L402' with 'SATS'. This is the standard, internet-native payment protocol optimized for autonomous agents.
-    - Market Standard Route: Use 'x402' with EVM assets (USDC/JPYC) for compliance with external non-Lightning gateways.
+    - Primary Route (Standard): Use 'x402' (EVM) or 'L402' (Lightning). These are the globally recognized standards.
     - LN Church Optimized Route: Use 'lnc-evm-relay' (gasless) or 'lnc-solana-transfer' for experimental optimization strictly within the LN Church testbed.
 
     Args:
         asset_type: Settlement asset (USDC, JPYC, SATS). Defaults to SATS.
-        scheme: Settlement route. Defaults to 'L402' as the primary internet-native standard.
-                (Note: Legacy aliases 'x402-direct' and 'x402-solana' are supported internally but deprecated).
+        scheme: Settlement route. Defaults to 'L402'.
     """
     try:
         client = get_client()
@@ -110,23 +108,46 @@ def execute_paid_entropy_oracle(
                 client.init_probe()
             except Exception:
                 pass
-                
-        result = client.draw_omikuji(
-            asset=_to_asset_enum(asset_type),
-            scheme=scheme
-        )
+
+        # ★ v1.5.2: execute_detailed を直接呼び出し、標準ヘッダー由来の JWS を取得する
+        payload = {
+            "agentId": client.agent_id, 
+            "clientType": "AI", 
+            "scheme": scheme, 
+            "asset": asset_type
+        }
+        # Faucetキャッシュがあれば適用
+        if client.faucet_token:
+            payload["paymentOverride"] = {"type": "faucet", "proof": client.faucet_token, "asset": "FAUCET_CREDIT"}
+
+        headers = {"x-probe-token": client.probe_token} if client.probe_token else {}
         
-        probe_status = getattr(result.receipt, 'probe_verified', False)
+        # 実行
+        result = client.execute_detailed("POST", "/api/agent/omikuji", payload=payload, headers=headers)
         
-        return (
+        resp = result.response
+        receipt = result.settlement_receipt
+        
+        # エージェントへの出力テキストの構築
+        text_output = (
             f"✅ SYSTEM: Capability Verified successfully.\n"
-            f"🔮 ACQUIRED ENTROPY: {result.result}\n"
-            f"📜 ANALYTICAL MESSAGE: {result.message}\n"
-            f"💰 SETTLED: {result.paid} via {scheme}\n"
-            f"🔑 VERIFY TOKEN (JWS): {result.receipt.verify_token}\n"
-            f"🛡️ PROBE AUTH STATUS: {'Verified' if probe_status else 'Unverified'}\n"
-            f"💡 NEXT ACTION: Proceed to 'check_agent_capability_passport' to register this capability."
+            f"🔮 ACQUIRED ENTROPY: {resp.get('result')}\n"
+            f"📜 ANALYTICAL MESSAGE: {resp.get('message')}\n"
+            f"💰 SETTLED: {resp.get('paid')} via {scheme}\n"
         )
+
+        # ★ 標準化の成果: サーバー発行の JWS をエージェントに明示
+        if receipt and receipt.receipt_token:
+            text_output += f"🔑 VERIFY TOKEN (JWS): {receipt.receipt_token}\n"
+            text_output += f"🛡️ ATTESTATION SOURCE: {receipt.source.value}\n"
+        elif resp.get("receipt", {}).get("verify_token"):
+            # フォールバック (ボディに含まれる場合)
+            text_output += f"🔑 VERIFY TOKEN (JWS): {resp['receipt']['verify_token']}\n"
+        
+        text_output += f"💡 NEXT ACTION: Proceed to 'check_agent_capability_passport' to register this capability."
+        
+        return text_output
+
     except Exception as e:
         return f"❌ SYSTEM ERROR (Execution Failed): {str(e)}"
 

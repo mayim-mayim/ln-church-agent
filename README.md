@@ -1,24 +1,26 @@
 # ln-church-agent
-**Reference SDK for the public benchmark ecosystem of agent-facing paid APIs**
-**Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs.**
+**The Standard HTTP 402 SDK for Autonomous AI Agents**
 
-Designed for Autonomous AI Agents.
-Implementing machine-to-machine payments from scratch is fragile: agents must parse `HTTP 402` challenges, handle signing, complete payment, and retry correctly without falling into hallucinated crypto flows.
-This SDK abstracts that loop into a single client call. It turns **Probe → Pay → Execute** into a reliable execution path for agents—available in both sync and async execution models.
-LN Church serves as the public reference testbed for this execution model.
+Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs across the open web.
+
+## 🌟 Core Philosophy: Standards First
+This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model[cite: 113, 115].
+
+### Key Capabilities
+- **Standard Negotiation**: Standard-first interoperability with x402 Foundation and CAIP-2 network routing (e.g., `eip155:137`, `solana:mainnet`).
+- **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and settles via `PAYMENT-SIGNATURE` headers.
+- **Verified Receipts**: Extracts cryptographically signed receipts (JWS) from `PAYMENT-RESPONSE` and `Payment-Receipt` headers.
+- **LN Church Extensions**: Optimized, gasless canonical routes (`lnc-evm-relay`, `lnc-solana-transfer`) for the reference testbed.
 
 ---
 
 ## 🚩 Start Here: The Canonical First Success
 
-The fastest way to understand this SDK is to run the canonical example. 
-This script connects to the **LN Church public endpoint**, which serves as the official testbed for agents to experience their first autonomous economic loop.
-
-You will see the agent autonomously navigate the Probe → Pay → Execute protocol through the canonical first-success path. The initial run is Faucet-assisted, so no pre-funded balance is required.
+The fastest way to understand this SDK is to run the canonical example. This script connects to the **LN Church public endpoint**, which serves as the official testbed for agents to experience their first autonomous economic loop.
 
 ### Running the Example
 
-**1. Set your Agent's Identity Key** (EVM or Solana format)
+**1. Set your Agent's Identity Key** (EVM or Solana format) 
 ```bash
 export AGENT_PRIVATE_KEY="0xYourPrivateKey"
 ```
@@ -31,37 +33,23 @@ python examples/hello_ln_church.py
 ### What this script demonstrates:
 1. **Probe:** Establishes connection and identity.
 2. **Pay (Faucet):** Secures zero-balance fallback credits to test the payment loop safely.
-3. **Execute:** Hits a 402-protected endpoint, intercepts the paywall, negotiates the settlement automatically, and returns the paid result.
-
-By completing this pilgrimage, your agent's first successful footprint is recorded on the observation network.
+3. **Execute:** Hits a 402-protected endpoint, intercepts the paywall, negotiates settlement via standard headers, and returns the result.
 
 ---
 ## 📦 Public API Surface (1.5.x Stable Line)
 The following interfaces are the stable contract for the current 1.5.x line:
-This section defines what downstream users, agent runtimes, and tool integrations may safely rely on across patch updates in the 1.5 series.
-- `Payment402Client` (Core Engine)
-- `LnChurchClient` (Reference Adapter)
-- `AssetType`, `SchemeType` (Enums)
-- All response models (e.g., `OmikujiResponse`, `MonzenTraceResponse`, `MonzenGraphResponse`) top-level schemas are guaranteed stable in 1.x.
-Note: The inner payload of MonzenGraphResponse.data may evolve based on the graph network's schema.
-- The Trace Record Semantics (action_type, recorded_hash, trace_id, etc.)
-*Note: `execute_paid_action` is deprecated in favor of `execute_request(method="POST", ...)`.*
-
-### 🌟 Core Value: Execute, Prove, Observe
-
-This SDK is strictly built on **open standards (HTTP 402, L402, x402)**, ensuring your agents can interact with *any* compliant paywall on the open web without vendor lock-in. 
-
-1. **Execute**: Seamlessly call any external or internal 402-protected API without stalling.
-2. **Prove**: Automatically handle challenge parsing, payment flows, and support proof-oriented flows using the invoice and preimage when available.
-3. **Observe**: Register and visualize internal or external payment traces through LN Church.
+- `Payment402Client` (Core Engine) 
+- `LnChurchClient` (Reference Adapter) 
+- `AssetType`, `SchemeType` (Enums) 
+- All response models (e.g., `OmikujiResponse`, `MonzenTraceResponse`) 
+*Note: `execute_paid_action` is deprecated in favor of `execute_detailed`.*
 
 ### 🛤️ The Two Workflows
 
-**LN Church** is an experimental observation network for AI agents interacting with paywalled APIs. To support both the open web and controlled experimentation, the SDK is designed around two distinct flows:
+**LN Church** is an experimental observation network for AI agents interacting with paywalled APIs. 
 
-* **External Flow:** Call *any* third-party 402-enabled API in the wild. The SDK autonomously handles the payment negotiation loop.
-  👉 *Call a third-party 402 API → optionally submit the payment proof/trace to LN Church → observe it in the network.*
-* **Internal Flow:** Interact directly with the official LN Church servers for Oracle and Ritual tasks to test and refine agent capabilities within the observation network.
+* **External Flow:** Call *any* third-party 402-enabled API in the wild. The SDK autonomously handles the standard payment negotiation loop.
+* **Internal Flow:** Interact directly with the official LN Church servers for Oracle and Ritual tasks to test and refine agent capabilities within the reference testbed.
 
 ---
 

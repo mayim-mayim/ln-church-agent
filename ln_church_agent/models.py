@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 import time
 
+class ChallengeSource(str, Enum):
+    STANDARD_X402 = "payment_required_header"  # PAYMENT-REQUIRED
+    STANDARD_WWW = "www_authenticate"         # WWW-Authenticate (L402/MPP)
+    LEGACY_CUSTOM = "legacy_custom_header"    # x-402-payment-required
+    BODY_CHALLENGE = "body_challenge"         # JSON Body
+
+class AttestationSource(str, Enum):
+    SERVER_JWS = "server_attested"             # PAYMENT-RESPONSE 由来
+    CLIENT_REPORTED = "self_reported"         # クライアント自己申告 (txHash 等)
+
 # ==========================================
 # v1.4 / v1.5: Trust, Outcome & Evidence Layer Models
 # (※依存順序による前方参照エラーを防ぐためトポロジカルに配置)
@@ -49,19 +59,12 @@ class ExecutionContext(BaseModel):
 
 class ParsedChallenge(BaseModel):
     scheme: str
-    # ★ 改修: CAIP-2 ネットワーク指定をパースするためのフィールドを追加
-    network: Optional[str] = None
+    network: str
     amount: float
     asset: str
-    invoice: Optional[str] = None
-    macaroon: Optional[str] = None
-    charge_id: Optional[str] = None
-    destination: Optional[str] = None
-    chain_id: Optional[str] = None
-    token_address: Optional[str] = None
-    relayer_endpoint: Optional[str] = None
-    reference: Optional[str] = None
-    raw_headers: dict = Field(default_factory=dict)
+    parameters: Dict[str, Any]
+    source: ChallengeSource                    # 解析元を記録
+    raw_header: Optional[str] = None
 
 class TrustEvidence(BaseModel):
     """評価の根拠を束ねるコンテナ（Source-Agnostic）"""
@@ -113,14 +116,15 @@ class PaymentPolicy:
     _session_spent_usd: float = field(default=0.0, repr=False)
 
 class SettlementReceipt(BaseModel):
-    """自律エージェントが次の推論(ReAct等)に利用する最小限の決済証跡"""
-    receipt_id: str = Field(default_factory=lambda: f"rec_{uuid.uuid4().hex[:12]}")
+    receipt_id: str
     scheme: str
-    network: str
-    asset: str
     settled_amount: float
+    asset: str
+    network: str
     proof_reference: str
-    verification_status: str = "pending" # pending, verified, self_reported
+    receipt_token: Optional[str] = None       # サーバー返却の JWS 等
+    verification_status: str = "verified"
+    source: AttestationSource = AttestationSource.CLIENT_REPORTED
 
 class AssetType(str, Enum):
     JPYC = "JPYC"
