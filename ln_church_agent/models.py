@@ -63,7 +63,7 @@ class ParsedChallenge(BaseModel):
     amount: float
     asset: str
     parameters: Dict[str, Any]
-    source: ChallengeSource                    # 解析元を記録
+    source: ChallengeSource                    
     raw_header: Optional[str] = None
 
 class TrustEvidence(BaseModel):
@@ -103,16 +103,12 @@ class PaymentPolicy:
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
     v1.3.0: セッション上限とホスト制限を追加し、ハルシネーションによる資金枯渇を防止。
     """
-    # ★ 改修: デフォルトの許容スキームを Canonical な名称に変更
     allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP"])
     allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
     max_spend_per_tx_usd: float = 5.0 # デフォルトで1回5ドルを上限とする安全装置
-    # --- v1.3.0 Additions ---
     max_spend_per_session_usd: float = 10.0
     allowed_hosts: Optional[List[str]] = None
     blocked_hosts: List[str] = field(default_factory=list)
-    
-    # 内部管理用セッション消費額
     _session_spent_usd: float = field(default=0.0, repr=False)
 
 class SettlementReceipt(BaseModel):
@@ -122,7 +118,7 @@ class SettlementReceipt(BaseModel):
     asset: str
     network: str
     proof_reference: str
-    receipt_token: Optional[str] = None       # サーバー返却の JWS 等
+    receipt_token: Optional[str] = None
     verification_status: str = "verified"
     source: AttestationSource = AttestationSource.CLIENT_REPORTED
 
@@ -151,7 +147,6 @@ class SchemeType(str, Enum):
 
 
 class PaymentAuth(BaseModel):
-    # ★ 改修: SchemeType の参照を維持しつつ、CAIP-2対応の chainId や agentId を追加
     scheme: SchemeType
     proof: str
     chainId: Optional[str] = None # CAIP-2 ネットワーク識別子 (e.g. "eip155:137") を許容するため str に
@@ -181,7 +176,7 @@ class OmikujiReceipt(BaseModel):
     timestamp: int
     paid: str
     AgentId: Optional[str] = None
-    agentId: Optional[str] = None  # バックエンドの揺れ吸収用
+    agentId: Optional[str] = None  
     verify_token: str
     probe_verified: Optional[bool] = False
     proof_class: Optional[str] = None

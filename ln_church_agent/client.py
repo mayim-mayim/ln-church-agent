@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.6" 
+        return "1.5.7" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -376,12 +376,14 @@ class Payment402Client:
                 headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
             
             # LN教互換用ボディ (全EVM系で付与)
-            payload["paymentAuth"] = {
-                "scheme": parsed.scheme, 
-                "proof": proof_ref, 
-                "chainId": str(chain_id_to_use),
-                "standard_x402": (parsed.scheme == SchemeType.x402.value)
-            }
+            # 標準 x402 の場合はペイロード（ボディ）を汚染せず、レガシー拡張ルートのみ付与する
+            if parsed.scheme != SchemeType.x402.value:
+                payload["paymentAuth"] = {
+                    "scheme": parsed.scheme, 
+                    "proof": proof_ref, 
+                    "chainId": str(chain_id_to_use),
+                    "standard_x402": False
+                }
             # 互換用 Authorization ヘッダー
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
@@ -411,19 +413,13 @@ class Payment402Client:
                 mac = parsed.parameters.get("macaroon")
                 headers["Authorization"] = f"L402 {mac}:{proof_ref}"
             else:
-                # 【★重要: MPP標準形式】
-                # 旧LN教サーバー向けには parameters.charge をキーにする
                 charge_id = parsed.parameters.get("charge")
                 if charge_id:
-                    headers["Authorization"] = f"MPP {charge_id}:{proof_ref}"
+                    headers["Authorization"] = f"{parsed.scheme} {charge_id}:{proof_ref}"
                 else:
-                    headers["Authorization"] = f"MPP {proof_ref}"
-
+                    headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
         return proof_ref, network_name
 
-    # ==========================================
-    # v1.3.0: Execution Contract の強化 (同期 Runtime Layer)
-    # ==========================================
     def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         """[後方互換性維持] 内部で execute_detailed を呼び出し、レスポンスの辞書のみを返却する。"""
         result = self.execute_detailed(method, endpoint_path, payload, headers)
@@ -440,7 +436,6 @@ class Payment402Client:
         _current_receipt: Optional[SettlementReceipt] = None
     ) -> ExecutionResult:
         
-        # ★ v1.5.1: Contextが未指定の場合、フロー全体で同一のセッションを維持するためにここで初期化
         context = context or ExecutionContext()
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -463,16 +458,13 @@ class Payment402Client:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
-            # 標準ヘッダーからレシートトークン(JWS)を抽出してレシートを更新
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
             if raw_response:
-                # ★ 新標準 (Base64 JSON) のパース
                 if not raw_response.startswith('status='):
                     payload = _b64url_decode(raw_response)
                     token = payload.get("receipt") if payload else raw_response
                 else:
-                    # レガシー文字列からの抽出
                     match = re.search(r'receipt="?([^",]+)"?', raw_response)
                     token = match.group(1) if match else raw_response
             else:
@@ -498,7 +490,6 @@ class Payment402Client:
             parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
             self._enforce_policy(parsed, url)
 
-            # ★ 修正: sync 側も context.past_evidence を主経路にする (hints 代入をやめる)
             if self.evidence_repo:
                 past_records = self.evidence_repo.import_evidence(url, context)
                 if past_records:
@@ -524,19 +515,17 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                # Payment Execution
                 proof_ref, network_name = self._process_payment(parsed, headers, payload)
                 self._record_session_spend(parsed)
 
                 receipt = SettlementReceipt(
-                    receipt_id=str(uuid.uuid4()), # IDを生成
+                    receipt_id=str(uuid.uuid4()),
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
                     verification_status="verified" if network_name == "Lightning" else "self_reported"
                 )
                 self.last_receipt = receipt
 
-                # Recursion
                 next_result = self.execute_detailed(
                     method, url, payload, headers, _current_hop, _payment_retry_count + 1,
                     context=context, outcome_matcher=outcome_matcher,
@@ -548,7 +537,6 @@ class Payment402Client:
                 next_result.used_asset = parsed.asset
                 next_result.verification_status = receipt.verification_status
                 
-                # ★ v1.5.1: 正常完了時の Evidence Export
                 if self.evidence_repo:
                     record = PaymentEvidenceRecord(
                         session_id=context.session_id, correlation_id=context.correlation_id,
@@ -562,7 +550,6 @@ class Payment402Client:
                 return next_result
 
             except Exception as e:
-                # ★ v1.5.1: エラー時（Trust Block等）の Evidence Export
                 if self.evidence_repo:
                     record = PaymentEvidenceRecord(
                         session_id=context.session_id, correlation_id=context.correlation_id,
@@ -585,14 +572,12 @@ class Payment402Client:
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
-                # ★ HATEOASペイロードのスキームも正規化する安全装置
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
 
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 
-                # ★ v1.5: context, outcome_matcher, receipt を引き継ぐ
                 return self.execute_detailed(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
@@ -618,7 +603,6 @@ class Payment402Client:
     ) -> ExecutionResult:
         """v1.3.0+: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
         
-        # ★ v1.5.1: Contextが未指定の場合、フロー全体で同一のセッションを維持するためにここで初期化
         context = context or ExecutionContext()
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -634,7 +618,6 @@ class Payment402Client:
             "headers": headers
         }
 
-        # v1.3.1: 非同期クライアントの再利用
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(follow_redirects=True)
 
@@ -645,16 +628,13 @@ class Payment402Client:
             resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
-            # 標準ヘッダーからレシートトークン(JWS)を抽出してレシートを更新
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
             if raw_response:
-                # ★ 新標準 (Base64 JSON) のパース
                 if not raw_response.startswith('status='):
                     payload = _b64url_decode(raw_response)
                     token = payload.get("receipt") if payload else raw_response
                 else:
-                    # レガシー文字列からの抽出
                     match = re.search(r'receipt="?([^",]+)"?', raw_response)
                     token = match.group(1) if match else raw_response
             else:
@@ -665,14 +645,11 @@ class Payment402Client:
                 _current_receipt.source = AttestationSource.SERVER_JWS
                 _current_receipt.verification_status = "verified"
             
-            # v1.5: 決済後の結果（Outcome）を意味づけする（Provider-Agnostic）
             if outcome_matcher:
                 sig = inspect.signature(outcome_matcher)
                 if len(sig.parameters) == 3:
-                    # v1.5 Signature: (response, receipt, context)
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
                 else:
-                    # v1.4 Fallback Signature: (response, context)
                     result.outcome = outcome_matcher(resp_data, context)
                     
             return result
@@ -692,15 +669,13 @@ class Payment402Client:
                     past_records = self.evidence_repo.import_evidence(url, context)
                 
                 if past_records:
-                    # 修正: Magic Stringを排除し、型安全な専用フィールドへ格納
                     context.past_evidence = past_records
 
-            # v1.5: TrustEvidence の構築（Source-Agnostic）
             evidence = TrustEvidence(
                 url=url,
                 challenge=parsed,
                 host_metadata={},
-                agent_hints=context.hints # hints はそのまま補助用として渡す
+                agent_hints=context.hints
             )
 
             decision = None
@@ -725,14 +700,13 @@ class Payment402Client:
                 self._record_session_spend(parsed)
 
                 receipt = SettlementReceipt(
-                    receipt_id=str(uuid.uuid4()), # IDを生成
+                    receipt_id=str(uuid.uuid4()),
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
                     verification_status="verified" if network_name == "Lightning" else "self_reported"
                 )
                 self.last_receipt = receipt
 
-                # v1.5: context, outcome_matcher に加え、発行された receipt を次に渡す
                 next_result = await self.execute_detailed_async(
                     method, url, payload, headers, _current_hop, _payment_retry_count + 1,
                     context=context, outcome_matcher=outcome_matcher,
@@ -785,7 +759,6 @@ class Payment402Client:
             if next_method != "GET" and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
             elif next_url and next_method != "NONE":
-                # ★ HATEOASペイロードのスキームも正規化
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
@@ -793,7 +766,6 @@ class Payment402Client:
                 merged_headers = {**headers, **(next_action.suggested_headers or {})}
                 await asyncio.sleep(1) 
                 
-                # ★ v1.5: context, outcome_matcher, receipt を引き継ぐ
                 return await self.execute_detailed_async(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
@@ -841,7 +813,6 @@ class LnChurchClient(Payment402Client):
         *args,
         **kwargs
     ):
-        # 1. v1.3.1: 親クラスを呼ぶ前に、鍵の検証と agent_id の導出を完了させる
         derived_agent_id = agent_id
         if private_key and not agent_id:
             try:
@@ -852,7 +823,6 @@ class LnChurchClient(Payment402Client):
                     from solders.keypair import Keypair
                     derived_agent_id = str(Keypair.from_base58_string(private_key).pubkey())
                 except Exception as e:
-                    # ここで確実に捕捉し、意図した ValueError を投げる
                     raise ValueError(
                         "Invalid private_key format. Could not parse as EVM hex or Solana Base58. "
                         f"Detailed error: {e}"
@@ -860,11 +830,7 @@ class LnChurchClient(Payment402Client):
         else:
             derived_agent_id = agent_id or "Anonymous_Agent"
 
-
-        # ★ 修正: 親クラスの初期化（下層アダプタの生成）で発生するパースエラーを捕捉し、
-        # LnChurchClient として意図したエラーメッセージに正規化（バブリング順の調整）
         try:
-            # 🚨 修正: 必要な引数をすべて親クラスにしっかり引き継ぐ！
             super().__init__(
                 private_key=private_key, 
                 ln_api_url=ln_api_url, 
@@ -883,11 +849,8 @@ class LnChurchClient(Payment402Client):
                 **kwargs
             )
         except ValueError as e:
-            # LocalKeyAdapter や LocalSolanaAdapter が発した ValueError をキャッチし、
-            # テストが期待する "Invalid private_key format ..." に統一して投げ直す
             raise ValueError(f"Invalid private_key format. Details: {str(e)}") from e
 
-        # 3. 導出したIDと初期プロパティをセット
         self.agent_id = derived_agent_id
         self.probe_token = None
         self.faucet_token = None
@@ -926,7 +889,6 @@ class LnChurchClient(Payment402Client):
 
 
     def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
-        # デフォルトは旗艦導線の 'L402' (非SATSの場合は市場標準の 'x402')
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
@@ -935,13 +897,11 @@ class LnChurchClient(Payment402Client):
         return OmikujiResponse(**self.execute_request("POST", "/api/agent/omikuji", payload, headers))
 
     def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
 
     def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         return HonoResponse(**self.execute_request("POST", "/api/agent/hono", payload))
@@ -959,13 +919,11 @@ class LnChurchClient(Payment402Client):
         return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}"))
 
     def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         return CompareResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload))
 
     def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
@@ -984,8 +942,6 @@ class LnChurchClient(Payment402Client):
         return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
 
     def download_monzen_graph(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
-        # (Solanaの場合は明示指定で 'lnc-solana-transfer' を使うようドキュメントで誘導)
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
@@ -1008,7 +964,6 @@ class LnChurchClient(Payment402Client):
             print(f"[System ASYNC] Faucet skipped or failed: {str(e)}")
 
     async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         if self.faucet_token:
@@ -1018,14 +973,12 @@ class LnChurchClient(Payment402Client):
         return OmikujiResponse(**res)
 
     async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", "/api/agent/confession", payload)
         return ConfessionResponse(**res)
 
     async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
         res = await self.execute_request_async("POST", "/api/agent/hono", payload)
@@ -1045,14 +998,12 @@ class LnChurchClient(Payment402Client):
         return BenchmarkOverviewResponse(**res)
 
     async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload)
         return CompareResponse(**res)
 
     async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload)
@@ -1073,7 +1024,6 @@ class LnChurchClient(Payment402Client):
         return MonzenMetricsResponse(**res)
 
     async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
-        # デフォルトは標準仕様のx402 / L402を維持
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)

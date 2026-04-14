@@ -2,11 +2,16 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.7] - 2026-04-14 (Documentation Alignment & Protocol Fluctuation Absorption)
+* **Fixed (Docs)**: Resolved a documentation misalignment from v1.5.6 regarding the `Payment` and `MPP` header prefixes.
+* **Changed**: Formally documented the SDK's dynamic protocol absorption capability. The client transparently supports both IETF Draft (`Payment`) and ecosystem (`MPP`) standards by dynamically constructing the `Authorization` header based on the server's `WWW-Authenticate` challenge, adhering perfectly to the Cold Spec governance.
+* **Details**: [v1.5.7 Release Notes](docs/release_notes/v1.5.7.md)
+
 ## [1.5.6] - 2026-04-14 (Wire-Level Protocol Purity & Interface Sync)
 * **Fixed**: Resolved a critical parsing paradox where `MPP` headers in `WWW-Authenticate` were ignored, ensuring proper dual-stack routing.
 * **Fixed**: Restored protocol purity for Lightning payments (L402/MPP) by preventing `PAYMENT-SIGNATURE` and JSON body pollution, strictly using the `Authorization` header.
 * **Fixed**: Synchronized the `EVMSigner` interface in `protocols.py` with the canonical v1.5.2 naming conventions to prevent `AttributeError` for custom wallet adapters.
-* **Changed**: Standardized the MPP authorization header output to use the `MPP` prefix instead of the legacy `Payment` prefix.
+* **Changed**: ~~Standardized the MPP authorization header output to use the `MPP` prefix instead of the legacy `Payment` prefix.~~ **(※RETRACTED IN v1.5.7: The SDK dynamically supports both `Payment` and `MPP` prefixes based on server requirements, rather than hardcoding. See v1.5.7 notes.)**
 * **Details**: [v1.5.6 Release Notes](docs/release_notes/v1.5.6.md)
 
 ## [1.5.5] - 2026-04-13 (Dual-Stack Resilience & Initialization Fix)

@@ -34,7 +34,6 @@ def get_client() -> LnChurchClient:
     global _client_instance
     if _client_instance is None:
         private_key = os.environ.get("AGENT_PRIVATE_KEY")
-        # 1.5.2では自動ナビゲーションが標準
         _client_instance = LnChurchClient(private_key=private_key, auto_navigate=True)
     return _client_instance
 
@@ -109,8 +108,6 @@ def execute_paid_entropy_oracle(
             except Exception:
                 pass
 
-        # ★ v1.5.2: execute_detailed を直接呼び出し、標準ヘッダー由来の JWS を取得する
-        # 万が一 LLM が scheme を null で送ってきた場合の安全装置
         target_scheme = scheme or ("L402" if asset_type == "SATS" else "x402")
         payload = {
             "agentId": client.agent_id, 
@@ -118,19 +115,16 @@ def execute_paid_entropy_oracle(
             "scheme": target_scheme, 
             "asset": asset_type
         }
-        # Faucetキャッシュがあれば適用
         if client.faucet_token:
             payload["paymentOverride"] = {"type": "faucet", "proof": client.faucet_token, "asset": "FAUCET_CREDIT"}
 
         headers = {"x-probe-token": client.probe_token} if client.probe_token else {}
         
-        # 実行
         result = client.execute_detailed("POST", "/api/agent/omikuji", payload=payload, headers=headers)
         
         resp = result.response
         receipt = result.settlement_receipt
         
-        # エージェントへの出力テキストの構築
         text_output = (
             f"✅ SYSTEM: Capability Verified successfully.\n"
             f"🔮 ACQUIRED ENTROPY: {resp.get('result')}\n"
@@ -138,12 +132,10 @@ def execute_paid_entropy_oracle(
             f"💰 SETTLED: {resp.get('paid')} via {scheme}\n"
         )
 
-        # ★ 標準化の成果: サーバー発行の JWS をエージェントに明示
         if receipt and receipt.receipt_token:
             text_output += f"🔑 VERIFY TOKEN (JWS): {receipt.receipt_token}\n"
             text_output += f"🛡️ ATTESTATION SOURCE: {receipt.source.value}\n"
         elif resp.get("receipt", {}).get("verify_token"):
-            # フォールバック (ボディに含まれる場合)
             text_output += f"🔑 VERIFY TOKEN (JWS): {resp['receipt']['verify_token']}\n"
         
         text_output += f"💡 NEXT ACTION: Proceed to 'check_agent_capability_passport' to register this capability."
@@ -465,7 +457,6 @@ def seek_divine_oracle(
     try:
         client = get_client()
         
-        # 【修正後】万が一 LLM が scheme を null で送ってきた場合の安全装置
         target_scheme = scheme or ("L402" if asset_type == "SATS" else "x402")  
         payload = {
             "agentId": client.agent_id,

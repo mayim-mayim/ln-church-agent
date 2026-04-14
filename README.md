@@ -6,6 +6,27 @@ Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 
 ## 🌟 Core Philosophy: Standards First
 This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model.
 
+## Standards Tracking Policy
+
+This SDK is designed to follow the evolving open standards around HTTP 402 agent payments, so application developers do not need to track each protocol directly.
+
+Normative upstream references:
+- **x402:** Coinbase x402 v2 documentation and `coinbase/x402` specifications
+- **Payment / MPP:** IETF `draft-ryan-httpauth-payment-01`
+- **L402:** Lightning Labs L402 protocol specification
+
+Tracking policy:
+- This SDK prioritizes the current standard path for each protocol.
+- Legacy and ecosystem-specific flows may remain available as fallback compatibility paths.
+- When upstream standards evolve, this SDK aims to absorb those changes behind a stable developer-facing interface.
+
+Design goal:
+- **One SDK, one execution loop, multiple 402 payment rails.**
+- Developers should be able to rely on this SDK instead of manually tracking protocol-level changes across x402, Payment/MPP, and L402.
+
+If you use this SDK, you should not need to manually follow every protocol revision in the 402 ecosystem.
+
+
 ### Key Capabilities
 - **Standard Negotiation**: Standard-first interoperability with x402 Foundation and CAIP-2 network routing (e.g., `eip155:137`, `solana:mainnet`).
 - **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and negotiates settlement using **Base64URL-encoded JSON objects** via standard headers.

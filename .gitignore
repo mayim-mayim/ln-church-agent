@@ -16,5 +16,11 @@ Thumbs.db
 # 環境変数（絶対に公開してはいけない秘密鍵など）
 .env
 
+# ========================
+# Repomix outputs
+# ========================
+repomix-output.xml
+repomix-output.txt
+
 # テスト用スクリプト
 ai_agent_sdk.py

@@ -248,5 +248,6 @@ def test_protocol_purity_x402_headers(mock_sign_evm):
     assert "PAYMENT-SIGNATURE" in original_headers
     
     # （後方互換性のため、x402の場合はボディへのインジェクトが許容されていることを確認）
-    assert "paymentAuth" in original_payload
-    assert original_payload["paymentAuth"]["scheme"] == "x402"    
+    # x402仕様に準拠し、リクエストボディ（payload）が paymentAuth で汚染されないことを確認する
+    assert "paymentAuth" not in original_payload
+    assert original_payload == {"business_data": "important_value"}
