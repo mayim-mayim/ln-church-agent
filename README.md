@@ -1,7 +1,11 @@
 # ln-church-agent
-**The Standard HTTP 402 SDK for Autonomous AI Agents**
+**The Standard HTTP 402 SDK & Agentic Payment Runtime**
 
-Python runtime and SDK for AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs across the open web.
+**The runtime is generic. The shrine is the proving ground.**
+
+This repository serves a dual purpose:
+1. **General-Purpose HTTP 402 Runtime:** A robust client for autonomous AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs across the open web (x402, L402, MPP).
+2. **LN Church Public Benchmark Path:** A streamlined adapter to test and publicly prove your agent's capabilities against the [LN Church Benchmark Shrine](https://kari.mayim-mayim.com/), validating the full `Probe → Pay → Execute → Trace` lifecycle.
 
 ## 🌟 Core Philosophy: Standards First
 This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model.
@@ -34,27 +38,45 @@ If you use this SDK, you should not need to manually follow every protocol revis
 - **LN Church Extensions**: Optimized, gasless canonical routes (`lnc-evm-relay`, `lnc-solana-transfer`) for the reference testbed.
 
 ---
+## 🚩 Start Here
 
-## 🚩 Start Here: The Canonical First Success
+Choose your path based on your objective:
 
-The fastest way to understand this SDK is to run the canonical example. This script connects to the **LN Church public endpoint**, which serves as the official testbed for agents to experience their first autonomous economic loop.
+### Path A: The Benchmark Shrine (Prove your Agent)
+Use the bundled `LnChurchClient` adapter to test your agent against the public proving ground. Secure verifiable receipts and establish public proof of your agent's economic autonomy.
 
-### Running the Example
+```python
+from ln_church_agent import LnChurchClient, AssetType
 
-**1. Set your Agent's Identity Key** (EVM or Solana format) 
-```bash
-export AGENT_PRIVATE_KEY="0xYourPrivateKey"
+# Connect to the public benchmark node
+client = LnChurchClient(private_key="0x...", ln_provider="alby", ln_api_key="token")
+
+# Trial 1: Zero-Balance Recovery
+client.claim_faucet_if_empty()
+
+# Trial 2: Paid Execution (Probe -> Pay -> Execute -> Trace)
+result = client.draw_omikuji(asset=AssetType.SATS) 
+print(result.receipt) # Cryptographic proof of execution
 ```
 
-**2. Run the Hello World script**
-```bash
-python examples/hello_ln_church.py
-```
+### Path B: General 402 Integration (Build your own)
+Use the generic core engine (Payment402Client) to integrate any HTTP 402 compliant API on the open web. The SDK autonomously handles the standard payment negotiation loop.
 
-### What this script demonstrates:
-1. **Probe:** Establishes connection and identity.
-2. **Pay (Faucet):** Secures zero-balance fallback credits to test the payment loop safely.
-3. **Execute:** Hits a 402-protected endpoint, intercepts the paywall, negotiates settlement via standard headers, and returns the result.
+```python
+from ln_church_agent import Payment402Client
+
+client = Payment402Client(
+    base_url="[https://your-402-api.com](https://your-402-api.com)",
+)
+
+# Detects 402 -> Pays invoice -> Retries -> Returns JSON
+result = client.execute_request(
+    method="POST",
+    endpoint_path="/api/protected",
+    payload={"input": "hello"}
+)
+print(result)
+```
 
 ---
 ## 📦 Public API Surface (1.5.x Stable Line)
