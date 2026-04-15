@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.9] - 2026-04-15 (Evidence-Backed Session Budget Persistence)
+* **Added**: Introduced `session_spend_delta_usd` to `PaymentEvidenceRecord` to capture immutable settlement budget events.
+* **Added**: Expanded `EvidenceRepository` with `import_session_evidence` hooks to enable session budget recovery across agent crashes or restarts.
+* **Added**: Built-in cryptographic deduplication using `receipt_id` to prevent double-counting of session budgets during HATEOAS recovery loops.
+* **Changed**: Centralized the USD exchange rate logic into an internal `_estimate_usd_value` helper to ensure consistency across policy enforcement and evidence recording.
+* **Changed**: Optimized the core execution loop (`execute_detailed` / `async`) to perform a lightweight, one-shot session budget restore prior to standard HATEOAS navigation.
+
 ## [1.5.8] - 2026-04-15 (Navigation Hint Normalization & Observability)
 * **Added**: Introduced "Navigation Hint Normalization" to absorb HATEOAS vocabulary fluctuations (e.g., `next`, `action`, `retry_action`) and Header-based hints (`Location`, `Link`) into a canonical `NextAction` model.
 * **Added**: Enhanced the observability layer by adding `navigation_source` to `PaymentEvidenceRecord`, allowing agents to audit the decision origin of HATEOAS recovery paths.

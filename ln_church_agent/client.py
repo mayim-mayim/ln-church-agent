@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.8" 
+        return "1.5.9" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -241,19 +241,76 @@ class Payment402Client:
             raw_header=auth_header
         )
 
-    def _parse_legacy_header(self, header_val: str) -> ParsedChallenge:
-        """旧カスタムヘッダー (x-402-payment-required) のパース処理"""
-        params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', header_val)}
-        return ParsedChallenge(
-            scheme=params.get("scheme", "unknown"),
-            network=params.get("network", "unknown"),
-            amount=float(params.get("amount", 0)),
-            asset=params.get("asset", "USDC"),
-            parameters=params,
-            source=ChallengeSource.LEGACY_CUSTOM,
-            raw_header=header_val
-        )
+# ==========================================
+    # v1.5.9 Update: Session Budget Persistence Helpers
+    # ==========================================
+    def _estimate_usd_value(self, parsed: ParsedChallenge) -> float:
+        """ParsedChallengeから決済のUSD換算見積額を算出するヘルパー"""
+        usd_value = 0.0
+        if parsed.asset == "USDC": usd_value = parsed.amount
+        elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
+        elif parsed.asset == "SATS": usd_value = parsed.amount * 0.00065
+        return usd_value
 
+    def _sum_budget_events(self, records: List[PaymentEvidenceRecord]) -> float:
+        """過去のEvidenceから重複を除外して消費USDの合計を算出する"""
+        total_usd = 0.0
+        seen_receipts = set()
+        for record in records:
+            if record.session_spend_delta_usd is not None:
+                # receipt_id が存在する場合は、二重計上を防ぐために重複チェック
+                receipt_id = None
+                if record.receipt_summary and isinstance(record.receipt_summary, dict):
+                    receipt_id = record.receipt_summary.get("receipt_id")
+                
+                if receipt_id:
+                    if receipt_id in seen_receipts:
+                        continue
+                    seen_receipts.add(receipt_id)
+                
+                total_usd += record.session_spend_delta_usd
+        return total_usd
+
+    def _restore_session_spend_from_evidence(self, context: ExecutionContext) -> None:
+        """EvidenceRepositoryからセッション予算をワンショットで復元する"""
+        if not self.policy or not self.evidence_repo or context.session_budget_restored:
+            return
+        
+        try:
+            if hasattr(self.evidence_repo, "import_session_evidence"):
+                records = self.evidence_repo.import_session_evidence(context)
+                # 🚨 修正: 履歴が空でも0.0で上書きし、セッションを切り替えた際のリークを防ぐ
+                restored_usd = self._sum_budget_events(records) if records else 0.0
+                self.policy._session_spent_usd = restored_usd
+        except Exception:
+            pass # 復元エラーで推論全体を止めないようサイレントフォールバック
+        finally:
+            context.session_budget_restored = True
+
+    async def _restore_session_spend_from_evidence_async(self, context: ExecutionContext) -> None:
+        """EvidenceRepositoryからセッション予算をワンショットで復元する(非同期)"""
+        if not self.policy or not self.evidence_repo or context.session_budget_restored:
+            return
+        
+        try:
+            if hasattr(self.evidence_repo, "import_session_evidence_async"):
+                records = await self.evidence_repo.import_session_evidence_async(context)
+            elif hasattr(self.evidence_repo, "import_session_evidence"):
+                records = self.evidence_repo.import_session_evidence(context)
+            else:
+                records = []
+            
+            # 🚨 修正: 履歴が空でも0.0で上書き
+            restored_usd = self._sum_budget_events(records) if records else 0.0
+            self.policy._session_spent_usd = restored_usd
+        except Exception:
+            pass
+        finally:
+            context.session_budget_restored = True
+
+    # ------------------------------------------
+    # Policy Enforcement (USD換算をヘルパーに集約)
+    # ------------------------------------------
     def _enforce_policy(self, parsed: ParsedChallenge, target_url: str):
         """正規化されたChallengeに対してセキュリティポリシーを強制する"""
         if not self.policy:
@@ -266,40 +323,45 @@ class Payment402Client:
         if self.policy.allowed_hosts is not None and domain not in self.policy.allowed_hosts:
             raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is not in allowed_hosts.")
 
-        # Scheme validation (Canonical mapping)
         if parsed.scheme not in self.policy.allowed_schemes:
             raise PaymentExecutionError(f"Policy Violation: Scheme '{parsed.scheme}' is restricted.")
             
         if parsed.asset not in self.policy.allowed_assets:
             raise PaymentExecutionError(f"Policy Violation: Asset '{parsed.asset}' is restricted.")
 
-        usd_value = 0.0
-        if parsed.asset == "USDC": usd_value = parsed.amount
-        elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
-        elif parsed.asset == "SATS": usd_value = parsed.amount * 0.00065
+        # 🚨 v1.5.9 Update: 換算ロジックの集約
+        usd_value = self._estimate_usd_value(parsed)
 
         if usd_value > self.policy.max_spend_per_tx_usd:
             raise PaymentExecutionError(
                 f"Policy Violation: Amount ({usd_value:.4f} USD) exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd})."
             )
 
-        # セッション累計額のチェック（今回のリクエスト分を加算して上限を超えるか判定）
         if self.policy._session_spent_usd + usd_value > self.policy.max_spend_per_session_usd:
             raise PaymentExecutionError(
                 f"Policy Violation: Total session spend ({self.policy._session_spent_usd + usd_value:.4f} USD) "
                 f"would exceed limit ({self.policy.max_spend_per_session_usd} USD)."
             )
 
-
     def _record_session_spend(self, parsed: ParsedChallenge):
         """決済成功後にのみセッション予算を消費する"""
         if not self.policy:
             return
-        usd_value = 0.0
-        if parsed.asset == "USDC": usd_value = parsed.amount
-        elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
-        elif parsed.asset == "SATS": usd_value = parsed.amount * 0.00065
-        self.policy._session_spent_usd += usd_value
+        # 🚨 v1.5.9 Update: 換算ロジックの集約
+        self.policy._session_spent_usd += self._estimate_usd_value(parsed)
+
+    def _parse_legacy_header(self, header_val: str) -> ParsedChallenge:
+        """旧カスタムヘッダー (x-402-payment-required) のパース処理"""
+        params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', header_val)}
+        return ParsedChallenge(
+            scheme=params.get("scheme", "unknown"),
+            network=params.get("network", "unknown"),
+            amount=float(params.get("amount", 0)),
+            asset=params.get("asset", "USDC"),
+            parameters=params,
+            source=ChallengeSource.LEGACY_CUSTOM,
+            raw_header=header_val
+        )
 
     def execute_paid_action(self, *args, **kwargs) -> dict:
         """
@@ -425,7 +487,7 @@ class Payment402Client:
         return result.response
 
     # ==========================================
-    # v1.5.8 Beta: Navigation Hint Normalization
+    # v1.5.8: Navigation Hint Normalization
     # ==========================================
     def _resolve_next_action(self, error_data: dict, headers: dict) -> tuple[Optional[NextAction], str]:
         """Normalize various HATEOAS hints from JSON or Headers into a canonical NextAction model."""
@@ -476,6 +538,8 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
+        # 🚨 v1.5.9 Update: HATEOAS実行前にワンショットで予算を復元
+        self._restore_session_spend_from_evidence(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
@@ -552,6 +616,10 @@ class Payment402Client:
             )
 
             decision = None
+            payment_completed = False
+            delta_usd = None
+            receipt = None
+            
             try:
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
@@ -565,6 +633,10 @@ class Payment402Client:
 
                 proof_ref, network_name = self._process_payment(parsed, headers, payload)
                 self._record_session_spend(parsed)
+                
+                # 🚨 修正: 決済成立をマーク
+                payment_completed = True
+                delta_usd = self._estimate_usd_value(parsed)
 
                 receipt = SettlementReceipt(
                     receipt_id=str(uuid.uuid4()),
@@ -591,7 +663,8 @@ class Payment402Client:
                         target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
                         trust_decision=decision,
                         receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
-                        outcome=next_result.outcome
+                        outcome=next_result.outcome,
+                        session_spend_delta_usd=delta_usd
                     )
                     self.evidence_repo.export_evidence(record, context)
 
@@ -599,11 +672,17 @@ class Payment402Client:
 
             except Exception as e:
                 if self.evidence_repo:
-                    record = PaymentEvidenceRecord(
-                        session_id=context.session_id, correlation_id=context.correlation_id,
-                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
-                        trust_decision=decision, error_message=str(e)
-                    )
+                    record_kwargs = {
+                        "session_id": context.session_id, "correlation_id": context.correlation_id,
+                        "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
+                        "trust_decision": decision, "error_message": str(e)
+                    }
+                    # 🚨 修正: 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
+                    if payment_completed:
+                        record_kwargs["session_spend_delta_usd"] = delta_usd
+                        record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
+                        
+                    record = PaymentEvidenceRecord(**record_kwargs)
                     self.evidence_repo.export_evidence(record, context)
                 raise
 
@@ -680,6 +759,8 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
+        # 🚨 v1.5.9 Update: 非同期でのワンショット予算復元
+        await self._restore_session_spend_from_evidence_async(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
         headers = dict(headers or {}) 
@@ -759,6 +840,10 @@ class Payment402Client:
             )
 
             decision = None
+            payment_completed = False
+            delta_usd = None
+            receipt = None
+            
             try:
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
@@ -776,6 +861,10 @@ class Payment402Client:
                 )
 
                 self._record_session_spend(parsed)
+                
+                # 🚨 修正: 決済成立をマーク
+                payment_completed = True
+                delta_usd = self._estimate_usd_value(parsed)
 
                 receipt = SettlementReceipt(
                     receipt_id=str(uuid.uuid4()),
@@ -802,7 +891,8 @@ class Payment402Client:
                         target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
                         trust_decision=decision,
                         receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
-                        outcome=next_result.outcome
+                        outcome=next_result.outcome,
+                        session_spend_delta_usd=delta_usd
                     )
                     if hasattr(self.evidence_repo, "export_evidence_async"):
                         await self.evidence_repo.export_evidence_async(record, context)
@@ -813,11 +903,18 @@ class Payment402Client:
 
             except Exception as e:
                 if getattr(self, "evidence_repo", None):
-                    record = PaymentEvidenceRecord(
-                        session_id=context.session_id, correlation_id=context.correlation_id,
-                        target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
-                        trust_decision=decision, error_message=str(e)
-                    )
+                    record_kwargs = {
+                        "session_id": context.session_id, "correlation_id": context.correlation_id,
+                        "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
+                        "trust_decision": decision, "error_message": str(e)
+                    }
+                    # 🚨 修正: 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
+                    if payment_completed:
+                        record_kwargs["session_spend_delta_usd"] = delta_usd
+                        record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
+                        
+                    record = PaymentEvidenceRecord(**record_kwargs)
+                    
                     if hasattr(self.evidence_repo, "export_evidence_async"):
                         await self.evidence_repo.export_evidence_async(record, context)
                     else:

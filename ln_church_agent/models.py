@@ -17,8 +17,7 @@ class AttestationSource(str, Enum):
     CLIENT_REPORTED = "self_reported"         # クライアント自己申告 (txHash 等)
 
 # ==========================================
-# v1.4 / v1.5: Trust, Outcome & Evidence Layer Models
-# (※依存順序による前方参照エラーを防ぐためトポロジカルに配置)
+# v1.4 / v1.5 / v1.5.9: Trust, Outcome & Evidence Layer Models
 # ==========================================
 
 class TrustDecision(BaseModel):
@@ -47,8 +46,10 @@ class PaymentEvidenceRecord(BaseModel):
     receipt_summary: Optional[dict] = None
     outcome: Optional[OutcomeSummary] = None
     error_message: Optional[str] = None
-    # 🚨 v1.5.8 Beta Update: Added field to track the origin of the navigation hint
+    # v1.5.8 Beta Update: Added field to track the origin of the navigation hint
     navigation_source: Optional[str] = None
+    # 🚨 v1.5.9 Update: セッション予算の永続化・復元用の消費USD記録（決済成功時のみ記録）
+    session_spend_delta_usd: Optional[float] = None
 
 class ExecutionContext(BaseModel):
     """軽量な意図とセッションのコンテキスト"""
@@ -58,6 +59,8 @@ class ExecutionContext(BaseModel):
     hints: dict = Field(default_factory=dict)
     # v1.5.1 Experimental: 明示的かつ型安全な Evidence 引き回し用フィールド
     past_evidence: Optional[List[PaymentEvidenceRecord]] = None
+    # 🚨 v1.5.9 Update: セッション予算が Evidence から復元済みかを示すフラグ（二重復元防止）
+    session_budget_restored: bool = False
 
 class ParsedChallenge(BaseModel):
     scheme: str
@@ -86,11 +89,16 @@ class ExecutionResult(BaseModel):
     outcome: Optional[OutcomeSummary] = None
 
 class EvidenceRepository:
-    """v1.5.1 Experimental: Evidenceの保存と取得を行うための抽象インターフェース"""
+    """v1.5.1 / v1.5.9 Experimental: Evidenceの保存と取得を行うための抽象インターフェース"""
+    
     def export_evidence(self, record: PaymentEvidenceRecord, context: ExecutionContext) -> None:
         pass
 
     def import_evidence(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
+        return []
+
+    # 🚨 v1.5.9 Update: セッション全体（session_id ベース）の Evidence を取得する口
+    def import_session_evidence(self, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return []
 
     async def export_evidence_async(self, record: PaymentEvidenceRecord, context: ExecutionContext) -> None:
@@ -98,6 +106,10 @@ class EvidenceRepository:
 
     async def import_evidence_async(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return self.import_evidence(target_url, context)
+
+    # 🚨 v1.5.9 Update: セッション全体の Evidence を非同期で取得する口
+    async def import_session_evidence_async(self, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
+        return self.import_session_evidence(context)
 
 @dataclass
 class PaymentPolicy:
