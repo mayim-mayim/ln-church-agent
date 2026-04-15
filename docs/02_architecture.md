@@ -82,4 +82,21 @@ result = client.execute_detailed(
 print(f"Receipt Status: {result.settlement_receipt.verification_status}")
 print(f"Outcome Status: {result.outcome.is_success}")
 ```
+
+## 🔮 Future Protocol Evolution (Monitoring & Roadmap)
+*(As of April 2026)*
+
+The `ln-church-agent` SDK is designed to be highly resilient to the rapidly evolving landscape of machine-to-machine payments. We actively monitor the following standardizations and explicitly maintain a "wait-and-see" abstraction layer until they stabilize.
+
+### 1. IETF Payment Draft (Standardization of `WWW-Authenticate`)
+* **Observation:** The IETF draft `draft-ryan-httpauth-payment-01` is actively shaping the unified standard for HTTP 402 Lightning payments. Currently, the ecosystem uses mixed prefixes (`Payment` vs `MPP`) and parameters.
+* **SDK Stance:** To absorb these fluctuations, our `_parse_www_authenticate` engine dynamically routes and constructs the `Authorization` header based on what the server strictly requests, rather than hardcoding a single prefix. We will update the default fallback behavior only when the RFC is formally finalized.
+
+### 2. MCP (Model Context Protocol) & Wallet Facilitators
+* **Observation:** The standardized handshake between stateless AI agents and stateful "Wallet Facilitators" via MCP is still being established. 
+* **SDK Stance:** We currently provide "Cold Spec" tools (e.g., `execute_paid_entropy_oracle`) for autonomous navigation. We are preparing to introduce a formal `WalletFacilitatorProtocol` interface once the MCP ecosystem standardizes how agents discover and delegate signing capabilities dynamically.
+
+### 3. x402 Foundation & CAIP-2 Integration for Non-EVM Chains
+* **Observation:** While we currently support standard x402 (EVM) and L402 (Lightning), non-EVM chains like Solana are handled via custom optimized routes (`lnc-solana-transfer`). 
+* **SDK Stance:** We anticipate that non-EVM chains will eventually be formalized into the standard x402 payload via CAIP-2 identifiers (e.g., `solana:mainnet`). Once ratified, our dynamic router will automatically parse the `network` field and execute standard x402 signatures via the `SolanaSigner`, deprecating the `lnc-` prefix approach.
 ---
