@@ -66,7 +66,7 @@ Use the generic core engine (Payment402Client) to integrate any HTTP 402 complia
 from ln_church_agent import Payment402Client
 
 client = Payment402Client(
-    base_url="[https://your-402-api.com](https://your-402-api.com)",
+    base_url="https://your-402-api.com",
 )
 
 # Detects 402 -> Pays invoice -> Retries -> Returns JSON

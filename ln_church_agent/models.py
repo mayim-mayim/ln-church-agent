@@ -47,6 +47,8 @@ class PaymentEvidenceRecord(BaseModel):
     receipt_summary: Optional[dict] = None
     outcome: Optional[OutcomeSummary] = None
     error_message: Optional[str] = None
+    # 🚨 v1.5.8 Beta Update: Added field to track the origin of the navigation hint
+    navigation_source: Optional[str] = None
 
 class ExecutionContext(BaseModel):
     """軽量な意図とセッションのコンテキスト"""
@@ -287,7 +289,8 @@ class MonzenTraceResponse(BaseModel):
     verification_method: Optional[str] = None
     proof_reference: Optional[str] = None
     message: str
-    next_action: Optional[Dict[str, Any]] = None
+    # 🚨 v1.5.8 Update: Changed from Optional[Dict[str, Any]] to Optional[NextAction]
+    next_action: Optional[NextAction] = None
 
 class SiteRanking(BaseModel):
     domain: str

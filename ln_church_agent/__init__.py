@@ -25,6 +25,7 @@ from .models import (
     ExecutionResult,
     ParsedChallenge,
     # --- v1.5 Public API Surface ---
+    ChallengeSource,
     ExecutionContext,
     TrustDecision,
     OutcomeSummary,
@@ -63,6 +64,7 @@ __all__ = [
     "ExecutionResult",   
     "ParsedChallenge",
     # --- v1.5 ---
+    "ChallengeSource",
     "ExecutionContext",
     "TrustDecision",
     "OutcomeSummary",

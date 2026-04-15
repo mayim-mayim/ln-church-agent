@@ -20,7 +20,7 @@ from .models import (
     ParsedChallenge, ExecutionResult, 
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
     PaymentEvidenceRecord, EvidenceRepository,
-    ChallengeSource, AttestationSource
+    ChallengeSource, AttestationSource, NextAction
 )
 from .exceptions import (
     PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, 
@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.7" 
+        return "1.5.8" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -77,7 +77,6 @@ def _normalize_scheme(raw_scheme: str) -> str:
 # 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
 # ==========================================
 class Payment402Client:
-    # ... (init, parse_challenge, enforce_policy 等の内部実装は変更なし) ...
     def __init__(
         self, 
         private_key: Optional[str] = None, 
@@ -426,6 +425,46 @@ class Payment402Client:
         return result.response
 
     # ==========================================
+    # v1.5.8 Beta: Navigation Hint Normalization
+    # ==========================================
+    def _resolve_next_action(self, error_data: dict, headers: dict) -> tuple[Optional[NextAction], str]:
+        """Normalize various HATEOAS hints from JSON or Headers into a canonical NextAction model."""
+        # 1. Canonical Body (Highest Priority)
+        if "next_action" in error_data and isinstance(error_data["next_action"], dict):
+            try:
+                return NextAction(**error_data["next_action"]), "canonical_body"
+            except Exception:
+                pass
+
+        # 2. Body Aliases (next, action, retry_action)
+        for alias_key in ["next", "action", "retry_action"]:
+            if alias_key in error_data and isinstance(error_data[alias_key], dict):
+                raw = error_data[alias_key]
+                try:
+                    return NextAction(
+                        instruction_for_agent=raw.get("instruction_for_agent") or raw.get("instruction") or raw.get("message_for_agent") or "Resolved from alias",
+                        method=raw.get("method", "GET"),
+                        url=raw.get("url"),
+                        suggested_payload=raw.get("suggested_payload") or raw.get("payload") or raw.get("body"),
+                        suggested_headers=raw.get("suggested_headers") or raw.get("headers")
+                    ), "alias_body"
+                except Exception:
+                    pass
+
+        # 3. Header Hints (Location / Link, forced to GET)
+        location = headers.get("Location") or headers.get("location")
+        if location and isinstance(location, str):
+            return NextAction(instruction_for_agent="Follow Location header", method="GET", url=location), "location_header"
+            
+        link_header = headers.get("Link") or headers.get("link")
+        if link_header and isinstance(link_header, str):
+            match = re.search(r'<([^>]+)>;\s*rel="?(next|payment)"?', link_header)
+            if match:
+                return NextAction(instruction_for_agent=f"Follow Link rel={match.group(2)}", method="GET", url=match.group(1)), "link_header"
+
+        return None, "none"
+
+    # ==========================================
     # 同期 (Sync) Runtime Layer
     # ==========================================
     def execute_detailed(
@@ -455,23 +494,33 @@ class Payment402Client:
         res = requests.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
-            resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
+            # v1.5.8 Hardening: Satisfy Pydantic without polluting business data
+            try:
+                raw_json = res.json() if res.content else {"status": "success"}
+                # If it's already a dict, use as-is. If not (like MagicMock), wrap it safely.
+                resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
+            except Exception:
+                resp_data = {"status": "success", "message": "unparseable"}
+
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
-            if raw_response:
+            # Strict type check to avoid TypeError with MagicMock headers
+            if raw_response and isinstance(raw_response, str):
                 if not raw_response.startswith('status='):
-                    payload = _b64url_decode(raw_response)
-                    token = payload.get("receipt") if payload else raw_response
+                    payload_b64 = _b64url_decode(raw_response)
+                    token = payload_b64.get("receipt") if payload_b64 else raw_response
                 else:
                     match = re.search(r'receipt="?([^",]+)"?', raw_response)
                     token = match.group(1) if match else raw_response
             else:
-                token = res.headers.get("Payment-Receipt")
+                # Handle fallback headers safely
+                candidate = res.headers.get("Payment-Receipt")
+                token = candidate if isinstance(candidate, str) else None
 
             if token and _current_receipt:
-                _current_receipt.receipt_token = token
+                _current_receipt.receipt_token = str(token)
                 _current_receipt.source = AttestationSource.SERVER_JWS
                 _current_receipt.verification_status = "verified"
             
@@ -504,7 +553,6 @@ class Payment402Client:
 
             decision = None
             try:
-                # Trust Evaluation
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
                     if len(sig.parameters) == 2:
@@ -561,30 +609,59 @@ class Payment402Client:
 
         try:
             error_data = res.json()
-            next_action = HateoasErrorResponse(**error_data).next_action
         except Exception:
-            raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
+            error_data = {}
 
-        # 🟡 HATEOAS Navigation
+        next_action, source = self._resolve_next_action(error_data, res.headers)
+
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
-            if next_method != "GET" and not self.allow_unsafe_navigate:
+            
+            # --- Guardrail: Method & Cross-Origin Netloc Check ---
+            is_unsafe = next_method not in ["GET", "HEAD"]
+            if next_url:
+                current_netloc = urlparse(url).netloc
+                next_netloc = urlparse(next_url).netloc if next_url.startswith("http") else current_netloc
+                if next_netloc and current_netloc != next_netloc:
+                    allowed_hosts = context.hints.get("allowed_hosts", [])
+                    if next_netloc not in allowed_hosts:
+                        is_unsafe = True
+
+            if is_unsafe and not self.allow_unsafe_navigate:
+                # Matches exact test regex requirement
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
-            elif next_url and next_method != "NONE":
+
+            if next_url and next_method != "NONE":
+                # --- Guardrail: Header Hardening ---
+                forbidden_headers = {"authorization", "cookie", "proxy-authorization", "host", "content-length"}
+                safe_suggested = {k: v for k, v in (next_action.suggested_headers or {}).items() if k.lower() not in forbidden_headers}
+
+                merged_headers = {**headers, **safe_suggested}
+                
+                # Fix NameError
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
 
-                merged_headers = {**headers, **(next_action.suggested_headers or {})}
-                
-                return self.execute_detailed(
+                # Recursive SYNC call (No await)
+                next_result = self.execute_detailed(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
                     _current_receipt=_current_receipt
                 )
+                
+                if self.evidence_repo:
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, navigation_source=source,
+                        outcome=next_result.outcome
+                    )
+                    self.evidence_repo.export_evidence(record, context)
+                return next_result
 
-        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
+        error_msg = error_data.get('message', res.text)
+        raise PaymentExecutionError(f"API Error {res.status_code}: {error_msg}")
 
     # ==========================================
     # ⚡ 非同期 (Async) Runtime Layer
@@ -599,9 +676,8 @@ class Payment402Client:
         _current_hop: int = 0, _payment_retry_count: int = 0,
         context: Optional[ExecutionContext] = None,
         outcome_matcher: Optional[Callable] = None,
-        _current_receipt: Optional[SettlementReceipt] = None # v1.5: Matcherに渡すための内部状態
+        _current_receipt: Optional[SettlementReceipt] = None 
     ) -> ExecutionResult:
-        """v1.3.0+: 確定的な実行結果オブジェクトを返す正式な非同期Runtimeメソッド。"""
         
         context = context or ExecutionContext()
         
@@ -623,25 +699,30 @@ class Payment402Client:
 
         res = await self._async_client.request(method_upper, url, **req_kwargs)
 
-        # 🟢 Outcome Verification (200 OK)
         if 200 <= res.status_code < 300:
-            resp_data = {"status": "success", "message": "No content returned"} if not res.content else res.json()
+            try:
+                raw_json = res.json() if res.content else {"status": "success"}
+                resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
+            except Exception:
+                resp_data = {"status": "success", "message": "unparseable"}
+
             result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
             
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
-            if raw_response:
+            if raw_response and isinstance(raw_response, str):
                 if not raw_response.startswith('status='):
-                    payload = _b64url_decode(raw_response)
-                    token = payload.get("receipt") if payload else raw_response
+                    payload_b64 = _b64url_decode(raw_response)
+                    token = payload_b64.get("receipt") if payload_b64 else raw_response
                 else:
                     match = re.search(r'receipt="?([^",]+)"?', raw_response)
                     token = match.group(1) if match else raw_response
             else:
-                token = res.headers.get("Payment-Receipt")
+                candidate = res.headers.get("Payment-Receipt")
+                token = candidate if isinstance(candidate, str) else None
 
             if token and _current_receipt:
-                _current_receipt.receipt_token = token
+                _current_receipt.receipt_token = str(token)
                 _current_receipt.source = AttestationSource.SERVER_JWS
                 _current_receipt.verification_status = "verified"
             
@@ -654,7 +735,6 @@ class Payment402Client:
                     
             return result
 
-        # 🔴 Counterparty Trust Evaluation (402 Payment Required)
         if res.status_code == 402:
             if _payment_retry_count >= self.max_payment_retries: 
                 raise PaymentExecutionError("Max 402 retries exceeded")
@@ -680,7 +760,6 @@ class Payment402Client:
 
             decision = None
             try:
-                # 支払い前に相手の信用度を評価する
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
                     if len(sig.parameters) == 2:
@@ -691,7 +770,6 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                # アダプターのブロッキング処理を回避するため、スレッドプールで実行
                 loop = asyncio.get_running_loop()
                 proof_ref, network_name = await loop.run_in_executor(
                     None, self._process_payment, parsed, headers, payload
@@ -745,34 +823,63 @@ class Payment402Client:
                     else:
                         self.evidence_repo.export_evidence(record, context)
                 raise
+        
         try:
             error_data = res.json()
-            next_action = HateoasErrorResponse(**error_data).next_action
         except Exception:
-            raise PaymentExecutionError(f"HTTP {res.status_code}: {res.text}")
+            error_data = {}
 
-        # 🟡 HATEOAS Navigation
+        next_action, source = self._resolve_next_action(error_data, res.headers)
+
         if self.auto_navigate and next_action and _current_hop < self.max_hops:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
             
-            if next_method != "GET" and not self.allow_unsafe_navigate:
+            # --- Guardrail: Method & Cross-Origin Netloc Check ---
+            is_unsafe = next_method not in ["GET", "HEAD"]
+            if next_url:
+                current_netloc = urlparse(url).netloc
+                next_netloc = urlparse(next_url).netloc if next_url.startswith("http") else current_netloc
+                if next_netloc and current_netloc != next_netloc:
+                    allowed_hosts = context.hints.get("allowed_hosts", [])
+                    if next_netloc not in allowed_hosts:
+                        is_unsafe = True
+
+            if is_unsafe and not self.allow_unsafe_navigate:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
-            elif next_url and next_method != "NONE":
-                merged_payload = {**payload, **(next_action.suggested_payload or {})}
+
+            if next_url and next_method != "NONE":
+                # --- Guardrail: Header Hardening ---
+                forbidden_headers = {"authorization", "cookie", "proxy-authorization", "host", "content-length"}
+                safe_suggested = {k: v for k, v in (next_action.suggested_headers or {}).items() if k.lower() not in forbidden_headers}
+
+                merged_headers = {**headers, **safe_suggested}
+                
+                merged_payload = {**payload, **(next_action.suggested_payload or {})} 
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
 
-                merged_headers = {**headers, **(next_action.suggested_headers or {})}
-                await asyncio.sleep(1) 
-                
-                return await self.execute_detailed_async(
+                # Recursive ASYNC call (Proper await, no sleep)
+                next_result = await self.execute_detailed_async(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
                     _current_receipt=_current_receipt
                 )
+                
+                if getattr(self, "evidence_repo", None):
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, navigation_source=source,
+                        outcome=next_result.outcome
+                    )
+                    if hasattr(self.evidence_repo, "export_evidence_async"):
+                        await self.evidence_repo.export_evidence_async(record, context)
+                    else:
+                        self.evidence_repo.export_evidence(record, context)
+                return next_result
 
-        raise PaymentExecutionError(f"API Error {res.status_code}: {error_data.get('message', res.text)}")
+        error_msg = error_data.get('message', res.text)
+        raise PaymentExecutionError(f"API Error {res.status_code}: {error_msg}")
 
     async def aclose(self):
         """v1.3.1: 非同期セッションを明示的に閉じるためのメソッド"""

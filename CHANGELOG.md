@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.8] - 2026-04-15 (Navigation Hint Normalization & Observability)
+* **Added**: Introduced "Navigation Hint Normalization" to absorb HATEOAS vocabulary fluctuations (e.g., `next`, `action`, `retry_action`) and Header-based hints (`Location`, `Link`) into a canonical `NextAction` model.
+* **Added**: Enhanced the observability layer by adding `navigation_source` to `PaymentEvidenceRecord`, allowing agents to audit the decision origin of HATEOAS recovery paths.
+* **Changed**: Fortified Cross-Origin guardrails to use strict **netloc** (host:port) matching, preventing malicious redirections to unauthorized ports on trusted domains.
+* **Changed**: Implemented "Header Hardening" to automatically isolate and strip sensitive credentials (e.g., `Authorization`) from server-suggested headers during autonomous navigation.
+* **Fixed**: Eliminated redundant `asyncio.sleep(1)` from the asynchronous execution path to ensure wire-level performance parity between Sync and Async runtimes.
+* **Fixed**: Synchronized the public API surface by exporting `ChallengeSource` and aligning `ParsedChallenge` with mandatory schema fields, resolving latent `NameError` in downstream validation tests. 
+
 ## [1.5.7] - 2026-04-14 (Documentation Alignment & Protocol Fluctuation Absorption)
 * **Fixed (Docs)**: Resolved a documentation misalignment from v1.5.6 regarding the `Payment` and `MPP` header prefixes.
 * **Changed**: Formally documented the SDK's dynamic protocol absorption capability. The client transparently supports both IETF Draft (`Payment`) and ecosystem (`MPP`) standards by dynamically constructing the `Authorization` header based on the server's `WWW-Authenticate` challenge, adhering perfectly to the Cold Spec governance.

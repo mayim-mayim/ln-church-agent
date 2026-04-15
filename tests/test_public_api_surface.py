@@ -8,7 +8,8 @@ from ln_church_agent import (
     ExecutionContext,
     TrustDecision,
     OutcomeSummary,
-    TrustEvidence
+    TrustEvidence,
+    ChallengeSource
 )
 # 2. Experimental な概念は .models から明示的にインポート
 from ln_church_agent.models import PaymentEvidenceRecord, EvidenceRepository
@@ -17,7 +18,14 @@ def test_public_api_imports_and_instantiation():
     """トップレベルからインポートした Stable なモデルがスキーマエラーなく生成できるか確認"""
     
     # 1. ParsedChallenge
-    pc = ParsedChallenge(scheme="L402", amount=10.0, asset="SATS")
+    pc = ParsedChallenge(
+        scheme="L402", 
+        network="Lightning", 
+        amount=10.0, 
+        asset="SATS",
+        parameters={},
+        source=ChallengeSource.STANDARD_WWW
+    )
     assert pc.scheme == "L402"
     assert pc.amount == 10.0
 
