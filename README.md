@@ -36,6 +36,7 @@ If you use this SDK, you should not need to manually follow every protocol revis
 - **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and negotiates settlement using **Base64URL-encoded JSON objects** via standard headers.
 - **Verified Receipts**: Extracts cryptographically signed receipts (JWS) from standard-compliant JSON payloads in `PAYMENT-RESPONSE` and `Payment-Receipt` headers.
 - **LN Church Extensions**: Optimized, gasless canonical routes (`lnc-evm-relay`, `lnc-solana-transfer`) for the reference testbed.
+- **Advisor & Final Judge Architecture**: Connect to LN Church as an **evidence-rich advisor** to assess counterparty risk and verify outcomes. While the network provides structured facts and recommendations, the **final decision authority** remains strictly within the buyer-side runtime (SDK), ensuring agent autonomy through local policy overrides.
 
 ---
 ## 🚩 Start Here
@@ -167,7 +168,7 @@ For advanced enterprise or multi-agent runtimes, this SDK provides features that
 * **Delegated Signers (NWC)**: Agents can securely pay Lightning invoices without holding a private key via the `NWCAdapter` and an HTTP Bridge Gateway.
 * **Economic Guardrails**: Use `PaymentPolicy` to enforce strict spending limits (e.g., "Max $1.00 USD per transaction", "Max $10.00 USD per session") and restrict allowed networks.
 * **Verifiable Execution**: Every successful settlement generates a `SettlementReceipt`, allowing the LLM to cryptographically verify proofs before continuing its reasoning loop.
-* **Trust & Outcome Hooks (v1.5.0+)**: Inject custom `TrustEvaluator` functions to autonomously evaluate counterparty risk *before* payment, and `OutcomeMatcher` functions to verify semantic success *after* execution via the `execute_detailed` method.
+* **Trust & Outcome Hooks (v1.5.0+)**: Inject custom `TrustEvaluator` and `OutcomeMatcher` functions to autonomously evaluate counterparty risk and verify semantic success. You can connect to LN Church as a **remote backend / reference sink** to acquire structured verification evidence, while ensuring the **final decision remains strictly in the buyer-side runtime**.
 * **Evidence Export/Import (v1.5.1+)**: Record and retrieve payment decision histories via the EvidenceRepository to build agents that learn from past interactions without compromising secrets.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**

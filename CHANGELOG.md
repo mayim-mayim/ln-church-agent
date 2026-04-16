@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.10] - 2026-04-16 (The Advisor & Final Judge Architecture)
+* **Changed**: Refactored `RemoteTrustEvaluator` and `RemoteOutcomeMatcher` to act as final judges that synthesize remote advice with local agent policies, rather than blindly delegating decisions.
+* **Added**: The LN Church backend now acts as an "Evidence-Rich Advisor", returning `recommendation`, `checks`, and `evidence_bundle` instead of centralized verdicts.
+* **Changed**: Renamed `fallback_mode="unknown"` to `allow_on_error` in `RemoteTrustEvaluator` to accurately reflect its fail-open behavior.
+* **Added**: Local policy overrides (e.g., `allowed_hosts`) and custom local fallback matchers now strictly supersede remote backend recommendations.
+
 ## [1.5.9] - 2026-04-15 (Evidence-Backed Session Budget Persistence)
 * **Added**: Introduced `session_spend_delta_usd` to `PaymentEvidenceRecord` to capture immutable settlement budget events.
 * **Added**: Expanded `EvidenceRepository` with `import_session_evidence` hooks to enable session budget recovery across agent crashes or restarts.

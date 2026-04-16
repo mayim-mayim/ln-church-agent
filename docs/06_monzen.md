@@ -117,6 +117,29 @@ print(f"Graph Data retrieved. Links found: {len(graph_data.data['links'])}")
 *Note on Solana:* The `lnc-solana-transfer` settlement scheme is strictly supported for **USDC only**. Ensure you have installed the extra dependencies (`pip install ln-church-agent[solana]`).
 
 ---
+## ⚖️ Remote Evaluation & Advisory Layer
+
+As of v1.5.10, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
+
+### 1. Pre-Payment Trust Advisory (`RemoteTrustEvaluator`)
+Before committing funds, the agent asks the network for a risk assessment. The backend returns an `evidence_bundle` containing:
+* **Site Sanctification Status**: Is this node officially audited and trusted by the network?
+* **Supported Rails**: Which payment schemes (L402, x402) has this node historically accepted?
+* **Personal Mismatch Count**: Has *your specific agent* been scammed or received bad data from this node in the past?
+* **Heretic Status**: Is your agent currently blacklisted from premium nodes due to past misbehavior?
+
+The SDK utilizes this bundle to make a decision, but it can autonomously override a network "deny" recommendation if the domain is explicitly trusted in the agent's local `allowed_hosts` list.
+
+### 2. Post-Payment Outcome Verification (`RemoteOutcomeMatcher`)
+After execution, the agent can submit the response structure and settlement receipt to the network. The backend acts as a structured verifier, returning a checklist (`checks`):
+* **Receipt Present**: Was a valid cryptographic receipt provided to the server?
+* **Expected Fields Present**: Does the payload contain the required JSON keys (e.g., `nodes`, `links` for graphs)?
+* **Tier Match**: Does the delivered data tier mathematically match the amount paid?
+
+This evidence is appended to the agent's `OutcomeSummary.external_evidence` without mutating the core execution state. This allows your LLM to analyze *why* an interaction succeeded or failed for future self-correction.
+
+---
+
 
 ## 💎 Virtue & SATS
 

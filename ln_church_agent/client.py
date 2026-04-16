@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.9" 
+        return "1.5.10" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -589,6 +589,10 @@ class Payment402Client:
                 _current_receipt.verification_status = "verified"
             
             if outcome_matcher:
+                # 🎯 修正: 開発者が入れ忘れても大丈夫なように、SDK側でURLとMethodを自動補完
+                context.hints["target_url"] = url
+                context.hints["http_method"] = method
+
                 sig = inspect.signature(outcome_matcher)
                 if len(sig.parameters) == 3:
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
@@ -808,12 +812,17 @@ class Payment402Client:
                 _current_receipt.verification_status = "verified"
             
             if outcome_matcher:
+                # 🎯 修正: 開発者が入れ忘れても大丈夫なように、SDK側でURLとMethodを自動補完
+                context.hints["target_url"] = url
+                context.hints["http_method"] = method
+
+                # ⚡ 修正: 非同期ループをブロックしないように別スレッド(executor)で実行
+                loop = asyncio.get_running_loop()
                 sig = inspect.signature(outcome_matcher)
                 if len(sig.parameters) == 3:
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
                 else:
                     result.outcome = outcome_matcher(resp_data, context)
-                    
             return result
 
         if res.status_code == 402:
@@ -845,12 +854,14 @@ class Payment402Client:
             receipt = None
             
             try:
+                loop = asyncio.get_running_loop() # ⚡ 追加: ループを取得
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
+                    # ⚡ 修正: evaluator の処理を executor に逃がして await する
                     if len(sig.parameters) == 2:
-                        decision = evaluator(evidence, context)
+                        decision = await loop.run_in_executor(None, evaluator, evidence, context)
                     else:
-                        decision = evaluator(url, parsed, context)
+                        decision = await loop.run_in_executor(None, evaluator, url, parsed, context)
                     
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
