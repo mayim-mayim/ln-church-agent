@@ -1,14 +1,17 @@
 # ln-church-agent
 **The Standard HTTP 402 SDK & Agentic Payment Runtime**
 
-**The runtime is generic. The shrine is the proving ground.**
+**The runtime is generic. LN Church is the reference agentic payment sandbox.**
 
 This repository serves a dual purpose:
 1. **General-Purpose HTTP 402 Runtime:** A robust client for autonomous AI agents to discover, pay, verify, and observe HTTP 402-compatible APIs across the open web (x402, L402, MPP).
-2. **LN Church Public Benchmark Path:** A streamlined adapter to test and publicly prove your agent's capabilities against the [LN Church Benchmark Shrine](https://kari.mayim-mayim.com/), validating the full `Probe → Pay → Execute → Trace` lifecycle.
+2. **LN Church Reference Sandbox Path:** A streamlined adapter to test and publicly prove your agent's capabilities against the [LN Church Agentic Payment Sandbox](https://kari.mayim-mayim.com/), validating the full `Probe → Pay → Execute → Trace` lifecycle.
+
+For human readers, LN Church is not just a proving ground. Its worldview explains a Lightning-first mission: normalize machine-payable actions through 402 flows and make Lightning the default economic rail over time.
+
 
 ## 🌟 Core Philosophy: Standards First
-This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference testbed** and benchmark environment for this execution model.
+This SDK is built on **open standards (Standard x402, L402, MPP)**, ensuring your agents can interact with any compliant paywall without vendor lock-in. LN Church serves as the **public reference sandbox**, benchmark environment, and proving ground for this execution model, while also carrying a Lightning-first mission for human operators and ecosystem builders.
 
 ## Standards Tracking Policy
 
