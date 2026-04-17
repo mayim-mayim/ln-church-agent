@@ -49,7 +49,7 @@ def test_v1_5_outcome_with_receipt():
         mock_req.side_effect = [resp_402, resp_200]
 
         # 決済ロジックをモックして "dummy_proof" を返させる
-        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning")):
+        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
             result = client.execute_detailed("POST", "/test", outcome_matcher=receipt_matcher)
             
             assert result.outcome is not None

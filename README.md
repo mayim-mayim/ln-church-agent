@@ -100,6 +100,31 @@ The following interfaces are the stable contract for the current 1.5.x line:
 
 ---
 
+## 🧩 L402 Execution Modes & Responsibility Boundary
+
+`ln-church-agent` operates primarily as a **buyer-side economic runtime**. It handles the absolute authority over intent, trust evaluation (Final Judge), policy enforcement, and outcome verification. 
+
+However, for the execution of the L402 protocol specifically, the SDK supports a delegated architecture:
+
+* **Native Mode (Default)**: The SDK natively extracts macaroons, processes BOLT11 invoices via your configured `LightningProvider`, and constructs the standard HTTP Authorization header.
+* **Delegated Mode (Lightning Labs / L402sdk)**: [Experimental] You can swap the lower-level L402 execution layer to an external provider like `LightningLabsL402Executor`. This allows your agent to benefit from external token caching, MAC reuse, and specialized routing optimizations natively handled by the official `L402sdk`.
+
+**Responsibility Boundary Guarantee:**
+Even when delegating execution to the `L402sdk`, **all final judgments remain in `ln-church-agent`**. 
+1. The SDK evaluates the counterparty risk *before* calling the delegate.
+2. The SDK explicitly prevents session budget deduction if the delegate uses a cached token (`payment_performed=False`).
+3. The SDK natively verifies the final data structure (`OutcomeSummary`) and retains full ownership of the public trace (`PaymentEvidenceRecord`).
+
+### Compatibility Status
+The Delegated Mode is currently **Experimental**. It follows a strict "Lightning-preferred when compatibility is verified" policy. Execution only delegates to `L402sdk` if:
+- `prefer_lightninglabs_l402` is `True`
+- Method is `GET` (no payloads)
+- The target host is explicitly whitelisted in `l402_delegate_allowed_hosts`
+
+Any complex HATEOAS navigations or state-mutating requests (`POST`/`PUT`) will safely fallback to the `NativeL402Executor`.
+
+---
+
 ## 🚀 Quickstart (3-step)
 
 ### 1. Install
@@ -155,6 +180,28 @@ asyncio.run(main())
 ```
 
 ---
+### 🧪 Sandbox Harness Verification
+Before interacting with production APIs, you can verify your agent's protocol parsing compliance using the physically isolated Sandbox Harness. The SDK automatically closes the loop by submitting a telemetry report to the Interop Matrix.
+
+**Verified Execution Paths:**
+* ✅ **Native Path**: Verified using `ln-church-agent`'s internal EVM/Lightning settlement engine.
+* ✅ **Delegated Path**: Verified via external delegation (e.g., Lightning Labs' official `l402` SDK). The Harness correctly identifies semantic parity (Canonical Hash Matches) and catches intentional parser deviations.
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(private_key="0x...")
+
+# Autonomously parse 402, pay, verify canonical hash, and report the result
+interop_result = client.run_l402_sandbox_harness()
+
+print(f"Run ID: {interop_result.run_id}")
+print(f"Delegate Source: {interop_result.delegate_source}")
+print(f"Hash Matched: {interop_result.canonical_hash_matched}")
+```
+*Note: The Sandbox Harness does not mutate global state, consume session budgets (if using cached tokens), or grant Virtue.*
+
+---
 
 ## ⚠️ What this solves
 
@@ -175,6 +222,15 @@ For advanced enterprise or multi-agent runtimes, this SDK provides features that
 * **Evidence Export/Import (v1.5.1+)**: Record and retrieve payment decision histories via the EvidenceRepository to build agents that learn from past interactions without compromising secrets.
 
 👉 **[See the Advanced Agent Runtime Example](examples/advanced_receipts_and_policy.py)**
+
+
+> ### 🌩️ Navigating Live Network Realities
+>
+> Unlike the deterministic Sandbox, live L402 interactions involve real Lightning liquidity and routing. Be aware of:
+> 
+> 1. **High Latency**: Initial pathfinding can take 10–20 seconds. The SDK includes polling buffers to accommodate this.
+> 2. **Cloudflare 520 Errors**: If your payment backend (LNBits/Umbrel) struggles with routing, Cloudflare may timeout and return a 520 error. Use `--debug` to confirm the `upstream_host` belongs to your infrastructure.
+> 3. **Liquidity Gaps**: Ensure your node has active channels with **Outbound Liquidity**. Even with a high wallet balance, a closed or inactive channel will result in an `INSUFFICIENT_BALANCE` error at the routing layer.
 
 ---
 ## 📚 Detailed Documentation

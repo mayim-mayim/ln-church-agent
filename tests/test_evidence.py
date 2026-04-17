@@ -69,7 +69,7 @@ def test_evidence_import_assists_trust():
         
         mock_req.side_effect = [resp_402, resp_200]
 
-        with patch.object(client, "_process_payment", return_value=("proof", "Lightning")):
+        with patch.object(client, "_process_payment", return_value=("proof", "Lightning", None)):
             result = client.execute_detailed("POST", "/test")
             # 評価を通過して200まで到達していればOK
             assert result.response == {}

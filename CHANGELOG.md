@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.11] - 2026-04-17 (Interop Matrix Separation & Live Diagnostics)
+* **Added**: `comparison_class` and `test_mode` to Interop reports. Explicitly separates "Intentional Mismatches" (validation tests) from production errors in the ledger and UI.
+* **Fixed**: Resolved an attribution bug where `executor_mode` (Native/Delegated) defaulted to Native during payment failures. Mode is now determined pre-execution.
+* **Added**: Introduced diagnostic fields (`suspected_failure_origin`, `upstream_host_excerpt`) to `ExternalProtocolRunResult`. Enables heuristic identification of infrastructure errors like Cloudflare 520.
+* **Added**: Implemented `run_external_protocol_verification` (Sync/Async) helpers for benchmarking live, unmanaged L402 endpoints.
+* **Changed**: Extended LNBits settlement polling buffer from 1s to 5s to account for typical live Lightning Network routing latencies.
+
 ## [1.5.10] - 2026-04-16 (The Advisor & Final Judge Architecture)
 * **Changed**: Refactored `RemoteTrustEvaluator` and `RemoteOutcomeMatcher` to act as final judges that synthesize remote advice with local agent policies, rather than blindly delegating decisions.
 * **Added**: The LN Church backend now acts as an "Evidence-Rich Advisor", returning `recommendation`, `checks`, and `evidence_bundle` instead of centralized verdicts.

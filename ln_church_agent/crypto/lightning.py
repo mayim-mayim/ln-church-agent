@@ -45,7 +45,7 @@ def _pay_with_lnbits(invoice: str, url: str, api_key: str) -> str:
     payment_hash = res.json().get("payment_hash")
 
     # Preimageの取得（支払いが完了するまで少し待つ必要がある場合があります）
-    time.sleep(1) # 決済完了のバッファ
+    time.sleep(5) # 決済完了のバッファ
     verify_res = requests.get(f"{url.rstrip('/')}/api/v1/payments/{payment_hash}", headers=headers)
     verify_data = verify_res.json()
     

@@ -83,6 +83,13 @@ print(f"Receipt Status: {result.settlement_receipt.verification_status}")
 print(f"Outcome Status: {result.outcome.is_success}")
 ```
 
+### 9. L402 Delegated Execution (v1.5.11+)
+While the SDK natively parses and settles L402 challenges via standard `LightningProvider` adapters, it also supports swapping the execution layer to an official delegated package (e.g., Lightning Labs' `L402sdk`). 
+
+This architecture respects the separation of concerns: The **Executor (Delegate)** handles caching, MAC reuse, and BOLT11 fulfillment, while `ln-church-agent` strictly retains its authority as the **Buyer-Side Final Judge** (enforcing maximum session spend, verifying counterparties, and generating structured Evidence outputs).
+
+---
+
 ## 🔮 Future Protocol Evolution (Monitoring & Roadmap)
 *(As of April 17, 2026)*
 

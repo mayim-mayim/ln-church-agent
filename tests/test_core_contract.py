@@ -214,7 +214,7 @@ def test_protocol_purity_mpp_headers(MockLNProvider):
     original_headers = {}
     original_payload = {"business_data": "important_value"}
     
-    proof_ref, network_name = client._process_payment(parsed, original_headers, original_payload)
+    proof_ref, network_name, _ = client._process_payment(parsed, original_headers, original_payload)
     
     # 1. Authorization ヘッダーが正しく設定されていること
     assert "Authorization" in original_headers
@@ -242,8 +242,8 @@ def test_protocol_purity_x402_headers(mock_sign_evm):
     original_headers = {}
     original_payload = {"business_data": "important_value"}
     
-    client._process_payment(parsed, original_headers, original_payload)
-    
+    proof_ref, network_name, _ = client._process_payment(parsed, original_headers, original_payload)
+
     # x402 では PAYMENT-SIGNATURE がBase64で付与されること
     assert "PAYMENT-SIGNATURE" in original_headers
     

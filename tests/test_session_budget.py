@@ -96,7 +96,7 @@ def test_no_repo_fallback():
     with patch("requests.request") as mock_req:
         mock_req.side_effect = [_create_402_mock(amount=2.0), MagicMock(status_code=200, headers={}, json=lambda: {})]
         
-        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning")):
+        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
             client.execute_detailed("POST", "/test", context=ctx)
             
         assert client.policy._session_spent_usd == 2.0 
@@ -183,7 +183,7 @@ def test_budget_event_on_downstream_failure():
             requests.exceptions.ConnectionError("Downstream failed")
         ]
         
-        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning")):
+        with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
             with pytest.raises(requests.exceptions.ConnectionError):
                 client.execute_detailed("POST", "/test", context=ctx)
                 

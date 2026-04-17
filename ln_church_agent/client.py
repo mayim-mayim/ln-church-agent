@@ -37,7 +37,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.10" 
+        return "1.5.11" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -97,6 +97,9 @@ class Payment402Client:
         solana_signer: Optional[SolanaSigner] = None,
         trust_evaluators: Optional[List[Callable]] = None,
         evidence_repo: Optional[EvidenceRepository] = None,
+        l402_executor: Optional[Any] = None, # 循環参照回避のためAny許容、内部で型判定
+        prefer_lightninglabs_l402: bool = False,
+        l402_delegate_allowed_hosts: Optional[List[str]] = None,
     ):
         self.private_key = private_key
         self.ln_api_url = ln_api_url
@@ -137,6 +140,9 @@ class Payment402Client:
         self._async_client: Optional[httpx.AsyncClient] = None
         self.trust_evaluators = trust_evaluators or []
         self.evidence_repo = evidence_repo
+        self.l402_executor = l402_executor
+        self.prefer_lightninglabs_l402 = prefer_lightninglabs_l402
+        self.l402_delegate_allowed_hosts = l402_delegate_allowed_hosts or []
 
     # ==========================================
     # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
@@ -343,11 +349,13 @@ class Payment402Client:
                 f"would exceed limit ({self.policy.max_spend_per_session_usd} USD)."
             )
 
-    def _record_session_spend(self, parsed: ParsedChallenge):
-        """決済成功後にのみセッション予算を消費する"""
+    def _record_session_spend(self, parsed: ParsedChallenge, l402_report: Optional[Any] = None):
+        """決済成功後にのみセッション予算を消費する (キャッシュ利用時はスキップ)"""
         if not self.policy:
             return
-        # 🚨 v1.5.9 Update: 換算ロジックの集約
+        if l402_report and not l402_report.payment_performed:
+            return # L402sdk 等がキャッシュ済みトークンを使い、実決済を行わなかった場合は消費しない
+        
         self.policy._session_spent_usd += self._estimate_usd_value(parsed)
 
     def _parse_legacy_header(self, header_val: str) -> ParsedChallenge:
@@ -389,10 +397,11 @@ class Payment402Client:
         
         return self.execute_request(method, endpoint_path, payload, headers)
 
-    def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict) -> tuple[str, str]:
+    def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict, method: str = "POST", url: str = "") -> tuple[str, str, Optional[Any]]:
         """実際の決済実行をカプセル化 (同期・非同期共通で利用)"""
         proof_ref = ""
         network_name = parsed.network or "UNKNOWN"
+        l402_report = None
 
         # 1. EVM系 (x402, lnc-evm-*) の処理
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value]:
@@ -462,24 +471,51 @@ class Payment402Client:
 
         # 3. Lightning系 (L402, MPP) の処理
         elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
-            if not self.ln_adapter:
-                raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
-            invoice = parsed.parameters.get("invoice")
-            if not invoice:
-                raise InvoiceParseError("Challenge にインボイスが含まれていません。")
-
-            proof_ref = self.ln_adapter.pay_invoice(invoice)
             
+            # --- [L402 Delegate Seam] ---
             if parsed.scheme == SchemeType.l402.value:
-                mac = parsed.parameters.get("macaroon")
-                headers["Authorization"] = f"L402 {mac}:{proof_ref}"
+                host = urlparse(url).netloc
+                is_get = method.upper() == "GET"
+                is_empty_payload = not bool(payload)
+                
+                # Mode Selection Policy
+                use_delegate = (
+                    self.prefer_lightninglabs_l402 and 
+                    host in self.l402_delegate_allowed_hosts and 
+                    is_get and 
+                    is_empty_payload
+                )
+
+                if use_delegate and self.l402_executor:
+                    l402_report = self.l402_executor.execute_l402(url, method, parsed, headers, payload)
+                else:
+                    from .adapters.l402_delegate import NativeL402Executor
+                    if not self.ln_adapter:
+                        raise PaymentExecutionError(f"L402決済には ln_adapter が必要です。")
+                    native_exec = NativeL402Executor(self.ln_adapter)
+                    l402_report = native_exec.execute_l402(url, method, parsed, headers, payload)
+
+                headers["Authorization"] = l402_report.authorization_value
+                proof_ref = l402_report.preimage or ""
+                network_name = "Lightning"
+
+            # --- [既存の MPP パス] ---
             else:
+                if not self.ln_adapter:
+                    raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
+                invoice = parsed.parameters.get("invoice")
+                if not invoice:
+                    raise InvoiceParseError("Challenge にインボイスが含まれていません。")
+
+                proof_ref = self.ln_adapter.pay_invoice(invoice)
+                
                 charge_id = parsed.parameters.get("charge")
                 if charge_id:
                     headers["Authorization"] = f"{parsed.scheme} {charge_id}:{proof_ref}"
                 else:
                     headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
-        return proof_ref, network_name
+
+        return proof_ref, network_name, l402_report
 
     def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         """[後方互換性維持] 内部で execute_detailed を呼び出し、レスポンスの辞書のみを返却する。"""
@@ -635,10 +671,10 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                proof_ref, network_name = self._process_payment(parsed, headers, payload)
-                self._record_session_spend(parsed)
+                # 💡 修正: 3つの戻り値を受け取り、urlとmethodを渡す
+                proof_ref, network_name, l402_report = self._process_payment(parsed, headers, payload, method=method, url=url)
+                self._record_session_spend(parsed, l402_report)
                 
-                # 🚨 修正: 決済成立をマーク
                 payment_completed = True
                 delta_usd = self._estimate_usd_value(parsed)
 
@@ -646,7 +682,13 @@ class Payment402Client:
                     receipt_id=str(uuid.uuid4()),
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
-                    verification_status="verified" if network_name == "Lightning" else "self_reported"
+                    verification_status="verified" if network_name == "Lightning" else "self_reported",
+                    delegate_source=l402_report.delegate_source if l402_report else "native",
+                    payment_hash=l402_report.payment_hash if l402_report else None,
+                    fee_sats=l402_report.fee_sats if l402_report else None,
+                    cached_token_used=l402_report.cached_token_used if l402_report else False,
+                    payment_performed=l402_report.payment_performed if l402_report else True,
+                    endpoint=url
                 )
                 self.last_receipt = receipt
 
@@ -668,8 +710,14 @@ class Payment402Client:
                         trust_decision=decision,
                         receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
                         outcome=next_result.outcome,
-                        session_spend_delta_usd=delta_usd
+                        session_spend_delta_usd=delta_usd, 
+                        delegate_source=l402_report.delegate_source if l402_report else "native",
+                        payment_hash=l402_report.payment_hash if l402_report else None,
+                        fee_sats=l402_report.fee_sats if l402_report else None,
+                        cached_token_used=l402_report.cached_token_used if l402_report else False,
+                        payment_performed=l402_report.payment_performed if l402_report else True
                     )
+
                     self.evidence_repo.export_evidence(record, context)
 
                 return next_result
@@ -854,10 +902,9 @@ class Payment402Client:
             receipt = None
             
             try:
-                loop = asyncio.get_running_loop() # ⚡ 追加: ループを取得
+                loop = asyncio.get_running_loop()
                 for evaluator in self.trust_evaluators:
                     sig = inspect.signature(evaluator)
-                    # ⚡ 修正: evaluator の処理を executor に逃がして await する
                     if len(sig.parameters) == 2:
                         decision = await loop.run_in_executor(None, evaluator, evidence, context)
                     else:
@@ -866,14 +913,13 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                loop = asyncio.get_running_loop()
-                proof_ref, network_name = await loop.run_in_executor(
-                    None, self._process_payment, parsed, headers, payload
-                )
-
-                self._record_session_spend(parsed)
+                # 💡 修正: 3つの戻り値を受け取る。methodとurlもkwargsで渡す
+                def _process_wrapper():
+                    return self._process_payment(parsed, headers, payload, method=method, url=url)
                 
-                # 🚨 修正: 決済成立をマーク
+                proof_ref, network_name, l402_report = await loop.run_in_executor(None, _process_wrapper)
+                self._record_session_spend(parsed, l402_report)
+                
                 payment_completed = True
                 delta_usd = self._estimate_usd_value(parsed)
 
@@ -881,7 +927,13 @@ class Payment402Client:
                     receipt_id=str(uuid.uuid4()),
                     scheme=parsed.scheme, network=network_name, asset=parsed.asset,
                     settled_amount=parsed.amount, proof_reference=proof_ref,
-                    verification_status="verified" if network_name == "Lightning" else "self_reported"
+                    verification_status="verified" if network_name == "Lightning" else "self_reported",
+                    delegate_source=l402_report.delegate_source if l402_report else "native",
+                    payment_hash=l402_report.payment_hash if l402_report else None,
+                    fee_sats=l402_report.fee_sats if l402_report else None,
+                    cached_token_used=l402_report.cached_token_used if l402_report else False,
+                    payment_performed=l402_report.payment_performed if l402_report else True,
+                    endpoint=url
                 )
                 self.last_receipt = receipt
 
@@ -903,7 +955,12 @@ class Payment402Client:
                         trust_decision=decision,
                         receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
                         outcome=next_result.outcome,
-                        session_spend_delta_usd=delta_usd
+                        session_spend_delta_usd=delta_usd,
+                        delegate_source=l402_report.delegate_source if l402_report else "native",
+                        payment_hash=l402_report.payment_hash if l402_report else None,
+                        fee_sats=l402_report.fee_sats if l402_report else None,
+                        cached_token_used=l402_report.cached_token_used if l402_report else False,
+                        payment_performed=l402_report.payment_performed if l402_report else True
                     )
                     if hasattr(self.evidence_repo, "export_evidence_async"):
                         await self.evidence_repo.export_evidence_async(record, context)
@@ -1243,3 +1300,399 @@ class LnChurchClient(Payment402Client):
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
+
+    # ------------------------------------------
+    # 🧪 Sandbox Harness Integration
+    # ------------------------------------------
+    def run_l402_sandbox_harness(self) -> "InteropRunResult":
+        """
+        Native L402 Path を使用して Sandbox Harness を End-to-End で実行し、
+        プロトコル互換性を確認して Interop Report まで自動で閉じる。
+        """
+        import json
+        import hashlib
+        import re
+        from .models import InteropRunResult
+
+        basic_path = "/api/agent/sandbox/l402/basic"
+        report_path = "/api/agent/sandbox/interop/report"
+
+        # 1. Execute Native L402 Flow (402 -> Pay -> 200)
+        # 既存の execute_detailed を呼ぶことで、Policy/TrustのGuardrailに完全に乗る
+        exec_result = self.execute_detailed("GET", basic_path)
+        resp = exec_result.response
+
+        # 2. Extract Metadata
+        meta = resp.get("meta", {})
+        run_id = meta.get("run_id", "")
+        scenario_id = meta.get("scenario_id", "")
+        expected_hash = meta.get("canonical_hash_expected", "")
+        interop_token = meta.get("interop_token", "")
+
+        # 3. Calculate Observed Hash (Node.js JSON.stringify equivalent)
+        deterministic_payload = {
+            "message": resp.get("message"),
+            "scenario": resp.get("scenario"),
+            "contract": resp.get("contract"),
+            "verifiable": resp.get("verifiable")
+        }
+        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+
+        # 4. Prepare Report
+        receipt = exec_result.settlement_receipt
+        payment_performed = receipt.payment_performed if receipt else True
+        cached_token_used = receipt.cached_token_used if receipt else False
+        delegate_source = receipt.delegate_source if receipt else "native"
+        
+        # Matrix上での表示名。Nativeでない場合は delegate_source をそのまま使う
+        executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
+
+        report_payload = {
+            "run_id": run_id,
+            "scenario_id": scenario_id,
+            "canonical_hash_expected": expected_hash,
+            "canonical_hash_observed": observed_hash,
+            "executor_mode": executor_mode,
+            "delegate_source": delegate_source,
+            "cached_token_used": cached_token_used,
+            "payment_performed": payment_performed,
+            "fee_sats": receipt.fee_sats if receipt else 0,
+            "sdk_version": SDK_VERSION,
+            "interop_token": interop_token,
+            "comparison_class": "production_like",
+            "test_mode": "normal"
+        }
+
+        # 5. POST Interop Report
+        report_resp = {}
+        status_code = 500
+        accepted = False
+        try:
+            report_exec = self.execute_detailed("POST", report_path, payload=report_payload)
+            report_resp = report_exec.response
+            status_code = 200
+            accepted = report_resp.get("status") == "success"
+        except Exception as e:
+            m = re.search(r"API Error (\d+):", str(e))
+            if m:
+                status_code = int(m.group(1))
+            report_resp = {"error": str(e)}
+
+        # 6. Return Structured Result
+        return InteropRunResult(
+            ok=accepted and (expected_hash == observed_hash),
+            target_url=exec_result.final_url,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source=delegate_source,
+            canonical_hash_expected=expected_hash,
+            canonical_hash_observed=observed_hash,
+            canonical_hash_matched=(expected_hash == observed_hash),
+            report_status_code=status_code,
+            report_accepted=accepted,
+            payment_performed=payment_performed,
+            cached_token_used=cached_token_used,
+            receipt_id=receipt.receipt_id if receipt else None,
+            raw_report_response=report_resp
+        )
+
+    async def run_l402_sandbox_harness_async(self) -> "InteropRunResult":
+        """非同期版の Sandbox Harness 実行ヘルパー"""
+        import json
+        import hashlib
+        import re
+        from .models import InteropRunResult
+
+        basic_path = "/api/agent/sandbox/l402/basic"
+        report_path = "/api/agent/sandbox/interop/report"
+
+        exec_result = await self.execute_detailed_async("GET", basic_path)
+        resp = exec_result.response
+
+        meta = resp.get("meta", {})
+        run_id = meta.get("run_id", "")
+        scenario_id = meta.get("scenario_id", "")
+        expected_hash = meta.get("canonical_hash_expected", "")
+        interop_token = meta.get("interop_token", "")
+
+        deterministic_payload = {
+            "message": resp.get("message"),
+            "scenario": resp.get("scenario"),
+            "contract": resp.get("contract"),
+            "verifiable": resp.get("verifiable")
+        }
+        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+
+        receipt = exec_result.settlement_receipt
+        payment_performed = receipt.payment_performed if receipt else True
+        cached_token_used = receipt.cached_token_used if receipt else False
+        delegate_source = receipt.delegate_source if receipt else "native"
+        
+        # Matrix上での表示名。Nativeでない場合は delegate_source をそのまま使う
+        executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
+
+        report_payload = {
+            "run_id": run_id,
+            "scenario_id": scenario_id,
+            "canonical_hash_expected": expected_hash,
+            "canonical_hash_observed": observed_hash,
+            "executor_mode": executor_mode,
+            "delegate_source": delegate_source,
+            "cached_token_used": cached_token_used,
+            "payment_performed": payment_performed,
+            "fee_sats": receipt.fee_sats if receipt else 0,
+            "sdk_version": SDK_VERSION,
+            "interop_token": interop_token,
+            "comparison_class": "production_like",
+            "test_mode": "normal"
+        }
+
+        report_resp = {}
+        status_code = 500
+        accepted = False
+        try:
+            report_exec = await self.execute_detailed_async("POST", report_path, payload=report_payload)
+            report_resp = report_exec.response
+            status_code = 200
+            accepted = report_resp.get("status") == "success"
+        except Exception as e:
+            m = re.search(r"API Error (\d+):", str(e))
+            if m:
+                status_code = int(m.group(1))
+            report_resp = {"error": str(e)}
+
+        return InteropRunResult(
+            ok=accepted and (expected_hash == observed_hash),
+            target_url=exec_result.final_url,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source=delegate_source,
+            canonical_hash_expected=expected_hash,
+            canonical_hash_observed=observed_hash,
+            canonical_hash_matched=(expected_hash == observed_hash),
+            report_status_code=status_code,
+            report_accepted=accepted,
+            payment_performed=payment_performed,
+            cached_token_used=cached_token_used,
+            receipt_id=receipt.receipt_id if receipt else None,
+            raw_report_response=report_resp
+        )
+
+    # ------------------------------------------
+    # 🧪 External Protocol Verification (Live Endpoints)
+    # ------------------------------------------
+    def run_external_protocol_verification(
+        self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
+    ) -> "ExternalProtocolRunResult":
+        import time, re
+        from .models import ExternalProtocolRunResult
+
+        logs = []
+        def dlog(msg): 
+            if debug: print(f"🔍 [DEBUG] {msg}")
+            logs.append(msg)
+
+        start_time = time.time()
+        stage = "init"
+        error_reason = None
+        resp_data = None
+        status_code = 500
+        receipt = None
+        origin = "unknown"
+        upstream_host = None
+
+        # --- A. Attribution Bug の修正: 実行前に確定させる ---
+        # 以前のコードは成功時の receipt から判定していたため、失敗時に Native と誤認されていた
+        is_get = True
+        use_delegate = (
+            self.prefer_lightninglabs_l402 and 
+            urlparse(target_url).netloc in self.l402_delegate_allowed_hosts
+        )
+        delegate_source = "lightninglabs-delegated" if use_delegate else "native"
+        executor_mode = delegate_source if use_delegate else "ln-church-agent-native"
+        
+        dlog(f"Target: {target_url} | Mode: {executor_mode} | Delegate: {use_delegate}")
+        if self.ln_adapter:
+            # 秘密鍵を伏せて LNBits URL を確認
+            masked_url = re.sub(r'://.*?@', '://[redacted]@', getattr(self.ln_adapter, 'api_url', 'unknown'))
+            dlog(f"Payment Backend: {masked_url}")
+
+        try:
+            # --- 段階1: チャレンジ取得 ---
+            stage = "challenge_fetch"
+            dlog("Step 1: Fetching 402 challenge...")
+            
+            # execute_detailed を実行。この中で 402 検知 -> 決済 -> 200 リトライが走る
+            exec_result = self.execute_detailed("GET", target_url)
+            
+            # --- 段階2: レスポンス検証 ---
+            stage = "response_shape_check"
+            resp_data = exec_result.response
+            receipt = exec_result.settlement_receipt
+            status_code = 200
+            dlog("Step 2: Successfully received 200 OK after payment.")
+            
+        except Exception as e:
+            error_reason = str(e)
+            # --- B. 発生源のヒューリスティック分析 ---
+            if "LNBits Payment Failed" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_initiation"
+            elif "initiated but not settled" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_settlement_check" # あなたの画像の状態（決済済みなのにLNBits APIが同期中）
+            elif "402 challenge" in error_reason:
+                origin = "target_endpoint"
+                stage = "challenge_parse"
+            
+            # Cloudflare 520 HTML からのメタデータ抽出
+            m_code = re.search(r"Error code (\d+)", error_reason)
+            if m_code: status_code = int(m_code.group(1))
+            
+            m_host = re.search(r"host-status.*?>(.*?)</span>", error_reason, re.S)
+            if m_host: 
+                upstream_host = re.sub('<[^>]*>', '', m_host.group(1)).strip()
+                dlog(f"Identified failing upstream host: {upstream_host}")
+
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        response_shape_ok = False
+        if resp_data:
+            response_shape_ok = True
+            excerpt = str(resp_data)[:200]
+        else:
+            excerpt = ""
+
+        return ExternalProtocolRunResult(
+            ok=(status_code == 200 and response_shape_ok),
+            target_url=target_url,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source=delegate_source,
+            status_code_after_payment=status_code,
+            payment_performed=receipt.payment_performed if receipt else (origin == "payment_backend"),
+            cached_token_used=receipt.cached_token_used if receipt else False,
+            receipt_id=receipt.receipt_id if receipt else None,
+            latency_ms=latency_ms,
+            response_shape_ok=response_shape_ok,
+            response_excerpt=excerpt,
+            protocol_success=(status_code == 200),
+            schema_check_reason="Valid JSON" if response_shape_ok else "No response data",
+            error_stage=stage if status_code != 200 else None,
+            error_reason=error_reason,
+            suspected_failure_origin=origin,
+            upstream_status_code=status_code if status_code != 200 else None,
+            upstream_host_excerpt=upstream_host,
+            debug_logs=logs
+        )
+
+    async def run_external_protocol_verification_async(
+        self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
+    ) -> "ExternalProtocolRunResult":
+        """
+        外部のLive Endpointに対するプロトコル成功とレスポンス形状を検証する (非同期版)。
+        同期版とロジックを同期させ、Attribution修正と詳細デバッグログを実装。
+        """
+        import time, re
+        from .models import ExternalProtocolRunResult
+
+        logs = []
+        def dlog(msg): 
+            if debug: print(f"🔍 [DEBUG ASYNC] {msg}")
+            logs.append(msg)
+
+        start_time = time.time()
+        stage = "init"
+        error_reason = None
+        resp_data = None
+        status_code = 500
+        receipt = None
+        origin = "unknown"
+        upstream_host = None
+
+        # --- A. Attribution Bug の修正: 実行前に確定させる ---
+        use_delegate = (
+            self.prefer_lightninglabs_l402 and 
+            urlparse(target_url).netloc in self.l402_delegate_allowed_hosts
+        )
+        delegate_source = "lightninglabs-delegated" if use_delegate else "native"
+        executor_mode = delegate_source if use_delegate else "ln-church-agent-native"
+        
+        dlog(f"Target: {target_url} | Mode: {executor_mode} | Delegate: {use_delegate}")
+        if self.ln_adapter:
+            masked_url = re.sub(r'://.*?@', '://[redacted]@', getattr(self.ln_adapter, 'api_url', 'unknown'))
+            dlog(f"Payment Backend: {masked_url}")
+
+        try:
+            # --- 段階1: チャレンジ取得 ---
+            stage = "challenge_fetch"
+            dlog("Step 1: Fetching 402 challenge (Async)...")
+            
+            # 非同期版の実行メソッドを呼び出す
+            exec_result = await self.execute_detailed_async("GET", target_url)
+            
+            # --- 段階2: レスポンス検証 ---
+            stage = "response_shape_check"
+            resp_data = exec_result.response
+            receipt = exec_result.settlement_receipt
+            status_code = 200
+            dlog("Step 2: Successfully received 200 OK after payment (Async).")
+            
+        except Exception as e:
+            error_reason = str(e)
+            # --- B. 発生源のヒューリスティック分析 (同期版と共通) ---
+            if "LNBits Payment Failed" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_initiation"
+            elif "initiated but not settled" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_settlement_check"
+            elif "402 challenge" in error_reason:
+                origin = "target_endpoint"
+                stage = "challenge_parse"
+            
+            # Cloudflare 520 HTML からのメタデータ抽出
+            m_code = re.search(r"Error code (\d+)", error_reason)
+            if m_code: status_code = int(m_code.group(1))
+            
+            m_host = re.search(r"host-status.*?>(.*?)</span>", error_reason, re.S)
+            if m_host: 
+                upstream_host = re.sub('<[^>]*>', '', m_host.group(1)).strip()
+                dlog(f"Identified failing upstream host: {upstream_host}")
+
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        # Shape Check ロジック
+        response_shape_ok = False
+        if resp_data:
+            response_shape_ok = True
+            excerpt = str(resp_data)[:200]
+        else:
+            excerpt = ""
+
+        return ExternalProtocolRunResult(
+            ok=(status_code == 200 and response_shape_ok),
+            target_url=target_url,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source=delegate_source,
+            status_code_after_payment=status_code,
+            payment_performed=receipt.payment_performed if receipt else (origin == "payment_backend"),
+            cached_token_used=receipt.cached_token_used if receipt else False,
+            receipt_id=receipt.receipt_id if receipt else None,
+            latency_ms=latency_ms,
+            response_shape_ok=response_shape_ok,
+            response_excerpt=excerpt,
+            protocol_success=(status_code == 200),
+            schema_check_reason="Valid JSON" if response_shape_ok else "No response data",
+            error_stage=stage if status_code != 200 else None,
+            error_reason=error_reason,
+            suspected_failure_origin=origin,
+            upstream_status_code=status_code if status_code != 200 else None,
+            upstream_host_excerpt=upstream_host,
+            debug_logs=logs
+        )

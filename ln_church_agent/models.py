@@ -25,6 +25,20 @@ class TrustDecision(BaseModel):
     is_trusted: bool
     reason: str = ""
 
+class L402ExecutionReport(BaseModel):
+    """L402 Delegate 実行後の詳細レポート"""
+    delegate_source: str = "native"  # "native" | "lightninglabs"
+    authorization_value: str
+    preimage: Optional[str] = None
+    payment_hash: Optional[str] = None
+    fee_sats: Optional[int] = None
+    amount_sats: Optional[int] = None
+    endpoint: Optional[str] = None
+    payment_performed: bool = True
+    cached_token_used: bool = False
+    verification_status: str = "verified"
+    raw_receipt_ref: Optional[dict] = None
+
 class OutcomeSummary(BaseModel):
     """決済後の期待状態（Outcome）の評価結果"""
     is_success: bool
@@ -50,6 +64,12 @@ class PaymentEvidenceRecord(BaseModel):
     navigation_source: Optional[str] = None
     # 🚨 v1.5.9 Update: セッション予算の永続化・復元用の消費USD記録（決済成功時のみ記録）
     session_spend_delta_usd: Optional[float] = None
+    # --- 新規追加 (Widening) ---
+    delegate_source: str = "native"
+    payment_hash: Optional[str] = None
+    fee_sats: Optional[int] = None
+    cached_token_used: bool = False
+    payment_performed: bool = True
 
 class ExecutionContext(BaseModel):
     """軽量な意図とセッションのコンテキスト"""
@@ -135,6 +155,13 @@ class SettlementReceipt(BaseModel):
     receipt_token: Optional[str] = None
     verification_status: str = "verified"
     source: AttestationSource = AttestationSource.CLIENT_REPORTED
+    # --- 新規追加 (Widening) ---
+    delegate_source: str = "native"
+    payment_hash: Optional[str] = None
+    fee_sats: Optional[int] = None
+    cached_token_used: bool = False
+    payment_performed: bool = True
+    endpoint: Optional[str] = None
 
 class AssetType(str, Enum):
     JPYC = "JPYC"
@@ -323,3 +350,53 @@ class MonzenGraphResponse(BaseModel):
     payment_scheme_used: str
     data: Dict[str, Any]
     next_action: Optional[NextAction] = None
+
+# ==========================================
+# 🧪 Sandbox & Interoperability Models
+# ==========================================
+class InteropRunResult(BaseModel):
+    """Sandbox Harness の End-to-End 実行結果"""
+    ok: bool
+    target_url: str
+    run_id: str
+    scenario_id: str
+    executor_mode: str
+    delegate_source: str
+    canonical_hash_expected: str
+    canonical_hash_observed: str
+    canonical_hash_matched: bool
+    report_status_code: int
+    report_accepted: bool
+    payment_performed: bool
+    cached_token_used: bool
+    receipt_id: Optional[str] = None
+    raw_report_response: Dict[str, Any]
+
+# ==========================================
+# 🧪 External Protocol Verification Models (New)
+# ==========================================
+class ExternalProtocolRunResult(BaseModel):
+    """外部ライブエンドポイント向けのプロトコル実行結果 (Client-Attested)"""
+    ok: bool
+    target_url: str
+    scenario_id: str
+    verification_scope: str = "client_attested_external"
+    comparison_basis: str = "protocol_success"
+    executor_mode: str
+    delegate_source: str
+    status_code_after_payment: int
+    payment_performed: bool
+    cached_token_used: bool
+    receipt_id: Optional[str] = None
+    latency_ms: int
+    response_shape_ok: bool
+    response_excerpt: str
+    protocol_success: bool
+    schema_check_reason: str = ""
+    error_stage: Optional[str] = None
+    error_reason: Optional[str] = None
+    # --- デバッグ・分析用フィールド追加 ---
+    suspected_failure_origin: str = "unknown" # payment_backend | target_endpoint | local_env | unknown
+    upstream_status_code: Optional[int] = None
+    upstream_host_excerpt: Optional[str] = None
+    debug_logs: List[str] = Field(default_factory=list)

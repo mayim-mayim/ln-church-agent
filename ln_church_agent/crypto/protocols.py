@@ -1,5 +1,6 @@
 # protocols.py
-from typing import Protocol, Optional
+from typing import Protocol, Optional, Dict, Any
+from ..models import ParsedChallenge, L402ExecutionReport
 
 class EVMSigner(Protocol):
     """EVMにおけるx402決済を抽象化するインターフェース"""
@@ -29,3 +30,9 @@ class SolanaSigner(Protocol):
         self, asset: str, human_amount: float, treasury_address: str, 
         reference: str, rpc_url: Optional[str] = None
     ) -> str: ...
+
+class L402Executor(Protocol):
+    """L402決済実行を委譲するためのインターフェース"""
+    def execute_l402(
+        self, url: str, method: str, parsed: ParsedChallenge, headers: Dict[str, str], payload: Dict[str, Any]
+    ) -> L402ExecutionReport: ...

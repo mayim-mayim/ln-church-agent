@@ -29,7 +29,8 @@ from .models import (
     ExecutionContext,
     TrustDecision,
     OutcomeSummary,
-    TrustEvidence
+    TrustEvidence,
+    InteropRunResult
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 
@@ -68,5 +69,7 @@ __all__ = [
     "ExecutionContext",
     "TrustDecision",
     "OutcomeSummary",
-    "TrustEvidence"
+    "TrustEvidence",
+    "InteropRunResult",
+    "ExternalProtocolRunResult"
 ]
