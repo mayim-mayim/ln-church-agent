@@ -11,7 +11,7 @@ def main():
         print("❌ Error: AGENT_PRIVATE_KEY environment variable is missing.")
         sys.exit(1)
 
-    # ★ 追加: LNBits (または Alby) の環境変数を取得
+    # LNBits (または Alby) の環境変数を取得
     ln_url = os.environ.get("LNBITS_URL", "https://legend.lnbits.com")
     ln_key = os.environ.get("LNBITS_ADMIN_KEY")
     

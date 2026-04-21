@@ -37,10 +37,23 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.11" 
+        return "1.5.12" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Lightweight base64 decoder to extract JWT/JWS claims without cryptographic verification."""
+    try:
+        parts = token.split('.')
+        if len(parts) != 3: 
+            return {}
+        payload_b64 = parts[1]
+        padded = payload_b64 + '=' * (-len(payload_b64) % 4)
+        import base64, json
+        return json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
+    except Exception:
+        return {}
 
 # base64対応
 def _b64url_decode(b64_str: str) -> dict:
@@ -1126,6 +1139,42 @@ class LnChurchClient(Payment402Client):
         self.agent_id = derived_agent_id
         self.probe_token = None
         self.faucet_token = None
+        self.grant_token = None
+
+    def set_grant_token(self, token: str):
+        """Stores a grant token to be used as a payment override."""
+        self.grant_token = token
+
+    def has_valid_scoped_grant(self, target_path: str, method: str) -> bool:
+        """
+        Locally evaluates if the grant token is valid and scoped for the intended request.
+        This serves as the fallback decision gateway.
+        """
+        if not self.grant_token: return False
+        
+        claims = _decode_jwt_payload(self.grant_token)
+        if not claims: return False
+
+        import time
+        # 1. Check Expiration
+        if claims.get("exp", 0) < time.time(): return False
+        
+        # 2. Check Agent Identity Binding
+        if claims.get("sub") != self.agent_id: return False
+
+        # 3. Check Audience (Matches Base URL)
+        aud = claims.get("aud", "")
+        if aud.rstrip("/") != self.base_url.rstrip("/"): return False
+
+        # 4. Check Routes & Methods Scopes
+        scope = claims.get("scope", {})
+        routes = scope.get("routes", [])
+        methods = scope.get("methods", [])
+
+        if target_path not in routes: return False
+        if method.upper() not in [m.upper() for m in methods]: return False
+
+        return True
 
     def _inject_telemetry(self, headers: Optional[dict]) -> dict:
         headers = dict(headers or {})
@@ -1163,10 +1212,25 @@ class LnChurchClient(Payment402Client):
     def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
-        if self.faucet_token:
-            payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
+        target_path = "/api/agent/omikuji"
+
+        # 🎯 Priority 1: Grant Override
+        if self.has_valid_scoped_grant(target_path, "POST"):
+            payload["paymentOverride"] = {
+                "type": "grant",
+                "proof": self.grant_token,
+                "asset": AssetType.GRANT_CREDIT.value
+            }
+        # 🎯 Priority 2: Legacy Faucet Fallback
+        elif self.faucet_token:
+            payload["paymentOverride"] = {
+                "type": "faucet",
+                "proof": self.faucet_token,
+                "asset": AssetType.FAUCET_CREDIT.value
+            }
+
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
-        return OmikujiResponse(**self.execute_request("POST", "/api/agent/omikuji", payload, headers))
+        return OmikujiResponse(**self.execute_request("POST", target_path, payload, headers))
 
     def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
@@ -1238,10 +1302,25 @@ class LnChurchClient(Payment402Client):
     async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
-        if self.faucet_token:
-            payload["paymentOverride"] = {"type": "faucet", "proof": self.faucet_token, "asset": "FAUCET_CREDIT"}
+        target_path = "/api/agent/omikuji"
+
+        # 🎯 Priority 1: Grant Override
+        if self.has_valid_scoped_grant(target_path, "POST"):
+            payload["paymentOverride"] = {
+                "type": "grant",
+                "proof": self.grant_token,
+                "asset": AssetType.GRANT_CREDIT.value
+            }
+        # 🎯 Priority 2: Legacy Faucet Fallback
+        elif self.faucet_token:
+            payload["paymentOverride"] = {
+                "type": "faucet",
+                "proof": self.faucet_token,
+                "asset": AssetType.FAUCET_CREDIT.value
+            }
+
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
-        res = await self.execute_request_async("POST", "/api/agent/omikuji", payload, headers)
+        res = await self.execute_request_async("POST", target_path, payload, headers)
         return OmikujiResponse(**res)
 
     async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:

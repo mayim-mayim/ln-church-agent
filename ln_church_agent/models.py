@@ -168,12 +168,15 @@ class AssetType(str, Enum):
     USDC = "USDC"
     SATS = "SATS"
     FAUCET_CREDIT = "FAUCET_CREDIT"
+    GRANT_CREDIT = "GRANT_CREDIT"
 
 class SchemeType(str, Enum):
     # Standard Protocols
     l402 = "L402"
     mpp = "MPP"
     x402 = "x402"
+    grant = "grant"
+    faucet = "faucet"
     
     # LN Church Canonical Routings
     lnc_evm_relay = "lnc-evm-relay"

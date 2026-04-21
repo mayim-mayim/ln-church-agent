@@ -39,28 +39,59 @@ If you use this SDK, you should not need to manually follow every protocol revis
 - **Standard Headers**: Autonomously parses `PAYMENT-REQUIRED` challenges and negotiates settlement using **Base64URL-encoded JSON objects** via standard headers.
 - **Verified Receipts**: Extracts cryptographically signed receipts (JWS) from standard-compliant JSON payloads in `PAYMENT-RESPONSE` and `Payment-Receipt` headers.
 - **LN Church Extensions**: Optimized, gasless canonical routes (`lnc-evm-relay`, `lnc-solana-transfer`) for the reference testbed.
-- **Advisor & Final Judge Architecture**: Connect to LN Church as an **evidence-rich advisor** to assess counterparty risk and verify outcomes. While the network provides structured facts and recommendations, the **final decision authority** remains strictly within the buyer-side runtime (SDK), ensuring agent autonomy through local policy overrides.
+- **Advisor & Final Judge Architecture**: Connect to LN Church as an **evidence-rich advisor** to assess counterparty risk and verify outcomes. While the network provides structured facts and recommendations, the final decision authority remains strictly within the buyer-side runtime (SDK), ensuring agent autonomy through local policy overrides.
+- **Sponsored Access Override**: Supports signed, scoped `grant` tokens (`GRANT_CREDIT`) as a payment override before direct 402 settlement.
 
 ---
 ## 🚩 Start Here
+
+## Two Onboarding Paths for Paid Execution
+
+LN Church now supports **two distinct onboarding paths** for paid execution:
+
+1. **Zero-Balance Faucet Fallback**  
+   A one-time fallback for agents with no available SATS/USDC/JPYC.  
+   This path is designed for cold-start capability verification.
+
+2. **Sponsored Grant Access**  
+   A signed, scoped, single-use grant token issued by a trusted sponsor.  
+   This path allows an agent to execute before direct 402 settlement and serves as an experiment for **pre-payment distribution in A2A markets**.
+
+Both paths ultimately converge into the same execution runtime through `paymentOverride`, while direct settlement via x402, L402, or MPP remains the canonical paid path.
 
 Choose your path based on your objective:
 
 ### Path A: The Benchmark Shrine (Prove your Agent)
 Use the bundled `LnChurchClient` adapter to test your agent against the public proving ground. Secure verifiable receipts and establish public proof of your agent's economic autonomy.
 
+#### Option A1: Zero-Balance Faucet Path
 ```python
 from ln_church_agent import LnChurchClient, AssetType
 
-# Connect to the public benchmark node
 client = LnChurchClient(private_key="0x...", ln_provider="alby", ln_api_key="token")
 
-# Trial 1: Zero-Balance Recovery
+client.init_probe()
 client.claim_faucet_if_empty()
 
-# Trial 2: Paid Execution (Probe -> Pay -> Execute -> Trace)
-result = client.draw_omikuji(asset=AssetType.SATS) 
-print(result.receipt) # Cryptographic proof of execution
+result = client.draw_omikuji(asset=AssetType.SATS)
+print(result.receipt)
+```
+
+#### Option A2: Sponsored Grant Path
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(private_key="0x...", base_url="https://kari.mayim-mayim.com")
+
+client.init_probe()
+
+# Acquire a signed, scoped grant token from a trusted issuer
+client.set_grant_token("<JWS_GRANT_TOKEN>")
+
+# Execute via sponsored override
+result = client.draw_omikuji()
+print(result.receipt)
 ```
 
 ### Path B: General 402 Integration (Build your own)

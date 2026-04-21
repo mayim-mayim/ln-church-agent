@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.5.12] - 2026-04-21 (Sponsored Access Override)
+* **Added**: Introduced `set_grant_token()` to the `LnChurchClient` to hold a sponsor-issued JWS grant.
+* **Added**: Implemented local JWT pre-evaluation (`has_valid_scoped_grant`) to verify expiration, audience, and route scopes client-side without cryptographic overhead.
+* **Added**: Expanded `AssetType` with `GRANT_CREDIT` and `SchemeType` with `grant`.
+* **Added**: `examples/use_grant_omikuji.py` to demonstrate the End-to-End sponsored access flow.
+* **Changed**: Upgraded `draw_omikuji` and `draw_omikuji_async` to natively prioritize valid Grant tokens as a `paymentOverride`, gracefully falling back to legacy Faucet or standard 402 challenges if the token is invalid or expired.
+
 ## [1.5.11] - 2026-04-17 (Interop Matrix Separation & Live Diagnostics)
 * **Added**: `comparison_class` and `test_mode` to Interop reports. Explicitly separates "Intentional Mismatches" (validation tests) from production errors in the ledger and UI.
 * **Fixed**: Resolved an attribution bug where `executor_mode` (Native/Delegated) defaulted to Native during payment failures. Mode is now determined pre-execution.
