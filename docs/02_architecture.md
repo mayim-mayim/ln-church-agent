@@ -11,7 +11,7 @@ This SDK natively manages the following layers to ensure seamless autonomous eco
 
 The client automatically intercepts 402 challenges and negotiates payment across standard and extended networks:
 
-* **x402 (Standard EVM)**: Natively handles standard EIP-712 and EIP-3009 signing for external API compliance. Features **Dynamic Multi-Chain Auto-Routing**—the agent reads the `chain_id` and contract addresses provided in the HATEOAS challenge and dynamically adapts its signatures on the fly.
+* **x402 (Standard Path)**: Natively handles the standard x402 settlement contract, including Base64URL JSON payloads and CAIP-2-aware routing in the core negotiation loop. The strongest validated standard path today is EVM-based settlement (EIP-712 / EIP-3009), while LN Church-specific `lnc-*` routes remain available for optimized relay and ecosystem-specific flows.
 * **L402 & MPP (Lightning Network)**: Fully compatible with Lightning Labs' L402 protocol and the emerging Machine Payments Protocol (MPP). It manages macaroon extraction, Bolt11 invoice parsing, and preimage submission.
 * **LN Church Optimized Routings (`lnc-*`)**: For interacting specifically with the LN Church testbed, agents can opt-in to custom canonical routes:
   * `lnc-evm-relay`: Optimized gasless relayer orchestration.
@@ -29,6 +29,7 @@ Autonomous agents can hallucinate or be subjected to malicious HATEOAS redirects
 After a successful 402 negotiation, the SDK generates a `SettlementReceipt`. This allows the LLM agent to record its expenditures internally.
 * Contains `receipt_id`, `scheme`, `settled_amount`, and `proof_reference`.
 * Includes a `verification_status` to distinguish between cryptographically verified payments (e.g., L402 preimages) and self-reported blockchain hashes.
+* The SDK can already extract receipt artifacts from `PAYMENT-RESPONSE` bodies and `Payment-Receipt` headers when they are present. However, upstream cache semantics and retry semantics around receipts remain an actively monitored standards-tracking area rather than a frozen 1.5.x public contract.
 
 ### 4. Zero-Balance Fallback (Faucet)
 To prevent agent stalls due to lack of funds, the SDK includes automatic claim-and-bypass logic. It utilizes a strict `paymentOverride` schema to request temporary credits from a Faucet when necessary.
@@ -91,23 +92,55 @@ This architecture respects the separation of concerns: The **Executor (Delegate)
 ---
 
 ## 🔮 Future Protocol Evolution (Monitoring & Roadmap)
-*(As of April 17, 2026)*
+*(As of April 21, 2026 — synced with `STANDARDS_WATCHLIST.md`)*
 
-The `ln-church-agent` SDK is designed to be highly resilient to the rapidly evolving landscape of machine-to-machine payments. We actively monitor the following standardizations and explicitly maintain a "wait-and-see" abstraction layer until they stabilize.
+The `ln-church-agent` SDK is designed to absorb standards drift behind a stable developer-facing interface.  
+The following items are already treated as implemented in the current 1.5.x line:
 
-### 1. Cloudflare MCP `paidTool` & x402 Facilitators
-* **Observation:** The MCP ecosystem is rapidly advancing. With Cloudflare's introduction of `paidTool` extensions, standardized `network` and `facilitator` (e.g., Permit2/EIP-3009) payloads are becoming the de facto mechanism for stateless agents to request payments. 
-* **SDK Stance:** While we currently provide autonomous navigation via "Cold Spec" tools and LN Church custom relays (`lnc-evm-relay`), we have begun architectural preparations for an `MCPPaymentInterceptor` and a formal `WalletFacilitatorProtocol`. We will fully expose these interfaces once the `x402.org/facilitator` specification firmly stabilizes.
+- x402 Foundation alignment and CAIP-2-aware core negotiation
+- Base64URL JSON handling for standard x402 payment headers
+- Dynamic `Payment` / `MPP` parsing for evolving IETF draft semantics
 
-### 2. x402 Session Mode (Pre-funded Vouchers)
-* **Observation:** To eliminate per-request settlement overhead for continuous LLM inference, the x402 ecosystem is proposing a stateful "Session Mode" (upfront on-chain deposit followed by off-chain signed vouchers).
-* **SDK Stance:** We are monitoring the exact wire-level format required in the `PAYMENT-REQUIRED` challenge. Once ratified, we plan to upgrade our current `PaymentPolicy` and `EvidenceRepository` architecture from purely tracking session budgets to actively managing stateful payment channels, enabling native zero-latency HATEOAS loops.
+The items below are **not** treated as frozen public contract yet. They remain under active monitoring because the upstream ecosystem is still moving and premature abstraction would create unnecessary public API risk.
 
-### 3. IETF Payment Draft (Standardization of `WWW-Authenticate`)
-* **Observation:** The IETF draft `draft-ryan-httpauth-payment-01` is actively shaping the unified standard for HTTP 402 Lightning payments. Currently, the ecosystem uses mixed prefixes (`Payment` vs `MPP`) and parameters.
-* **SDK Stance:** To absorb these fluctuations, our `_parse_www_authenticate` engine dynamically routes and constructs the `Authorization` header based on what the server strictly requests, rather than hardcoding a single prefix. We will update the default fallback behavior only when the RFC is formally finalized.
+### Watch Now
 
-### 4. CAIP-2 Integration for Non-EVM Chains
-* **Observation:** While we currently support standard x402 (EVM) and L402 (Lightning), non-EVM chains like Solana are handled via custom optimized routes (`lnc-solana-transfer`). 
-* **SDK Stance:** We anticipate that non-EVM chains will eventually be formalized into the standard x402 payload via CAIP-2 identifiers (e.g., `solana:mainnet`). Once ratified, our dynamic router will automatically parse the `network` field and execute standard x402 signatures via the `SolanaSigner`, deprecating the `lnc-` prefix approach.
----
+### 1. Payment-Receipt Semantics & Cache Rules
+* **Observation:** The IETF payment draft is expanding beyond prefix negotiation and is clarifying `Payment-Receipt` semantics, retry expectations, and cache behavior around `402`, `401`, and `403` flows.
+* **SDK Stance:** The SDK already extracts receipt artifacts when provided, but cache-control behavior and receipt-driven retry semantics are still monitored rather than hard-coded into the stable public contract.
+* **Why Deferred:** The draft is still evolving, and real ecosystem implementations are not yet fully converged.
+
+### 2. x402 Bazaar / Discovery & MCP Compatibility
+* **Observation:** API discovery, MCP-native payment surfaces, and facilitator-aware runtime metadata are evolving quickly across the x402 ecosystem.
+* **SDK Stance:** `ln-church-agent` currently supports its own reference discovery path (Monzen / LN Church) and ecosystem-specific relays, while treating Bazaar / MCP compatibility as a monitored interoperability surface rather than a fixed contract.
+* **Why Deferred:** Discovery and MCP payment conventions are still stabilizing, and locking a public abstraction too early would create avoidable churn.
+
+### Design Prep
+
+### 3. Payment Identifier (Idempotency)
+* **Observation:** Upstream x402 discussions are moving toward stronger duplicate-settlement protection and idempotency-friendly payment correlation.
+* **SDK Stance:** The current 1.5.x line already reduces practical risk via evidence-backed receipt deduplication, but does not yet expose a dedicated standard Payment Identifier abstraction.
+* **Why Deferred:** Existing receipt-based safety is sufficient for now, and the exact standard surface is not yet final.
+
+### 4. Offer Receipt (Pre-settlement Agreement)
+* **Observation:** The ecosystem may split pre-settlement agreement proofs from post-settlement receipts.
+* **SDK Stance:** This would primarily affect the boundary between Trust evaluation, Outcome verification, and structured proof handling.
+* **Why Deferred:** This is not yet a widely deployed gateway pattern, so introducing a stable API now would be premature.
+
+### 5. x402 Session Mode
+* **Observation:** Stateful session-based payment flows are being explored to reduce repeated settlement overhead in continuous inference loops.
+* **SDK Stance:** The current architecture (`PaymentPolicy` + `EvidenceRepository`) is intentionally shaped so session-like behavior can be absorbed later without redesigning the entire execution loop.
+* **Why Deferred:** The wire-level challenge format is not yet stable enough to standardize against.
+
+### 6. L402 Token Attenuation
+* **Observation:** Multi-agent or delegated agent flows may eventually require caveat-based restriction and re-delegation of L402 capabilities.
+* **SDK Stance:** This is recognized as a future extension area for delegated Lightning execution, but remains out of scope for the current single-agent stable line.
+* **Why Deferred:** It is still over-spec for the current reference runtime and would add complexity without near-term interoperability benefit.
+
+### Practical Guidance for 1.5.x Users
+If you are building on `ln-church-agent` today, you should treat the current stable contract as:
+- standard x402 / L402 / Payment / MPP negotiation
+- stable developer-facing execution loop
+- fallback-compatible legacy absorption where needed
+
+You should **not** assume that receipt cache semantics, Bazaar discovery metadata, session-mode channels, or attenuation workflows are finalized public APIs in the current 1.5.x line.---

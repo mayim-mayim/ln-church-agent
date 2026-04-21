@@ -8,6 +8,7 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Added**: Expanded `AssetType` with `GRANT_CREDIT` and `SchemeType` with `grant`.
 * **Added**: `examples/use_grant_omikuji.py` to demonstrate the End-to-End sponsored access flow.
 * **Changed**: Upgraded `draw_omikuji` and `draw_omikuji_async` to natively prioritize valid Grant tokens as a `paymentOverride`, gracefully falling back to legacy Faucet or standard 402 challenges if the token is invalid or expired.
+* **docs(1.5.12)**: synchronize architecture roadmap with current STANDARDS_WATCHLIST and standards-tracking policy (no code changes)
 
 ## [1.5.11] - 2026-04-17 (Interop Matrix Separation & Live Diagnostics)
 * **Added**: `comparison_class` and `test_mode` to Interop reports. Explicitly separates "Intentional Mismatches" (validation tests) from production errors in the ledger and UI.
