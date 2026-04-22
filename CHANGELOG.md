@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.0] - 2026-04-22 (Internal Access Selection & Refactoring)
+* **Changed (Internal)**: Refactored the internal access selection loop for `LnChurchClient` by introducing strict Selector and Builder separation (`_ExecutionAccessPlan`, `_FundingPolicy`, etc.).
+* **Compatibility**: Guaranteed 100% backward compatibility with the 1.5.x public API, concrete vocabulary (`GRANT_CREDIT`, `grant`, `faucet`), and wire-level protocol. 
+* **Details**: [v1.6.0 Release Notes](docs/release_notes/v1.6.0.md)
+
 ## [1.5.12] - 2026-04-21 (Sponsored Access Override)
 * **Added**: Introduced `set_grant_token()` to the `LnChurchClient` to hold a sponsor-issued JWS grant.
 * **Added**: Implemented local JWT pre-evaluation (`has_valid_scoped_grant`) to verify expiration, audience, and route scopes client-side without cryptographic overhead.

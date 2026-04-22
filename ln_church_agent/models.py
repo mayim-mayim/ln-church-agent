@@ -355,6 +355,30 @@ class MonzenGraphResponse(BaseModel):
     next_action: Optional[NextAction] = None
 
 # ==========================================
+# 🔒 Internal Models (v1.6+ Access Selection)
+# ==========================================
+class _ExecutionUnlock(str, Enum):
+    SETTLEMENT_PROOF = "settlement_proof"
+    ENTITLEMENT_PROOF = "entitlement_proof"
+
+class _FundingPolicy(str, Enum):
+    SELF_FUNDED = "self_funded"
+    SUBSIDIZED = "subsidized"
+    FULLY_SPONSORED = "fully_sponsored"
+
+class _EntitlementKind(str, Enum):
+    FAUCET = "faucet"
+    GRANT = "grant"
+
+class _ExecutionAccessPlan(BaseModel):
+    unlock: _ExecutionUnlock
+    funding_policy: _FundingPolicy
+    entitlement_kind: Optional[_EntitlementKind] = None
+    settlement_scheme: str
+    settlement_asset: str
+    selected_reason: str = ""
+
+# ==========================================
 # 🧪 Sandbox & Interoperability Models
 # ==========================================
 class InteropRunResult(BaseModel):
@@ -403,3 +427,4 @@ class ExternalProtocolRunResult(BaseModel):
     upstream_status_code: Optional[int] = None
     upstream_host_excerpt: Optional[str] = None
     debug_logs: List[str] = Field(default_factory=list)
+

@@ -114,13 +114,32 @@ print(result)
 ```
 
 ---
-## 📦 Public API Surface (1.5.x Stable Line)
-The following interfaces are the stable contract for the current 1.5.x line:
+## 📦 Public API Surface (1.6.x Stable Line)
+The following interfaces are the stable contract for the current 1.6.x line:
 - `Payment402Client` (Core Engine) 
 - `LnChurchClient` (Reference Adapter) 
 - `AssetType`, `SchemeType` (Enums) 
 - All response models (e.g., `OmikujiResponse`, `MonzenTraceResponse`) 
 *Note: `execute_paid_action` is deprecated in favor of `execute_detailed`.*
+
+## v1.6 Direction: Internal Unification, External Stability
+
+Version 1.6 is **not** intended to force users into a new abstract mental model.
+
+For users, the concrete execution paths remain the same:
+- direct settlement via x402 / L402 / MPP
+- zero-balance fallback via Faucet
+- sponsor-funded access via Grant
+
+The purpose of v1.6 is to **unify these paths internally** so the SDK can:
+- preserve backward compatibility with the 1.5 public API,
+- absorb future standards evolution more safely,
+- support future extensions such as subsidy or discount models,
+- and keep sponsored access as an optional experimental layer rather than the canonical payment path.
+
+In other words, **v1.6 improves internal consistency and future extensibility without requiring users to abandon the concrete 1.5 interface.**
+
+**Compatibility Principle:** future internal abstractions may evolve, but concrete user-facing execution paths such as direct settlement, Faucet, and Grant remain the primary interface unless explicitly deprecated.
 
 ### 🛤️ The Two Workflows
 

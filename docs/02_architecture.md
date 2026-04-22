@@ -18,18 +18,19 @@ The client automatically intercepts 402 challenges and negotiates payment across
   * `lnc-evm-transfer`: Direct on-chain EVM transfers.
   * `lnc-solana-transfer`: Natively constructs, signs, and broadcasts SPL Token (USDC) transfers via the Solana RPC. *(Requires the `[solana]` extra)*.
 
-### 2. Economic Guardrails (v1.5+)
+### 2. Economic Guardrails (v1.6+)
 Autonomous agents can hallucinate or be subjected to malicious HATEOAS redirects. The `PaymentPolicy` engine intercepts every 402 challenge *before* payment execution.
 * Evaluates requested `scheme` and `asset` against allowed lists.
 * Calculates estimated USD value and blocks transactions exceeding `max_spend_per_tx_usd`.
 * Tracks cumulative session spending and enforces `max_spend_per_session_usd` to prevent budget exhaustion across multiple HATEOAS navigations or loops.
 
+**Internal Access Selection (v1.6+)**: The SDK internally isolates "Access Selection" (choosing between Grants, Faucets, or Direct Settlement) from the wire-level payload building. This ensures future pricing models like subsidies can be added without altering the public execution API.
 
-### 3. Verifiable Settlement Receipts (v1.5+)
+### 3. Verifiable Settlement Receipts (v1.6+)
 After a successful 402 negotiation, the SDK generates a `SettlementReceipt`. This allows the LLM agent to record its expenditures internally.
 * Contains `receipt_id`, `scheme`, `settled_amount`, and `proof_reference`.
 * Includes a `verification_status` to distinguish between cryptographically verified payments (e.g., L402 preimages) and self-reported blockchain hashes.
-* The SDK can already extract receipt artifacts from `PAYMENT-RESPONSE` bodies and `Payment-Receipt` headers when they are present. However, upstream cache semantics and retry semantics around receipts remain an actively monitored standards-tracking area rather than a frozen 1.5.x public contract.
+* The SDK can already extract receipt artifacts from `PAYMENT-RESPONSE` bodies and `Payment-Receipt` headers when they are present. However, upstream cache semantics and retry semantics around receipts remain an actively monitored standards-tracking area rather than a frozen 1.6.x public contract.
 
 ### 4. Zero-Balance Fallback (Faucet)
 To prevent agent stalls due to lack of funds, the SDK includes automatic claim-and-bypass logic. It utilizes a strict `paymentOverride` schema to request temporary credits from a Faucet when necessary.
@@ -46,7 +47,7 @@ The SDK allows agents to natively interact with a global registry of L402-protec
 ### 7. Strongly Typed Responses
 Every API interaction is modeled using Pydantic. This eliminates "cryptographic hallucinations" where an agent might misinterpret raw JSON, ensuring the agent's internal state remains grounded and accurate.
 
-### 8. Trust & Outcome Layer (v1.5+)
+### 8. Trust & Outcome Layer (v1.6+)
 To enable truly autonomous M2M economic loops, the SDK provides a "Decide & Verify" architecture via thin hooks. This allows agents to evaluate the counterparty *before* payment, and verify the semantic result *after* execution, without relying on heavy workflow engines.
 
 * **Counterparty Trust Layer (`TrustEvaluator`)**: Intercepts the HTTP 402 challenge. You can inject custom logic to verify if the host, required payment, or past interactions meet your safety criteria before committing funds. If the evaluator returns a `TrustDecision` with `is_trusted=False`, the SDK aborts the transaction and raises a `CounterpartyTrustError`.
@@ -84,7 +85,7 @@ print(f"Receipt Status: {result.settlement_receipt.verification_status}")
 print(f"Outcome Status: {result.outcome.is_success}")
 ```
 
-### 9. L402 Delegated Execution (v1.5.11+)
+### 9. L402 Delegated Execution (v1.6+)
 While the SDK natively parses and settles L402 challenges via standard `LightningProvider` adapters, it also supports swapping the execution layer to an official delegated package (e.g., Lightning Labs' `L402sdk`). 
 
 This architecture respects the separation of concerns: The **Executor (Delegate)** handles caching, MAC reuse, and BOLT11 fulfillment, while `ln-church-agent` strictly retains its authority as the **Buyer-Side Final Judge** (enforcing maximum session spend, verifying counterparties, and generating structured Evidence outputs).
@@ -95,7 +96,7 @@ This architecture respects the separation of concerns: The **Executor (Delegate)
 *(As of April 21, 2026 — synced with `STANDARDS_WATCHLIST.md`)*
 
 The `ln-church-agent` SDK is designed to absorb standards drift behind a stable developer-facing interface.  
-The following items are already treated as implemented in the current 1.5.x line:
+The following items are already treated as implemented in the current 1.6.x line:
 
 - x402 Foundation alignment and CAIP-2-aware core negotiation
 - Base64URL JSON handling for standard x402 payment headers
@@ -119,7 +120,7 @@ The items below are **not** treated as frozen public contract yet. They remain u
 
 ### 3. Payment Identifier (Idempotency)
 * **Observation:** Upstream x402 discussions are moving toward stronger duplicate-settlement protection and idempotency-friendly payment correlation.
-* **SDK Stance:** The current 1.5.x line already reduces practical risk via evidence-backed receipt deduplication, but does not yet expose a dedicated standard Payment Identifier abstraction.
+* **SDK Stance:** The current 1.6.x line already reduces practical risk via evidence-backed receipt deduplication, but does not yet expose a dedicated standard Payment Identifier abstraction.
 * **Why Deferred:** Existing receipt-based safety is sufficient for now, and the exact standard surface is not yet final.
 
 ### 4. Offer Receipt (Pre-settlement Agreement)
@@ -137,10 +138,10 @@ The items below are **not** treated as frozen public contract yet. They remain u
 * **SDK Stance:** This is recognized as a future extension area for delegated Lightning execution, but remains out of scope for the current single-agent stable line.
 * **Why Deferred:** It is still over-spec for the current reference runtime and would add complexity without near-term interoperability benefit.
 
-### Practical Guidance for 1.5.x Users
+### Practical Guidance for 1.6.x Users
 If you are building on `ln-church-agent` today, you should treat the current stable contract as:
 - standard x402 / L402 / Payment / MPP negotiation
 - stable developer-facing execution loop
 - fallback-compatible legacy absorption where needed
 
-You should **not** assume that receipt cache semantics, Bazaar discovery metadata, session-mode channels, or attenuation workflows are finalized public APIs in the current 1.5.x line.---
+You should **not** assume that receipt cache semantics, Bazaar discovery metadata, session-mode channels, or attenuation workflows are finalized public APIs in the current 1.6.x line.---

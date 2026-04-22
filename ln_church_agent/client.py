@@ -20,7 +20,8 @@ from .models import (
     ParsedChallenge, ExecutionResult, 
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
     PaymentEvidenceRecord, EvidenceRepository,
-    ChallengeSource, AttestationSource, NextAction
+    ChallengeSource, AttestationSource, NextAction,
+    _ExecutionUnlock, _FundingPolicy, _EntitlementKind, _ExecutionAccessPlan
 )
 from .exceptions import (
     PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, 
@@ -37,7 +38,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.5.12" 
+        return "1.6.0" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -260,7 +261,7 @@ class Payment402Client:
             raw_header=auth_header
         )
 
-# ==========================================
+    # ==========================================
     # v1.5.9 Update: Session Budget Persistence Helpers
     # ==========================================
     def _estimate_usd_value(self, parsed: ParsedChallenge) -> float:
@@ -1191,6 +1192,74 @@ class LnChurchClient(Payment402Client):
         telemetry_headers = self._inject_telemetry(headers)
         return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers)
 
+    # ==========================================
+    # 🔒 Internal Access Selection (v1.6+)
+    # ==========================================
+    def _collect_execution_access_candidates(self, target_path: str, method: str, asset: str, scheme: str) -> List[_ExecutionAccessPlan]:
+        candidates = []
+        
+        # 1. Grant candidate
+        if self.has_valid_scoped_grant(target_path, method):
+            candidates.append(_ExecutionAccessPlan(
+                unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
+                funding_policy=_FundingPolicy.FULLY_SPONSORED,
+                entitlement_kind=_EntitlementKind.GRANT,
+                settlement_scheme=scheme, # Fallback base requirements
+                settlement_asset=asset,
+                selected_reason="Valid scoped grant token available."
+            ))
+            
+        # 2. Faucet candidate (Legacy Omikuji fallback)
+        if self.faucet_token and target_path == "/api/agent/omikuji":
+            candidates.append(_ExecutionAccessPlan(
+                unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
+                funding_policy=_FundingPolicy.FULLY_SPONSORED,
+                entitlement_kind=_EntitlementKind.FAUCET,
+                settlement_scheme=scheme,
+                settlement_asset=asset,
+                selected_reason="Legacy faucet token available for Omikuji."
+            ))
+            
+        # 3. Direct settlement candidate
+        candidates.append(_ExecutionAccessPlan(
+            unlock=_ExecutionUnlock.SETTLEMENT_PROOF,
+            funding_policy=_FundingPolicy.SELF_FUNDED,
+            entitlement_kind=None,
+            settlement_scheme=scheme,
+            settlement_asset=asset,
+            selected_reason="Direct 402 settlement."
+        ))
+        
+        return candidates
+
+    def _select_execution_access_plan(self, candidates: List[_ExecutionAccessPlan]) -> _ExecutionAccessPlan:
+        # Priority: 1. GRANT, 2. FAUCET, 3. Direct Settlement
+        for kind in [_EntitlementKind.GRANT, _EntitlementKind.FAUCET]:
+            for c in candidates:
+                if c.entitlement_kind == kind:
+                    return c
+                    
+        # Fallback to direct settlement
+        for c in candidates:
+            if c.unlock == _ExecutionUnlock.SETTLEMENT_PROOF:
+                return c
+                
+        return candidates[-1]
+
+    def _build_payment_override_from_plan(self, plan: _ExecutionAccessPlan) -> Optional[dict]:
+        if plan.entitlement_kind == _EntitlementKind.GRANT:
+            return {
+                "type": "grant",
+                "proof": self.grant_token,
+                "asset": AssetType.GRANT_CREDIT.value
+            }
+        elif plan.entitlement_kind == _EntitlementKind.FAUCET:
+            return {
+                "type": "faucet",
+                "proof": self.faucet_token,
+                "asset": AssetType.FAUCET_CREDIT.value
+            }
+        return None
 
     # ------------------------------------------
     # 同期 (Sync) メソッド群: Convenience Defaults 修正
@@ -1208,26 +1277,25 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             print(f"[System] Faucet skipped or failed: {str(e)}")
 
-
     def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         target_path = "/api/agent/omikuji"
+        
+        # 内部セレクタによる計画決定
+        candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
+        plan = self._select_execution_access_plan(candidates)
+        
+        payload = {
+            "agentId": self.agent_id, 
+            "clientType": "AI", 
+            "scheme": plan.settlement_scheme, 
+            "asset": plan.settlement_asset
+        }
 
-        # 🎯 Priority 1: Grant Override
-        if self.has_valid_scoped_grant(target_path, "POST"):
-            payload["paymentOverride"] = {
-                "type": "grant",
-                "proof": self.grant_token,
-                "asset": AssetType.GRANT_CREDIT.value
-            }
-        # 🎯 Priority 2: Legacy Faucet Fallback
-        elif self.faucet_token:
-            payload["paymentOverride"] = {
-                "type": "faucet",
-                "proof": self.faucet_token,
-                "asset": AssetType.FAUCET_CREDIT.value
-            }
+        # ビルダーから Override の注入
+        override = self._build_payment_override_from_plan(plan)
+        if override:
+            payload["paymentOverride"] = override
 
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         return OmikujiResponse(**self.execute_request("POST", target_path, payload, headers))
@@ -1301,23 +1369,23 @@ class LnChurchClient(Payment402Client):
 
     async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
-        payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value}
         target_path = "/api/agent/omikuji"
 
-        # 🎯 Priority 1: Grant Override
-        if self.has_valid_scoped_grant(target_path, "POST"):
-            payload["paymentOverride"] = {
-                "type": "grant",
-                "proof": self.grant_token,
-                "asset": AssetType.GRANT_CREDIT.value
-            }
-        # 🎯 Priority 2: Legacy Faucet Fallback
-        elif self.faucet_token:
-            payload["paymentOverride"] = {
-                "type": "faucet",
-                "proof": self.faucet_token,
-                "asset": AssetType.FAUCET_CREDIT.value
-            }
+        # 内部セレクタによる計画決定
+        candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
+        plan = self._select_execution_access_plan(candidates)
+        
+        payload = {
+            "agentId": self.agent_id, 
+            "clientType": "AI", 
+            "scheme": plan.settlement_scheme, 
+            "asset": plan.settlement_asset
+        }
+
+        # ビルダーから Override の注入
+        override = self._build_payment_override_from_plan(plan)
+        if override:
+            payload["paymentOverride"] = override
 
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         res = await self.execute_request_async("POST", target_path, payload, headers)
