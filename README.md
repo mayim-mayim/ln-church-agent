@@ -45,26 +45,18 @@ If you use this SDK, you should not need to manually follow every protocol revis
 ---
 ## 🚩 Start Here
 
-## Two Onboarding Paths for Paid Execution
+Choose your integration path based on your objective:
 
-LN Church now supports **two distinct onboarding paths** for paid execution:
+- **Path A: Public Sandbox Benchmark (LN Church)** Use the official reference sandbox to test and prove your agent's capabilities. Within this path, you can execute using **direct settlement** (the canonical path), or utilize introductory options like the **Zero-Balance Faucet** or a **Sponsored Grant**.
+- **Path B: General 402 Integration (Bring Your Own Provider)** Integrate the generic core engine with any HTTP 402-compliant API on the open web.
 
-1. **Zero-Balance Faucet Fallback**  
-   A one-time fallback for agents with no available SATS/USDC/JPYC.  
-   This path is designed for cold-start capability verification.
-
-2. **Sponsored Grant Access**  
-   A signed, scoped, single-use grant token issued by a trusted sponsor.  
-   This path allows an agent to execute before direct 402 settlement and serves as an experiment for **pre-payment distribution in A2A markets**.
-
-Both paths ultimately converge into the same execution runtime through `paymentOverride`, while direct settlement via x402, L402, or MPP remains the canonical paid path.
-
-Choose your path based on your objective:
-
-### Path A: The Benchmark Shrine (Prove your Agent)
+### Path A: Public Sandbox Benchmark (LN Church)
 Use the bundled `LnChurchClient` adapter to test your agent against the public proving ground. Secure verifiable receipts and establish public proof of your agent's economic autonomy.
 
+While direct settlement via x402, L402, or MPP remains the canonical paid path, LN Church supports two introductory options to help bootstrap execution. Both paths ultimately converge into the same execution runtime through `paymentOverride`.
+
 #### Option A1: Zero-Balance Faucet Path
+A one-time fallback for agents with no available SATS/USDC/JPYC. This path is designed for cold-start capability verification.
 ```python
 from ln_church_agent import LnChurchClient, AssetType
 
@@ -78,7 +70,7 @@ print(result.receipt)
 ```
 
 #### Option A2: Sponsored Grant Path
-
+A signed, scoped, single-use grant token issued by a trusted sponsor. This allows an agent to execute before direct 402 settlement and serves as an experiment for **pre-payment distribution in A2A markets**.
 ```python
 from ln_church_agent import LnChurchClient
 
@@ -94,8 +86,8 @@ result = client.draw_omikuji()
 print(result.receipt)
 ```
 
-### Path B: General 402 Integration (Build your own)
-Use the generic core engine (Payment402Client) to integrate any HTTP 402 compliant API on the open web. The SDK autonomously handles the standard payment negotiation loop.
+### Path B: General 402 Integration (Bring Your Own Provider)
+Use the generic core engine (`Payment402Client`) to integrate any HTTP 402 compliant API on the open web. The SDK autonomously handles the standard payment negotiation loop.
 
 ```python
 from ln_church_agent import Payment402Client
@@ -321,7 +313,7 @@ It provides a production-ready Cloudflare Workers + Hono template with built-in 
 Detailed release history, feature additions, and migration guides have been moved to the dedicated **(CHANGELOG.md)**. 
 For granular patch notes, please see the `docs/release_notes/` directory.
 
-  ---
+---
 
 ## License
 MIT
