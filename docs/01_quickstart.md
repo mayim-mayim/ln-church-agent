@@ -77,7 +77,7 @@ async def main():
 
 ---
 
-## 🧪 Advanced Usage: Guardrails & NWC (v1.5+)
+## 🧪 Advanced Usage: Guardrails & NWC (v1.6+)
 
 ### 1. Setting a Payment Policy
 Prevent AI hallucinations from draining wallets by enforcing strict rules. 
