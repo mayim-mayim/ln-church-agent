@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.1] - 2026-04-24 (EVM Signature & CDP Compatibility Patch)
+* **Added**: Enhanced `LnChurchClient` convenience methods (`draw_omikuji`, `submit_confession`, etc.) with `**kwargs` support for direct, seamless payload parameter injection (e.g., `chainId`).
+* **Fixed**: Resolved `invalid_payload` failures in EVM gasless settlement (`lnc-evm-relay`) by extracting `r` and `s` signatures directly from the 65-byte hex string, guaranteeing strict 64-character zero-padding.
+* **Fixed**: Added the missing `to` (treasury address) field to the relayer payload to ensure complete EIP-712 data transmission and full compatibility with strict verifiers like Coinbase CDP.
+* **Fixed**: Explicitly included `chainId` in the relayer payload to enable seamless cross-chain gasless settlements (e.g., Base and Polygon) and prevent incorrect network defaulting.
+* **Details**: [v1.6.1 Release Notes](docs/release_notes/v1.6.1.md)
+
 ## [1.6.0] - 2026-04-22 (Internal Access Selection & Refactoring)
 * **Changed (Internal)**: Refactored the internal access selection loop for `LnChurchClient` by introducing strict Selector and Builder separation (`_ExecutionAccessPlan`, `_FundingPolicy`, etc.).
 * **Compatibility**: Guaranteed 100% backward compatibility with the 1.5.x public API, concrete vocabulary (`GRANT_CREDIT`, `grant`, `faucet`), and wire-level protocol. 

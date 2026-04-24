@@ -38,7 +38,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.6.0" 
+        return "1.6.1" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -1261,23 +1261,26 @@ class LnChurchClient(Payment402Client):
             }
         return None
 
-    # ------------------------------------------
+# ------------------------------------------
     # 同期 (Sync) メソッド群: Convenience Defaults 修正
     # ------------------------------------------
-    def init_probe(self):
-        res = self.execute_request("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk")
+    def init_probe(self, **kwargs):
+        payload = kwargs if kwargs else None
+        res = self.execute_request("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk", payload=payload)
         self.probe_token = res.get("capability_receipt", {}).get("token") or res.get("probe_token")
         print("[System] Probe Completed.")
 
-    def claim_faucet_if_empty(self):
+    def claim_faucet_if_empty(self, **kwargs):
         try:
-            res = self.execute_request("POST", "/api/agent/faucet", {"agentId": self.agent_id})
+            payload = {"agentId": self.agent_id}
+            payload.update(kwargs)
+            res = self.execute_request("POST", "/api/agent/faucet", payload)
             self.faucet_token = res.get("grant_token")
             print("[System] Faucet Claimed.")
         except Exception as e:
             print(f"[System] Faucet skipped or failed: {str(e)}")
 
-    def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
+    def draw_omikuji(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
         
@@ -1297,77 +1300,94 @@ class LnChurchClient(Payment402Client):
         if override:
             payload["paymentOverride"] = override
 
+        # ★ ここで chainId 等の追加パラメータを結合！
+        payload.update(kwargs)
+
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         return OmikujiResponse(**self.execute_request("POST", target_path, payload, headers))
 
-    def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
+    def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None, **kwargs) -> ConfessionResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)  # ★ 追加引数を結合
         return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
 
-    def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
+    def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> HonoResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
+        payload.update(kwargs)
         return HonoResponse(**self.execute_request("POST", "/api/agent/hono", payload))
 
-    def issue_identity(self) -> AgentIdentity:
-        res = self.execute_request("POST", "/api/agent/identity/issue", {"agentId": self.agent_id})
+    def issue_identity(self, **kwargs) -> AgentIdentity:
+        payload = {"agentId": self.agent_id}
+        payload.update(kwargs)
+        res = self.execute_request("POST", "/api/agent/identity/issue", payload)
         return AgentIdentity(status=res["status"], public_profile_url=res["public_profile_url"], agent_id=self.agent_id)
 
-    def resolve_identity(self, target_agent_id: str = None) -> AgentIdentity:
+    def resolve_identity(self, target_agent_id: str = None, **kwargs) -> AgentIdentity:
         target_id = target_agent_id or self.agent_id
-        res = self.execute_request("GET", f"/api/agent/identity/{target_id}")
+        payload = kwargs if kwargs else None
+        res = self.execute_request("GET", f"/api/agent/identity/{target_id}", payload=payload)
         return AgentIdentity(**res)
 
-    def get_benchmark_overview(self) -> BenchmarkOverviewResponse:
-        return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}"))
+    def get_benchmark_overview(self, **kwargs) -> BenchmarkOverviewResponse:
+        payload = kwargs if kwargs else None
+        return BenchmarkOverviewResponse(**self.execute_request("GET", f"/api/agent/benchmark/{self.agent_id}", payload=payload))
 
-    def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
+    def compare_trial_performance(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> CompareResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)
         return CompareResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload))
 
-    def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
+    def request_fast_pass_aggregate(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> AggregateResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)
         return AggregateResponse(**self.execute_request("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload))
 
-    def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST", scheme: Optional[str] = None) -> MonzenTraceResponse: 
+    def submit_monzen_trace(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST", scheme: Optional[str] = None, **kwargs) -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
         if preimage: payload["preimage"] = preimage
         if scheme: payload["scheme"] = scheme
+        payload.update(kwargs)
         res_dict = self.execute_request("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 
-    def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None) -> MonzenMetricsResponse:
+    def get_site_metrics(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None, **kwargs) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
         if scheme: params["scheme"] = scheme
+        params.update(kwargs)
         return MonzenMetricsResponse(**self.execute_request("GET", "/api/agent/monzen/metrics", payload=params))
 
-    def download_monzen_graph(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
+    def download_monzen_graph(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> MonzenGraphResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
+        payload.update(kwargs)
         res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
     # ------------------------------------------
     # ⚡ 非同期 (Async) メソッド群: Convenience Defaults 修正
     # ------------------------------------------
-    async def init_probe_async(self):
-        res = await self.execute_request_async("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk_async")
+    async def init_probe_async(self, **kwargs):
+        payload = kwargs if kwargs else None
+        res = await self.execute_request_async("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk_async", payload=payload)
         self.probe_token = res.get("capability_receipt", {}).get("token") or res.get("probe_token")
         print("[System ASYNC] Probe Completed.")
 
-    async def claim_faucet_if_empty_async(self):
+    async def claim_faucet_if_empty_async(self, **kwargs):
         try:
-            res = await self.execute_request_async("POST", "/api/agent/faucet", {"agentId": self.agent_id})
+            payload = {"agentId": self.agent_id}
+            payload.update(kwargs)
+            res = await self.execute_request_async("POST", "/api/agent/faucet", payload)
             self.faucet_token = res.get("grant_token")
             print("[System ASYNC] Faucet Claimed.")
         except Exception as e:
             print(f"[System ASYNC] Faucet skipped or failed: {str(e)}")
 
-    async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> OmikujiResponse:
+    async def draw_omikuji_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> OmikujiResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
 
@@ -1387,64 +1407,77 @@ class LnChurchClient(Payment402Client):
         if override:
             payload["paymentOverride"] = override
 
+        payload.update(kwargs)
+
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
         res = await self.execute_request_async("POST", target_path, payload, headers)
         return OmikujiResponse(**res)
 
-    async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None) -> ConfessionResponse:
+    async def submit_confession_async(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None, **kwargs) -> ConfessionResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)
         res = await self.execute_request_async("POST", "/api/agent/confession", payload)
         return ConfessionResponse(**res)
 
-    async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> HonoResponse:
+    async def offer_hono_async(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> HonoResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "clientType": "AI", "scheme": target_scheme, "asset": asset.value, "amount": amount}
+        payload.update(kwargs)
         res = await self.execute_request_async("POST", "/api/agent/hono", payload)
         return HonoResponse(**res)
 
-    async def issue_identity_async(self) -> AgentIdentity:
-        res = await self.execute_request_async("POST", "/api/agent/identity/issue", {"agentId": self.agent_id})
+    async def issue_identity_async(self, **kwargs) -> AgentIdentity:
+        payload = {"agentId": self.agent_id}
+        payload.update(kwargs)
+        res = await self.execute_request_async("POST", "/api/agent/identity/issue", payload)
         return AgentIdentity(status=res["status"], public_profile_url=res["public_profile_url"], agent_id=self.agent_id)
 
-    async def resolve_identity_async(self, target_agent_id: str = None) -> AgentIdentity:
+    async def resolve_identity_async(self, target_agent_id: str = None, **kwargs) -> AgentIdentity:
         target_id = target_agent_id or self.agent_id
-        res = await self.execute_request_async("GET", f"/api/agent/identity/{target_id}")
+        payload = kwargs if kwargs else None
+        res = await self.execute_request_async("GET", f"/api/agent/identity/{target_id}", payload=payload)
         return AgentIdentity(**res)
 
-    async def get_benchmark_overview_async(self) -> BenchmarkOverviewResponse:
-        res = await self.execute_request_async("GET", f"/api/agent/benchmark/{self.agent_id}")
+    async def get_benchmark_overview_async(self, **kwargs) -> BenchmarkOverviewResponse:
+        payload = kwargs if kwargs else None
+        res = await self.execute_request_async("GET", f"/api/agent/benchmark/{self.agent_id}", payload=payload)
         return BenchmarkOverviewResponse(**res)
 
-    async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> CompareResponse:
+    async def compare_trial_performance_async(self, trial_id: str, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> CompareResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{trial_id}/agent/{self.agent_id}/compare", payload)
         return CompareResponse(**res)
 
-    async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> AggregateResponse:
+    async def request_fast_pass_aggregate_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> AggregateResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value}
+        payload.update(kwargs)
         res = await self.execute_request_async("POST", f"/api/agent/benchmark/trials/{self.agent_id}/aggregate", payload)
         return AggregateResponse(**res)
 
-    async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST",scheme: Optional[str] = None) -> MonzenTraceResponse: 
+    async def submit_monzen_trace_async(self, target_url: str, invoice: str, preimage: Optional[str] = None, method: str = "POST", scheme: Optional[str] = None, **kwargs) -> MonzenTraceResponse: 
         payload = {"agentId": self.agent_id, "targetUrl": target_url, "invoice": invoice, "method": method}
         if preimage: payload["preimage"] = preimage
         if scheme: payload["scheme"] = scheme
+        payload.update(kwargs)
         res_dict = await self.execute_request_async("POST", "/api/agent/monzen/trace", payload)
         return MonzenTraceResponse(**res_dict)
 
-    async def get_site_metrics_async(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None) -> MonzenMetricsResponse:
+    async def get_site_metrics_async(self, limit: int = 10, target_agent_id: Optional[str] = None, scheme: Optional[str] = None, **kwargs) -> MonzenMetricsResponse:
         params = {"limit": limit}
         if target_agent_id: params["agentId"] = target_agent_id
         if scheme: params["scheme"] = scheme
+        params.update(kwargs)
         res = await self.execute_request_async("GET", "/api/agent/monzen/metrics", payload=params)
         return MonzenMetricsResponse(**res)
 
-    async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None) -> MonzenGraphResponse:
+    async def download_monzen_graph_async(self, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> MonzenGraphResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"scheme": target_scheme, "asset": asset.value, "agentId": self.agent_id}
+        payload.update(kwargs)
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 

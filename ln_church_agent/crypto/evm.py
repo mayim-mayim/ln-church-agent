@@ -90,17 +90,37 @@ class LocalKeyAdapter(EVMSigner):
         signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
         signed_tx = self.account.sign_message(signable_msg)
 
+        # 🚨 修正: signature全体から安全にパディング済みの r, s, v を抽出する
+        sig_hex = signed_tx.signature.hex()
+        safe_r = "0x" + sig_hex[0:64]
+        safe_s = "0x" + sig_hex[64:128]
+        safe_v = int(sig_hex[128:130], 16)
+
         relayer_payload = {
-            "token": contract_address, "from": self.account.address, "value": str(value_wei),
-            "validAfter": valid_after, "validBefore": valid_before, "nonce": "0x" + nonce,
-            "v": signed_tx.v, "r": "0x" + signed_tx.r.hex(), "s": "0x" + signed_tx.s.hex()
+            "token": contract_address, 
+            "from": self.account.address, 
+            "to": treasury_address,  
+            "value": str(value_wei),
+            "validAfter": valid_after, 
+            "validBefore": valid_before, 
+            "nonce": "0x" + nonce,
+            "v": safe_v, 
+            "r": safe_r, 
+            "s": safe_s,
+            "chainId": int(chain_id)
         }
 
         res = requests.post(relayer_url, json=relayer_payload)
         if not res.ok:
             raise Exception(f"Relayer Error: {res.text}")
             
-        return res.json().get("txHash")
+        data = res.json()
+        tx_hash = data.get("txHash")
+        
+        if not tx_hash:
+            raise Exception(f"Relayer returned 200 OK but no txHash found. Response: {data}")
+            
+        return tx_hash
 
     def execute_lnc_evm_transfer_settlement(
         self, asset: str, human_amount: float, treasury_address: str, 
