@@ -141,6 +141,9 @@ class LocalKeyAdapter(EVMSigner):
         if not contract_address:
             raise ValueError(f"トークンアドレスが不明です: {asset}")
 
+        from eth_utils import to_checksum_address
+        contract_address = to_checksum_address(contract_address)
+
         decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
         value_wei = int(human_amount * (10 ** decimals))
 
@@ -153,7 +156,8 @@ class LocalKeyAdapter(EVMSigner):
 
         nonce_hex = rpc_call("eth_getTransactionCount", [self.account.address, "pending"])
         nonce = int(nonce_hex, 16)
-        gas_price_hex = rpc_call("eth_price", []) if hasattr(requests, 'get') else rpc_call("eth_gasPrice", [])
+        
+        gas_price_hex = rpc_call("eth_gasPrice", [])
         gas_price = int(gas_price_hex, 16)
         
         method_id = "a9059cbb"
@@ -167,8 +171,74 @@ class LocalKeyAdapter(EVMSigner):
         }
 
         signed_tx = self.account.sign_transaction(tx)
-        tx_hash_hex = rpc_call("eth_sendRawTransaction", [signed_tx.raw_transaction.hex()])
+        
+        raw_tx_payload = signed_tx.raw_transaction.hex()
+        if not raw_tx_payload.startswith("0x"):
+            raw_tx_payload = "0x" + raw_tx_payload
+            
+        tx_hash_hex = rpc_call("eth_sendRawTransaction", [raw_tx_payload])
         return tx_hash_hex
+
+    def generate_eip3009_payload(
+        self, asset: str, human_amount: float, treasury_address: str,
+        chain_id: int = 137, token_address: str = None
+    ) -> dict:
+        """[LN教独自] EIP-3009 (transferWithAuthorization) の署名ペイロードを生成して返す (Coinbase CDP V2用)"""
+        from eth_account.messages import encode_typed_data
+        import time, os
+        
+        token_info = TOKENS.get(asset, {})
+        contract_address = token_address or token_info.get("address")
+        if not contract_address:
+            raise ValueError(f"トークンアドレスが不明です: {asset}")
+
+        token_name = token_info.get("name", "USD Coin" if asset == "USDC" else asset)
+        token_version = token_info.get("version", "2" if asset == "USDC" else "1")
+        decimals = token_info.get("decimals", 6 if asset == "USDC" else 18)
+
+        value_wei = int(human_amount * (10 ** decimals))
+        valid_after = 0
+        valid_before = int(time.time()) + 3600 
+        nonce = os.urandom(32).hex() 
+
+        domain = {
+            "name": token_name, "version": token_version,
+            "chainId": int(chain_id), "verifyingContract": contract_address
+        }
+        
+        types = {
+            "TransferWithAuthorization": [
+                {"name": "from", "type": "address"}, {"name": "to", "type": "address"},
+                {"name": "value", "type": "uint256"}, {"name": "validAfter", "type": "uint256"},
+                {"name": "validBefore", "type": "uint256"}, {"name": "nonce", "type": "bytes32"}
+            ]
+        }
+        
+        message = {
+            "from": self.account.address, "to": treasury_address, "value": value_wei,
+            "validAfter": valid_after, "validBefore": valid_before, "nonce": bytes.fromhex(nonce)
+        }
+
+        signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
+        signed_tx = self.account.sign_message(signable_msg)
+
+        # 🚨 修正: 65-byte以上のhex文字列をそのまま取得 (v,r,sが結合された状態)
+        signature_hex = signed_tx.signature.hex()
+        if not signature_hex.startswith("0x"):
+            signature_hex = "0x" + signature_hex
+
+        # 🚨 v2仕様の x402ExactEvmPayload 構造に完全に一致させる
+        return {
+            "signature": signature_hex,
+            "authorization": {
+                "from": self.account.address, 
+                "to": treasury_address,  
+                "value": str(value_wei),
+                "validAfter": str(valid_after), 
+                "validBefore": str(valid_before), 
+                "nonce": "0x" + nonce
+            }
+        }
 
 # ==========================================
 # 3. 後方互換性のためのグローバル関数 (Alias)

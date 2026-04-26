@@ -78,7 +78,7 @@ print(f"Hash Matched: {interop_result.canonical_hash_matched}")
 The SDK supports multiple settlement rails through a unified interface.
 
 **Canonical Paid Paths (Global Standards):**
-* **`x402`**: Standard EVM-based settlement (USDC / JPYC) utilizing EIP-712/EIP-3009 and Base64URL JSON headers.
+* **`x402` (V2 Fully Supported & Agentic.Market Ready)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads. The SDK natively parses x402 V2 Base64URL JSON headers, autonomously selecting the correct network parameters from the server's `accepts` array. It strictly constructs the official V2 settlement envelope, including transparent echo-back of protocol `extensions` to guarantee seamless integration with discovery indexers like Coinbase Bazaar (Agentic.Market).
 * **`L402` / `MPP`**: Standard Lightning Network settlement (SATS) supporting Macaroon and BOLT11 invoice parsing.
 
 **Compatibility & Sandbox Paths (LN Church Extensions):**

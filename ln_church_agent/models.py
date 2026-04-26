@@ -137,7 +137,8 @@ class PaymentPolicy:
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
     v1.3.0: セッション上限とホスト制限を追加し、ハルシネーションによる資金枯渇を防止。
     """
-    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP"])
+    # 🚨 修正: 許可リストに "exact" を追加！
+    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP", "exact"])
     allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
     max_spend_per_tx_usd: float = 5.0 # デフォルトで1回5ドルを上限とする安全装置
     max_spend_per_session_usd: float = 10.0

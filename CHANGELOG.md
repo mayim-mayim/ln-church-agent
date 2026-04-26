@@ -2,6 +2,16 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.2] - 2026-04-26 (x402 V2 Compatibility Improvements & Payload Normalization)
+* **Added**: Support for transparent protocol extensions. The SDK captures server-provided extension metadata (like discovery configurations) and echoes it back in the settlement payload to facilitate upstream indexers.
+* **Added**: Integrated standard `"exact"` scheme support into the core loop, formatting `PAYMENT-SIGNATURE` headers properly for gasless V2 settlements.
+* **Changed**: Upgraded 402 challenge parsing to handle the x402 V2 `accepts` array structure, extracting matching network options based on the agent's expected `chainId`.
+* **Fixed (Critical)**: Reconstructed the V2 `PAYMENT-SIGNATURE` envelope to match expected V2 hierarchy (`x402Version: 2`, `accepted`, `resource`, `payload`, `extensions`), resolving rejection loops.
+* **Fixed (Critical)**: Resolved a fatal RPC failure in EVM transfers by replacing an invalid `eth_price` call with `eth_gasPrice` and properly padding raw transactions.
+* **Fixed**: Implemented practical heuristics for unit normalization (Raw-to-Human), converting minimal-unit integers (e.g., Wei) to human-readable decimals to prevent false-positive blocks by local policies.
+* **Fixed**: Enhanced treasury address (`payTo`) extraction from nested V2 structures and implemented safe fallbacks to expected logical symbols (USDC/JPYC) for raw contract addresses.
+* **Details**: [v1.6.2 Release Notes](docs/release_notes/v1.6.2.md)
+
 ## [1.6.1] - 2026-04-24 (EVM Signature & CDP Compatibility Patch)
 * **Added**: Enhanced `LnChurchClient` convenience methods (`draw_omikuji`, `submit_confession`, etc.) with `**kwargs` support for direct, seamless payload parameter injection (e.g., `chainId`).
 * **Fixed**: Resolved `invalid_payload` failures in EVM gasless settlement (`lnc-evm-relay`) by extracting `r` and `s` signatures directly from the 65-byte hex string, guaranteeing strict 64-character zero-padding.

@@ -38,7 +38,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.6.1" 
+        return "1.6.2" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -161,11 +161,10 @@ class Payment402Client:
     # ==========================================
     # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
     # ==========================================
-    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC") -> ParsedChallenge:
+    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None) -> ParsedChallenge:
         h = response.headers
-        
+
         # ★ 1. Lightning系 (L402/MPP) を最優先で処理
-        # Dual-Stack環境では PAYMENT-REQUIRED よりも、インボイスを含むこちらが重要
         auth_h = h.get("WWW-Authenticate", "")
         if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
             return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
@@ -173,53 +172,96 @@ class Payment402Client:
         # ★ 2. x402系 (PAYMENT-REQUIRED)
         if "PAYMENT-REQUIRED" in h:
             val = h["PAYMENT-REQUIRED"]
-            # 新標準 (Base64 JSON) か 旧レガシー (network="..." 文字列) か判定
-            if not val.startswith('network='):
-                payload = _b64url_decode(val)
-                if payload:
-                    params = {
-                        "network": payload.get("network", "unknown"),
-                        "amount": payload.get("amount", 0),
-                        "asset": payload.get("asset", expected_asset),
-                        "destination": payload.get("destination", ""),
-                        "challenge": payload.get("challenge", "")
-                    }
-                    # 念のためボディからも不足パラメータを補完
-                    try:
-                        body_params = response.json().get("challenge", {}).get("parameters", {})
-                        params.update(body_params)
-                    except Exception:
-                        pass
-
-                    return ParsedChallenge(
-                        scheme=payload.get("scheme", "x402"),
-                        network=params["network"],
-                        amount=float(params["amount"]),
-                        asset=params["asset"],
-                        parameters=params,
-                        source=ChallengeSource.STANDARD_X402,
-                        raw_header=val
-                    )
             
-            # フォールバック: レガシー文字列パース
-            params = {k: v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
-            
-            # ★ 修正: レガシー文字列には destination が含まれないためボディから取得
-            try:
-                body_params = response.json().get("challenge", {}).get("parameters", {})
-                params.update(body_params)
-            except Exception:
-                pass
+            # --- (A) V2 & Base64 JSON パース ---
+            payload = _b64url_decode(val)
+            if payload:
+                # ==========================================
+                # x402 V2 標準準拠: accepts 配列からの動的選択と正規化
+                # ==========================================
+                accepted_params = {}
+                if "accepts" in payload and isinstance(payload["accepts"], list):
+                    selected_accept = None
 
-            return ParsedChallenge(
-                scheme=params.get("scheme", "x402"),
-                network=params.get("network", "unknown"),
-                amount=float(params.get("amount", 0)),
-                asset=params.get("asset", expected_asset),
-                parameters=params,
-                source=ChallengeSource.STANDARD_X402,
-                raw_header=val
-            )
+                    if expected_chain_id:
+                        target_network = f"eip155:{expected_chain_id}"
+                        for opt in payload["accepts"]:
+                            if opt.get("network") == target_network:
+                                selected_accept = opt
+                                break
+
+                    if not selected_accept and len(payload["accepts"]) > 0:
+                        selected_accept = payload["accepts"][0]
+
+                    if selected_accept:
+                        # 1. アセット名とトークンアドレスの解決
+                        raw_asset = selected_accept.get("asset", expected_asset)
+                        raw_amount = selected_accept.get("amount", 0)
+                        logical_asset = raw_asset
+                        extracted_token = ""
+
+                        if isinstance(raw_asset, str) and raw_asset.startswith("0x"):
+                            extracted_token = raw_asset
+                            logical_asset = expected_asset # symbolにフォールバック
+
+                        # 2. 金額の単位変換 (Raw unit -> Human unit)
+                        human_amount = float(raw_amount)
+                        if logical_asset == "USDC":
+                            if human_amount >= 100: # 100以上の場合はWei単位とみなす安全策
+                                human_amount /= 1_000_000
+                        elif logical_asset == "JPYC":
+                            if human_amount >= 10000:
+                                human_amount /= 10**18
+
+                        accepted_params = {
+                            "scheme": selected_accept.get("scheme", "exact"),
+                            "network": selected_accept.get("network", "unknown"),
+                            "amount": human_amount,
+                            "asset": logical_asset,
+                            "payTo": selected_accept.get("payTo", ""),
+                            "token_address": extracted_token,
+                            "_raw_accepted": selected_accept,
+                            "_raw_resource": payload.get("resource", {}),
+                            "_raw_extensions": payload.get("extensions")
+                        }
+
+                params = {
+                    "network": payload.get("network") or accepted_params.get("network", "unknown"),
+                    "amount": payload.get("amount") or accepted_params.get("amount", 0),
+                    "asset": payload.get("asset") or accepted_params.get("asset", expected_asset),
+                    "destination": payload.get("destination") or accepted_params.get("payTo", ""),
+                    "payTo": payload.get("payTo") or accepted_params.get("payTo", ""),
+                    "token_address": payload.get("token_address") or accepted_params.get("token_address", ""),
+                    "challenge": payload.get("challenge", ""),
+                    "_raw_accepted": accepted_params.get("_raw_accepted"),
+                    "_raw_resource": accepted_params.get("_raw_resource"),
+                    "_raw_extensions": accepted_params.get("_raw_extensions")
+                }
+                # 正規化後の値で最終パラメータを上書き
+                params["amount"] = accepted_params.get("amount", params["amount"])
+
+                return ParsedChallenge(
+                    scheme=payload.get("scheme") or accepted_params.get("scheme") or "x402",
+                    network=params["network"],
+                    amount=float(params["amount"]),
+                    asset=params["asset"],
+                    parameters=params,
+                    source=ChallengeSource.STANDARD_X402,
+                    raw_header=val
+                )
+
+            # レガシー String 形式のフォールバック ---
+            params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
+            if params:
+                return ParsedChallenge(
+                    scheme=params.get("scheme", "x402"),
+                    network=params.get("network", "unknown"),
+                    amount=float(params.get("amount", 0)),
+                    asset=params.get("asset", expected_asset),
+                    parameters=params,
+                    source=ChallengeSource.STANDARD_X402,
+                    raw_header=val
+                )
 
         # 3. フォールバック: レスポンスボディ (LN教旧仕様)
         try:
@@ -299,7 +341,7 @@ class Payment402Client:
         try:
             if hasattr(self.evidence_repo, "import_session_evidence"):
                 records = self.evidence_repo.import_session_evidence(context)
-                # 🚨 修正: 履歴が空でも0.0で上書きし、セッションを切り替えた際のリークを防ぐ
+                # 履歴が空でも0.0で上書きし、セッションを切り替えた際のリークを防ぐ
                 restored_usd = self._sum_budget_events(records) if records else 0.0
                 self.policy._session_spent_usd = restored_usd
         except Exception:
@@ -320,7 +362,6 @@ class Payment402Client:
             else:
                 records = []
             
-            # 🚨 修正: 履歴が空でも0.0で上書き
             restored_usd = self._sum_budget_events(records) if records else 0.0
             self.policy._session_spent_usd = restored_usd
         except Exception:
@@ -349,7 +390,7 @@ class Payment402Client:
         if parsed.asset not in self.policy.allowed_assets:
             raise PaymentExecutionError(f"Policy Violation: Asset '{parsed.asset}' is restricted.")
 
-        # 🚨 v1.5.9 Update: 換算ロジックの集約
+        # v1.5.9 Update: 換算ロジックの集約
         usd_value = self._estimate_usd_value(parsed)
 
         if usd_value > self.policy.max_spend_per_tx_usd:
@@ -417,12 +458,11 @@ class Payment402Client:
         network_name = parsed.network or "UNKNOWN"
         l402_report = None
 
-        # 1. EVM系 (x402, lnc-evm-*) の処理
-        if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value]:
+        # 1. EVM系 (x402, lnc-evm-*, exact) の処理
+        if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value, "exact"]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
             
-            # 宛先等の取得 (ParsedChallenge.parameters 経由)
             dest = parsed.parameters.get("destination") or parsed.parameters.get("payTo")
             if not dest:
                 raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
@@ -433,44 +473,91 @@ class Payment402Client:
             elif parsed.network.startswith("eip155:"):
                 chain_id_to_use = int(parsed.network.split(":")[1])
 
-            # 実際の執行
-            if parsed.scheme == SchemeType.lnc_evm_transfer.value:
+            # ==========================================
+            # 執行フェーズ
+            # ==========================================
+            if parsed.scheme == "exact":
+                # x402 V2 公式仕様 (EIP-3009 オフチェーン署名: ガス代ゼロ、待機時間ゼロ)
+                eip3009_payload = self.evm_signer.generate_eip3009_payload(
+                    parsed.asset, parsed.amount, dest, chain_id_to_use, 
+                    parsed.parameters.get("token_address")
+                )
+                proof_ref = "eip3009_signature_payload"
+                
+            elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
+                # LN教独自: オンチェーン直接送金 (Agent自身がガス代を払う)
                 proof_ref = self.evm_signer.execute_lnc_evm_transfer_settlement(
                     parsed.asset, parsed.amount, dest, chain_id_to_use, 
                     parsed.parameters.get("token_address"), self.evm_rpc_url
                 )
-            else:
-                # 標準 x402 または lnc-evm-relay (ガスレス)
-                if parsed.scheme == SchemeType.x402.value:
-                    from .crypto.evm import sign_standard_x402_evm
-                    proof_ref = sign_standard_x402_evm(self.private_key, parsed)
-                else:
-                    proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
-                        parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
-                        dest, chain_id_to_use, parsed.parameters.get("token_address")
-                    )
+                
+            elif parsed.scheme == SchemeType.lnc_evm_relay.value:
+                # LN教独自: リレイヤー経由ガスレス送金
+                proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
+                    parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
+                    dest, chain_id_to_use, parsed.parameters.get("token_address")
+                )
+                
+            elif parsed.scheme == SchemeType.x402.value:
+                # V1 標準仕様
+                from .crypto.evm import sign_standard_x402_evm
+                proof_ref = sign_standard_x402_evm(self.private_key, parsed)
 
-            # 【★重要: Dual Stack リトライの構成】
-            if parsed.scheme == SchemeType.x402.value:
-                # ★ 新標準: Base64 JSON Payload の構築
-                payment_payload = {
-                    "proof": proof_ref,
-                    "challenge": parsed.parameters.get("challenge", "")
+            # ==========================================
+            # エンベロープ構築フェーズ
+            # ==========================================
+            if parsed.scheme == "exact":
+                # V2 公式エンベロープの構築
+                raw_accepted = parsed.parameters.get("_raw_accepted")
+                if not raw_accepted:
+                    decimals = 6 if parsed.asset == "USDC" else 18
+                    raw_amount_str = str(int(parsed.amount * (10 ** decimals)))
+                    raw_asset_for_payload = parsed.parameters.get("token_address") if parsed.parameters.get("token_address") else parsed.asset
+                    raw_accepted = {
+                        "scheme": "exact", "network": parsed.network, "asset": raw_asset_for_payload,
+                        "amount": raw_amount_str, "payTo": dest, "maxTimeoutSeconds": 3600,
+                        "extra": {"name": "USD Coin", "version": "2"}
+                    }
+                
+                raw_resource = parsed.parameters.get("_raw_resource")
+                if not raw_resource:
+                    raw_resource = {"url": url, "description": "Agent Payment", "mimeType": "application/json"}
+                
+                # V2 エンベロープの構築
+                cdp_v2_payload = {
+                    "x402Version": 2,
+                    "accepted": raw_accepted,
+                    "payload": eip3009_payload,
+                    "resource": raw_resource
                 }
+                
+                # サーバーが提示した拡張機能(Bazaar等)があれば、そのままエコーバック(復唱)する
+                raw_extensions = parsed.parameters.get("_raw_extensions")
+                if raw_extensions:
+                    cdp_v2_payload["extensions"] = raw_extensions
+                
+                # Base64URLでエンコード
+                encoded_payload = _b64url_encode(cdp_v2_payload)
+                
+                # x402 V2 仕様のヘッダー設定
+                headers["PAYMENT-SIGNATURE"] = encoded_payload
+                headers["Authorization"] = f"x402 {encoded_payload}"
+                headers["X-PAYMENT"] = encoded_payload
+                
+            elif parsed.scheme == SchemeType.x402.value:
+                # V1 レガシーペイロード
+                payment_payload = {"proof": proof_ref, "challenge": parsed.parameters.get("challenge", "")}
                 headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
-            
-            # LN教互換用ボディ (全EVM系で付与)
-            # 標準 x402 の場合はペイロード（ボディ）を汚染せず、レガシー拡張ルートのみ付与する
-            if parsed.scheme != SchemeType.x402.value:
+                headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+                
+            else:
+                # LN教互換用ボディ (lnc-evm-transfer / relay 等)
                 payload["paymentAuth"] = {
-                    "scheme": parsed.scheme, 
-                    "proof": proof_ref, 
-                    "chainId": str(chain_id_to_use),
-                    "standard_x402": False
+                    "scheme": parsed.scheme, "proof": proof_ref, 
+                    "chainId": str(chain_id_to_use), "standard_x402": False
                 }
-            # 互換用 Authorization ヘッダー
-            headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
-
+                headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+                
         # 2. Solana系の処理
         elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
@@ -588,7 +675,7 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
-        # 🚨 v1.5.9 Update: HATEOAS実行前にワンショットで予算を復元
+        # v1.5.9 Update: HATEOAS実行前にワンショットで予算を復元
         self._restore_session_spend_from_evidence(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -654,7 +741,12 @@ class Payment402Client:
             if _payment_retry_count >= self.max_payment_retries:
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
-            parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
+            # ★ 修正2: payload から chainId を取得してパース関数に渡す
+            parsed = self._parse_challenge(
+                res, 
+                expected_asset=payload.get("asset", "SATS"),
+                expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
+            )
             self._enforce_policy(parsed, url)
 
             if self.evidence_repo:
@@ -743,7 +835,7 @@ class Payment402Client:
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
                         "trust_decision": decision, "error_message": str(e)
                     }
-                    # 🚨 修正: 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
+                    # 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
                         record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
@@ -825,7 +917,7 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
-        # 🚨 v1.5.9 Update: 非同期でのワンショット予算復元
+        # v1.5.9 Update: 非同期でのワンショット予算復元
         await self._restore_session_spend_from_evidence_async(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -891,7 +983,12 @@ class Payment402Client:
             if _payment_retry_count >= self.max_payment_retries: 
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
-            parsed = self._parse_challenge(res, payload.get("asset", "SATS"))
+            # ★ 修正3: 非同期側も同様に chainId を渡す
+            parsed = self._parse_challenge(
+                res, 
+                expected_asset=payload.get("asset", "SATS"),
+                expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
+            )
             self._enforce_policy(parsed, url)
 
             if getattr(self, "evidence_repo", None):
@@ -990,7 +1087,7 @@ class Payment402Client:
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
                         "trust_decision": decision, "error_message": str(e)
                     }
-                    # 🚨 修正: 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
+                    # 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
                         record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
