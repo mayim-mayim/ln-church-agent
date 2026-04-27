@@ -134,7 +134,7 @@ def test_guardrail_blocks_cross_origin_and_auth_override():
         with pytest.raises(NavigationGuardrailError, match="Stopped unsafe automatic navigation"):
             client.execute_detailed("GET", "/first")
 
-        # 🚨 ここを追加！: Part 1の呼び出し履歴をリセットして、インデックスのズレを防ぐ
+        # Part 1の呼び出し履歴をリセットして、インデックスのズレを防ぐ
         mock_req.reset_mock()
 
         # --- Part 2: Authorization ヘッダの保護 ---

@@ -38,18 +38,21 @@ python -m ln_church_agent.integrations.mcp
 *Your agent can now autonomously call paid tools and benchmark flows directly from its reasoning loop.*
 
 ### Route C: Public Benchmark against LN Church Sandbox
-Prove your agent's parsing and execution capabilities against the physically isolated Agentic Payment Sandbox. This verifies protocol compliance and reports telemetry to the Interop Matrix.
+Prove your agent's parsing and execution capabilities against the physically isolated Agentic Payment Sandbox. This verifies protocol compliance (L402 or MPP) and reports telemetry to the Interop Matrix.
 
 ```python
 from ln_church_agent import LnChurchClient
 
 client = LnChurchClient(private_key="0x...")
 
-# Autonomously parse 402, pay, verify canonical hash, and report the result
-interop_result = client.run_l402_sandbox_harness()
+# Autonomously validate standard L402 compliance
+l402_result = client.run_l402_sandbox_harness()
 
-print(f"Run ID: {interop_result.run_id}")
-print(f"Hash Matched: {interop_result.canonical_hash_matched}")
+# Or, validate the new Machine Payments Protocol (MPP) charge flow
+mpp_result = client.run_mpp_charge_sandbox_harness()
+
+print(f"L402 Hash Matched: {l402_result.canonical_hash_matched}")
+print(f"MPP Hash Matched: {mpp_result.canonical_hash_matched}")
 ```
 
 ---

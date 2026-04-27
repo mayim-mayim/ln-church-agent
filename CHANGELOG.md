@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.3] - 2026-04-27 (MPP Charge Sandbox Harness Integration)
+* **Added**: Introduced `run_mpp_charge_sandbox_harness()` and `run_mpp_charge_sandbox_harness_async()` to `LnChurchClient` to seamlessly validate the IETF draft Machine Payments Protocol (MPP) flows.
+* **Changed**: Upgraded Interop Report telemetry for *both* MPP and L402 harnesses to include dynamic protocol metadata (`rail`, `payment_intent`, `authorization_scheme`, `payment_receipt_present`), enhancing observability on the public Interop Matrix.
+* **Fixed**: Replaced hardcoded authorization schemes in the Sandbox Harness with dynamic extraction from the `SettlementReceipt` to accurately absorb protocol fluctuations.
+* **Added**: Introduced `test_v1_6_3_mpp_sandbox.py` to ensure regression protection for dynamic telemetry extraction.
+* **Docs**: Updated Sandbox documentation and README to reflect the availability of the parallel MPP Charge endpoint.
+
 ## [1.6.2] - 2026-04-26 (x402 V2 Compatibility Improvements & Payload Normalization)
 * **Added**: Support for transparent protocol extensions. The SDK captures server-provided extension metadata (like discovery configurations) and echoes it back in the settlement payload to facilitate upstream indexers.
 * **Added**: Integrated standard `"exact"` scheme support into the core loop, formatting `PAYMENT-SIGNATURE` headers properly for gasless V2 settlements.

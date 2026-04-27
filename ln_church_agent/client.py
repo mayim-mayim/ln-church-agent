@@ -38,7 +38,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.6.2" 
+        return "1.6.3" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -1621,9 +1621,10 @@ class LnChurchClient(Payment402Client):
         payment_performed = receipt.payment_performed if receipt else True
         cached_token_used = receipt.cached_token_used if receipt else False
         delegate_source = receipt.delegate_source if receipt else "native"
-        
-        # Matrix上での表示名。Nativeでない場合は delegate_source をそのまま使う
         executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
+
+        # 動的スキーム取得
+        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
 
         report_payload = {
             "run_id": run_id,
@@ -1638,7 +1639,12 @@ class LnChurchClient(Payment402Client):
             "sdk_version": SDK_VERSION,
             "interop_token": interop_token,
             "comparison_class": "production_like",
-            "test_mode": "normal"
+            "test_mode": "normal",
+            # --- L402にも拡張テレメトリーを搭載 ---
+            "rail": "L402",
+            "payment_intent": "charge",
+            "authorization_scheme": auth_scheme,
+            "payment_receipt_present": True if receipt else False
         }
 
         # 5. POST Interop Report
@@ -1707,9 +1713,9 @@ class LnChurchClient(Payment402Client):
         payment_performed = receipt.payment_performed if receipt else True
         cached_token_used = receipt.cached_token_used if receipt else False
         delegate_source = receipt.delegate_source if receipt else "native"
-        
-        # Matrix上での表示名。Nativeでない場合は delegate_source をそのまま使う
         executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
+
+        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
 
         report_payload = {
             "run_id": run_id,
@@ -1724,7 +1730,11 @@ class LnChurchClient(Payment402Client):
             "sdk_version": SDK_VERSION,
             "interop_token": interop_token,
             "comparison_class": "production_like",
-            "test_mode": "normal"
+            "test_mode": "normal",
+            "rail": "L402",
+            "payment_intent": "charge",
+            "authorization_scheme": auth_scheme,
+            "payment_receipt_present": True if receipt else False
         }
 
         report_resp = {}
@@ -1748,6 +1758,191 @@ class LnChurchClient(Payment402Client):
             scenario_id=scenario_id,
             executor_mode=executor_mode,
             delegate_source=delegate_source,
+            canonical_hash_expected=expected_hash,
+            canonical_hash_observed=observed_hash,
+            canonical_hash_matched=(expected_hash == observed_hash),
+            report_status_code=status_code,
+            report_accepted=accepted,
+            payment_performed=payment_performed,
+            cached_token_used=cached_token_used,
+            receipt_id=receipt.receipt_id if receipt else None,
+            raw_report_response=report_resp
+        )
+
+    # ------------------------------------------
+    # 🧪 MPP Charge Sandbox Harness Integration (新規追加)
+    # ------------------------------------------
+    def run_mpp_charge_sandbox_harness(self) -> "InteropRunResult":
+        """
+        MPP Charge Path を使用して Sandbox Harness を End-to-End で実行し、
+        プロトコル互換性を確認して Interop Report まで自動で閉じる。
+        """
+        import json
+        import hashlib
+        import re
+        from .models import InteropRunResult
+
+        basic_path = "/api/agent/sandbox/mpp/charge/basic"
+        report_path = "/api/agent/sandbox/interop/report"
+
+        # 1. Execute MPP Flow (402 -> Pay -> 200)
+        exec_result = self.execute_detailed("GET", basic_path)
+        resp = exec_result.response
+
+        # 2. Extract Metadata
+        meta = resp.get("meta", {})
+        run_id = meta.get("run_id", "")
+        scenario_id = meta.get("scenario_id", "")
+        expected_hash = meta.get("canonical_hash_expected", "")
+        interop_token = meta.get("interop_token", "")
+
+        # 3. Calculate Observed Hash
+        deterministic_payload = {
+            "message": resp.get("message"),
+            "scenario": resp.get("scenario"),
+            "contract": resp.get("contract"),
+            "verifiable": resp.get("verifiable")
+        }
+        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+
+        # 4. Prepare Report (MPP 拡張フィールドを追加)
+        receipt = exec_result.settlement_receipt
+        payment_performed = receipt.payment_performed if receipt else True
+        cached_token_used = receipt.cached_token_used if receipt else False
+        executor_mode = "ln-church-agent-native" 
+
+        # ハードコード("Payment")を廃止し、実際に決済に使用されたスキームを動的取得
+        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "Payment")
+
+        report_payload = {
+            "run_id": run_id,
+            "scenario_id": scenario_id,
+            "canonical_hash_expected": expected_hash,
+            "canonical_hash_observed": observed_hash,
+            "executor_mode": executor_mode,
+            "delegate_source": "native",
+            "cached_token_used": cached_token_used,
+            "payment_performed": payment_performed,
+            "fee_sats": receipt.fee_sats if receipt else 0,
+            "sdk_version": SDK_VERSION,
+            "interop_token": interop_token,
+            "comparison_class": "production_like",
+            "test_mode": "normal",
+            "rail": "MPP",
+            "payment_intent": "charge",
+            "authorization_scheme": auth_scheme, # 動的変数に変更
+            "payment_receipt_present": True if receipt else False
+        }
+
+        # 5. POST Interop Report
+        report_resp = {}
+        status_code = 500
+        accepted = False
+        try:
+            report_exec = self.execute_detailed("POST", report_path, payload=report_payload)
+            report_resp = report_exec.response
+            status_code = 200
+            accepted = report_resp.get("status") == "success"
+        except Exception as e:
+            m = re.search(r"API Error (\d+):", str(e))
+            if m: status_code = int(m.group(1))
+            report_resp = {"error": str(e)}
+
+        # 6. Return Structured Result
+        return InteropRunResult(
+            ok=accepted and (expected_hash == observed_hash),
+            target_url=exec_result.final_url,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source="native",
+            canonical_hash_expected=expected_hash,
+            canonical_hash_observed=observed_hash,
+            canonical_hash_matched=(expected_hash == observed_hash),
+            report_status_code=status_code,
+            report_accepted=accepted,
+            payment_performed=payment_performed,
+            cached_token_used=cached_token_used,
+            receipt_id=receipt.receipt_id if receipt else None,
+            raw_report_response=report_resp
+        )
+
+    async def run_mpp_charge_sandbox_harness_async(self) -> "InteropRunResult":
+        """非同期版の MPP Charge Sandbox Harness 実行ヘルパー"""
+        import json
+        import hashlib
+        import re
+        from .models import InteropRunResult
+
+        basic_path = "/api/agent/sandbox/mpp/charge/basic"
+        report_path = "/api/agent/sandbox/interop/report"
+
+        exec_result = await self.execute_detailed_async("GET", basic_path)
+        resp = exec_result.response
+
+        meta = resp.get("meta", {})
+        run_id = meta.get("run_id", "")
+        scenario_id = meta.get("scenario_id", "")
+        expected_hash = meta.get("canonical_hash_expected", "")
+        interop_token = meta.get("interop_token", "")
+
+        deterministic_payload = {
+            "message": resp.get("message"),
+            "scenario": resp.get("scenario"),
+            "contract": resp.get("contract"),
+            "verifiable": resp.get("verifiable")
+        }
+        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+
+        receipt = exec_result.settlement_receipt
+        payment_performed = receipt.payment_performed if receipt else True
+        cached_token_used = receipt.cached_token_used if receipt else False
+        executor_mode = "ln-church-agent-native"
+
+        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "Payment")
+
+        report_payload = {
+            "run_id": run_id,
+            "scenario_id": scenario_id,
+            "canonical_hash_expected": expected_hash,
+            "canonical_hash_observed": observed_hash,
+            "executor_mode": executor_mode,
+            "delegate_source": "native",
+            "cached_token_used": cached_token_used,
+            "payment_performed": payment_performed,
+            "fee_sats": receipt.fee_sats if receipt else 0,
+            "sdk_version": SDK_VERSION,
+            "interop_token": interop_token,
+            "comparison_class": "production_like",
+            "test_mode": "normal",
+            "rail": "MPP",
+            "payment_intent": "charge",
+            "authorization_scheme": auth_scheme, # 動的変数に変更
+            "payment_receipt_present": True if receipt else False
+        }
+
+        report_resp = {}
+        status_code = 500
+        accepted = False
+        try:
+            report_exec = await self.execute_detailed_async("POST", report_path, payload=report_payload)
+            report_resp = report_exec.response
+            status_code = 200
+            accepted = report_resp.get("status") == "success"
+        except Exception as e:
+            m = re.search(r"API Error (\d+):", str(e))
+            if m: status_code = int(m.group(1))
+            report_resp = {"error": str(e)}
+
+        return InteropRunResult(
+            ok=accepted and (expected_hash == observed_hash),
+            target_url=exec_result.final_url,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source="native",
             canonical_hash_expected=expected_hash,
             canonical_hash_observed=observed_hash,
             canonical_hash_matched=(expected_hash == observed_hash),

@@ -2,7 +2,7 @@ import base58
 import time
 from typing import Optional, Dict, Any
 
-# 🚨 内部モジュールとモデルのインポート
+# 内部モジュールとモデルのインポート
 from .protocols import SolanaSigner
 from ..models import ParsedChallenge
 

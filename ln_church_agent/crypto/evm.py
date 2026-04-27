@@ -4,7 +4,7 @@ import requests
 from typing import Optional, Dict, Any
 from eth_account import Account
 
-# 🚨 モデルとプロトコルのインポート
+# モデルとプロトコルのインポート
 from .protocols import EVMSigner
 from ..models import ParsedChallenge
 
@@ -90,7 +90,7 @@ class LocalKeyAdapter(EVMSigner):
         signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
         signed_tx = self.account.sign_message(signable_msg)
 
-        # 🚨 修正: signature全体から安全にパディング済みの r, s, v を抽出する
+        # signature全体から安全にパディング済みの r, s, v を抽出する
         sig_hex = signed_tx.signature.hex()
         safe_r = "0x" + sig_hex[0:64]
         safe_s = "0x" + sig_hex[64:128]
@@ -222,12 +222,12 @@ class LocalKeyAdapter(EVMSigner):
         signable_msg = encode_typed_data(domain_data=domain, message_types=types, message_data=message)
         signed_tx = self.account.sign_message(signable_msg)
 
-        # 🚨 修正: 65-byte以上のhex文字列をそのまま取得 (v,r,sが結合された状態)
+        # 65-byte以上のhex文字列をそのまま取得 (v,r,sが結合された状態)
         signature_hex = signed_tx.signature.hex()
         if not signature_hex.startswith("0x"):
             signature_hex = "0x" + signature_hex
 
-        # 🚨 v2仕様の x402ExactEvmPayload 構造に完全に一致させる
+        # v2仕様の x402ExactEvmPayload 構造に完全に一致させる
         return {
             "signature": signature_hex,
             "authorization": {
