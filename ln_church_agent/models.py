@@ -145,11 +145,11 @@ class PaymentPolicy:
     """
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
     """
-    # 💡 修正: "Payment" を許可リストに追加
     allowed_schemes: List[str] = field(default_factory=lambda: [
         "L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP", "Payment", "exact"
     ])
     allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
+    allowed_networks: Optional[List[str]] = None  # v1.7.0: ネットワーク識別子による制御を追加
     max_spend_per_tx_usd: float = 5.0
     max_spend_per_session_usd: float = 10.0
     allowed_hosts: Optional[List[str]] = None

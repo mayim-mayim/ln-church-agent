@@ -80,16 +80,46 @@ print(f"MPP Hash Matched: {mpp_result.canonical_hash_matched}")
 
 The SDK supports multiple settlement rails through a unified interface.
 
-**Canonical Paid Paths (Global Standards):**
-* **`x402` (V2 Fully Supported & Agentic.Market Ready)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads. The SDK natively parses x402 V2 Base64URL JSON headers, autonomously selecting the correct network parameters from the server's `accepts` array. It strictly constructs the official V2 settlement envelope, including transparent echo-back of protocol `extensions` to guarantee seamless integration with discovery indexers like Coinbase Bazaar (Agentic.Market).
-* **`L402` / `MPP`**: Standard Lightning Network settlement (SATS) supporting Macaroon and BOLT11 invoice parsing.
+**Standard x402 v2 (Global Standards):**
+* **EVM exact (`x402`)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads.
+* **SVM exact (Solana)**: Official x402 v2 SVM exact payments via CAIP-2 `solana:<genesisHash>` networks. This SDK features a built-in transaction builder for standard x402 SVM exact compatible payloads.
+* **L402 / MPP**: Standard Lightning Network settlement (SATS) supporting Macaroon and BOLT11 invoice parsing.
 
 **Compatibility & Sandbox Paths (LN Church Extensions):**
+* **`lnc-solana-transfer`**: Legacy compatibility path for direct SPL Token (USDC) transfers via Solana RPC.
 * **`lnc-evm-relay`**: Optimized gasless relayer orchestration.
-* **`lnc-solana-transfer`**: Native SPL Token (USDC) transfers via Solana RPC.
+* **`grant` / `faucet`**: Cold-start overrides and sponsored access.
 * *Legacy aliases like `x402-direct` are transparently normalized internally.*
 
 ---
+
+## 🚀 Initializing with Dual-Stack Keys (EVM & SVM)
+
+For agents operating across both Ethereum and Solana ecosystems, the SDK strictly isolates key handling to prevent parsing collisions. 
+
+```python
+from ln_church_agent import Payment402Client, PaymentPolicy
+import os
+
+client = Payment402Client(
+    private_key=os.getenv("EVM_PRIVATE_KEY"),        # For standard x402 EVM
+    svm_private_key=os.getenv("SVM_PRIVATE_KEY"),    # For standard x402 SVM Exact
+    svm_rpc_url=os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
+    policy=PaymentPolicy(...)
+)
+```
+
+> **⚠️ SVM Exact Architecture & Constraints:**
+> * `svm_private_key` must be a standard 64-byte Base58 encoded Solana key.
+> * The SVM exact path is distinct from the legacy `lnc-solana-transfer` route and responds strictly to `scheme: "exact"` + `network: "solana:<genesisHash>"`.
+> * **Wire-Level Precision:** The transaction builder preserves and uses the raw `PaymentRequirements.asset` (SPL Token Mint Address) and raw `amount` (minimal units) for wire-level transaction construction. Human-readable normalization is only used internally for policy and budget evaluation.
+> * **ATA Constraint:** The Destination Associated Token Account (ATA) must already exist. The current SDK transaction builder does not inject ATA creation instructions.
+> * **Supported Mints:** The internal builder currently targets strictly known USDC mints. Unknown mints will be rejected due to unknown decimals.
+> * **Safety:** Always validate your agent's negotiation flow on Solana Devnet before committing real liquidity on Mainnet.
+> * **Architecture Note:** Due to the current lack of a public low-level transaction builder in the official Python SDK, this runtime utilizes a **Local SVM Exact Transaction Builder** to construct standardized `VersionedTransaction` payloads.
+> * **Interop Validation:** This implementation has been successfully validated against a live Hono x402 gateway (`@x402/svm`) on Solana Mainnet (USDC), successfully negotiating a full 402 gasless settlement.
+---
+
 
 ## 🎟️ Two LN Church Onboarding Paths (Cold-Start Overrides)
 

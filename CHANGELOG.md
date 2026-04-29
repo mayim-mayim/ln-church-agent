@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.7.0] - 2026-04-29 (Official x402 v2 SVM Exact Path)
+* **Added**: Native buyer-side runtime support for official x402 v2 SVM exact payments (`scheme: "exact"`, `network: "solana:<genesisHash>"`).
+* **Added**: Native SVM Exact Transaction Builder to construct x402 v2 compatible VersionedTransaction payloads natively.
+* **Added**: Optional `[svm]` and `[all]` extra dependency flags for `solana` and `solders` libraries.
+* **Added**: `allowed_networks` constraint to `PaymentPolicy` for strict CAIP-2 gating.
+* **Changed**: Legacy `lnc-solana-transfer` remains safely isolated as an LN Church compatibility path.
+* **Details**: [v1.7.0 Release Notes](docs/release_notes/v1.7.0.md)
+
 ## [1.6.5] - 2026-04-29 (Challenge Parser Boundary Refactor)
 * **Changed (Internal)**: Extracted HTTP 402 challenge parsing and Payment/MPP challenge shape classification into a dedicated internal module (`ln_church_agent/challenges.py`).
 * **Compatibility**: Preserved `Payment402Client` compatibility wrappers. No public API changes were introduced, and all payment execution, settlement logic, and v1.6.4 telemetry behaviors remain strictly unchanged.

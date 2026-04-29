@@ -43,7 +43,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.6.5" 
+        return "1.7.0" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -72,6 +72,8 @@ class Payment402Client:
     def __init__(
         self, 
         private_key: Optional[str] = None, 
+        svm_private_key: Optional[str] = None,  # v1.7.0: SVM専用キーの明示的追加 
+        svm_rpc_url: Optional[str] = None,
         ln_api_url: Optional[str] = None,
         ln_api_key: Optional[str] = None,
         ln_provider: str = "lnbits",
@@ -113,13 +115,23 @@ class Payment402Client:
             from .crypto.evm import LocalKeyAdapter
             self.evm_signer = LocalKeyAdapter(private_key)
 
-        self.solana_signer = solana_signer
-        if not self.solana_signer and private_key:
+        self.solana_signer = None
+        self.svm_signer = None 
+        self.svm_rpc_url = svm_rpc_url
+
+        if svm_private_key:
+            try:
+                from .crypto.solana_svm import LocalSvmAdapter
+                self.svm_signer = LocalSvmAdapter(svm_private_key, rpc_url=self.svm_rpc_url)
+            except ImportError:
+                pass
+                
+        if private_key:
             try:
                 from .crypto.solana import LocalSolanaAdapter
                 self.solana_signer = LocalSolanaAdapter(private_key)
-            except ImportError:
-                pass
+            except Exception:
+                pass    
 
         self.ln_adapter = ln_adapter
         if not self.ln_adapter:
@@ -139,7 +151,17 @@ class Payment402Client:
         self.allow_legacy_payment_auth_fallback = allow_legacy_payment_auth_fallback
 
     def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None) -> ParsedChallenge:
-        return parse_challenge_from_response(response, expected_asset, expected_chain_id)
+        # PolicyとSignerの情報を渡して、acceptsの選択精度を向上させる
+        allowed = getattr(self.policy, "allowed_networks", None) if self.policy else None
+        prefer_svm = self.svm_signer is not None
+        
+        return parse_challenge_from_response(
+            response, 
+            expected_asset=expected_asset, 
+            expected_chain_id=expected_chain_id,
+            allowed_networks=allowed,
+            prefer_svm=prefer_svm
+        )
 
     def _parse_www_authenticate(self, auth_header: str, source: ChallengeSource) -> ParsedChallenge:
         return parse_www_authenticate(auth_header, source)
@@ -217,6 +239,10 @@ class Payment402Client:
         if self.policy._session_spent_usd + usd_value > self.policy.max_spend_per_session_usd:
             raise PaymentExecutionError(f"Policy Violation: Total session spend ({self.policy._session_spent_usd + usd_value:.4f} USD) would exceed limit.")
 
+        if getattr(self.policy, "allowed_networks", None) is not None:
+            if parsed.network not in self.policy.allowed_networks:
+                raise PaymentExecutionError(f"Policy Violation: Network '{parsed.network}' is not in allowed_networks.")
+
     def _record_session_spend(self, parsed: ParsedChallenge, l402_report: Optional[Any] = None):
         if not self.policy:
             return
@@ -247,53 +273,39 @@ class Payment402Client:
         l402_report = None
 
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value, "exact"]:
-            if not self.evm_signer:
-                raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
             
-            dest = parsed.parameters.get("destination") or parsed.parameters.get("payTo")
-            if not dest:
-                raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
-
-            chain_id_to_use = 137
-            if parsed.parameters.get("chain_id"):
-                chain_id_to_use = int(parsed.parameters.get("chain_id"))
-            elif parsed.network.startswith("eip155:"):
-                chain_id_to_use = int(parsed.network.split(":")[1])
-
-            if parsed.scheme == "exact":
-                eip3009_payload = self.evm_signer.generate_eip3009_payload(
-                    parsed.asset, parsed.amount, dest, chain_id_to_use, 
-                    parsed.parameters.get("token_address")
-                )
-                proof_ref = "eip3009_signature_payload"
+            # ✅ ここで判定します
+            is_svm_exact = parsed.scheme == "exact" and parsed.network.startswith("solana:")
+            
+            if is_svm_exact:
+                if not getattr(self, "svm_signer", None):
+                    raise PaymentExecutionError("SVM exact決済には svm_signer が必要です。 'pip install ln-church-agent[svm]' を実行してください。")
                 
-            elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
-                proof_ref = self.evm_signer.execute_lnc_evm_transfer_settlement(
-                    parsed.asset, parsed.amount, dest, chain_id_to_use, 
-                    parsed.parameters.get("token_address"), self.evm_rpc_url
-                )
+                dest = parsed.parameters.get("destination") or parsed.parameters.get("payTo")
+                if not dest:
+                    raise PaymentExecutionError("HATEOAS Error: Treasury address (payTo) is missing.")
                 
-            elif parsed.scheme == SchemeType.lnc_evm_relay.value:
-                proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
-                    parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
-                    dest, chain_id_to_use, parsed.parameters.get("token_address")
-                )
+                raw_accepted = parsed.parameters.get("_raw_accepted") or {}
+                extra = raw_accepted.get("extra") or {}
+                fee_payer = extra.get("feePayer")
                 
-            elif parsed.scheme == SchemeType.x402.value:
-                from .crypto.evm import sign_standard_x402_evm
-                proof_ref = sign_standard_x402_evm(self.private_key, parsed)
+                if not fee_payer:
+                    raise PaymentExecutionError("SVM exact challenge requires extra.feePayer.")
+                
+                # Payload生成には正規化前の Raw Asset と Raw Amount を渡す
+                raw_asset = raw_accepted.get("asset") or parsed.parameters.get("token_address") or parsed.asset
+                raw_amount = raw_accepted.get("amount") or parsed.amount
 
-            if parsed.scheme == "exact":
-                raw_accepted = parsed.parameters.get("_raw_accepted")
-                if not raw_accepted:
-                    decimals = 6 if parsed.asset == "USDC" else 18
-                    raw_amount_str = str(int(parsed.amount * (10 ** decimals)))
-                    raw_asset_for_payload = parsed.parameters.get("token_address") if parsed.parameters.get("token_address") else parsed.asset
-                    raw_accepted = {
-                        "scheme": "exact", "network": parsed.network, "asset": raw_asset_for_payload,
-                        "amount": raw_amount_str, "payTo": dest, "maxTimeoutSeconds": 3600,
-                        "extra": {"name": "USD Coin", "version": "2"}
-                    }
+                svm_payload = self.svm_signer.generate_svm_exact_payload(
+                    network=parsed.network,
+                    asset=raw_asset,    
+                    amount=raw_amount,  
+                    pay_to=dest,
+                    fee_payer=fee_payer,
+                    memo=extra.get("memo")
+                )
+                proof_ref = "svm_exact_signature_payload"
+                network_name = parsed.network
                 
                 raw_resource = parsed.parameters.get("_raw_resource")
                 if not raw_resource:
@@ -302,7 +314,7 @@ class Payment402Client:
                 cdp_v2_payload = {
                     "x402Version": 2,
                     "accepted": raw_accepted,
-                    "payload": eip3009_payload,
+                    "payload": svm_payload,
                     "resource": raw_resource
                 }
                 
@@ -314,19 +326,92 @@ class Payment402Client:
                 headers["PAYMENT-SIGNATURE"] = encoded_payload
                 headers["Authorization"] = f"x402 {encoded_payload}"
                 headers["X-PAYMENT"] = encoded_payload
-                
-            elif parsed.scheme == SchemeType.x402.value:
-                payment_payload = {"proof": proof_ref, "challenge": parsed.parameters.get("challenge", "")}
-                headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
-                headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
-                
+
             else:
-                payload["paymentAuth"] = {
-                    "scheme": parsed.scheme, "proof": proof_ref, 
-                    "chainId": str(chain_id_to_use), "standard_x402": False
-                }
-                headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+                # --- [EVM exact / x402 Path] ---
+                if not self.evm_signer:
+                    raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
                 
+                dest = parsed.parameters.get("destination") or parsed.parameters.get("payTo")
+                if not dest:
+                    raise PaymentExecutionError("HATEOAS Error: Treasury address is missing.")
+
+                chain_id_to_use = 137
+                if parsed.parameters.get("chain_id"):
+                    chain_id_to_use = int(parsed.parameters.get("chain_id"))
+                elif parsed.network.startswith("eip155:"):
+                    chain_id_to_use = int(parsed.network.split(":")[1])
+
+                if parsed.scheme == "exact":
+                    eip3009_payload = self.evm_signer.generate_eip3009_payload(
+                        parsed.asset, parsed.amount, dest, chain_id_to_use, 
+                        parsed.parameters.get("token_address")
+                    )
+                    proof_ref = "eip3009_signature_payload"
+                    
+                elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
+                    proof_ref = self.evm_signer.execute_lnc_evm_transfer_settlement(
+                        parsed.asset, parsed.amount, dest, chain_id_to_use, 
+                        parsed.parameters.get("token_address"), self.evm_rpc_url
+                    )
+                    
+                elif parsed.scheme == SchemeType.lnc_evm_relay.value:
+                    proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
+                        parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
+                        dest, chain_id_to_use, parsed.parameters.get("token_address")
+                    )
+                    
+                elif parsed.scheme == SchemeType.x402.value:
+                    from .crypto.evm import sign_standard_x402_evm
+                    proof_ref = sign_standard_x402_evm(self.private_key, parsed)
+
+                if parsed.scheme == "exact":
+                    raw_accepted = parsed.parameters.get("_raw_accepted")
+                    if not raw_accepted:
+                        decimals = 6 if parsed.asset == "USDC" else 18
+                        raw_amount_str = str(int(parsed.amount * (10 ** decimals)))
+                        raw_asset_for_payload = parsed.parameters.get("token_address") if parsed.parameters.get("token_address") else parsed.asset
+                        raw_accepted = {
+                            "scheme": "exact", "network": parsed.network, "asset": raw_asset_for_payload,
+                            "amount": raw_amount_str, "payTo": dest, "maxTimeoutSeconds": 3600,
+                            "extra": {"name": "USD Coin", "version": "2"}
+                        }
+                    
+                    raw_resource = parsed.parameters.get("_raw_resource")
+                    if not raw_resource:
+                        raw_resource = {"url": url, "description": "Agent Payment", "mimeType": "application/json"}
+                    
+                    cdp_v2_payload = {
+                        "x402Version": 2,
+                        "accepted": raw_accepted,
+                        "payload": eip3009_payload,
+                        "resource": raw_resource
+                    }
+                    
+                    raw_extensions = parsed.parameters.get("_raw_extensions")
+                    if raw_extensions:
+                        cdp_v2_payload["extensions"] = raw_extensions
+                    
+                    encoded_payload = _b64url_encode(cdp_v2_payload)
+                    headers["PAYMENT-SIGNATURE"] = encoded_payload
+                    headers["Authorization"] = f"x402 {encoded_payload}"
+                    headers["X-PAYMENT"] = encoded_payload
+                    
+                elif parsed.scheme == SchemeType.x402.value:
+                    payment_payload = {"proof": proof_ref, "challenge": parsed.parameters.get("challenge", "")}
+                    headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
+                    headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+                    
+                else:
+                    payload["paymentAuth"] = {
+                        "scheme": parsed.scheme, "proof": proof_ref, 
+                        "chainId": str(chain_id_to_use), "standard_x402": False
+                    }
+                    headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+
+        # ==========================================
+        # 2. レガシーな LN Church 独自 Solana ルート
+        # ==========================================
         elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
                 raise PaymentExecutionError("solana_signer が必要です。")
@@ -338,6 +423,9 @@ class Payment402Client:
             payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "agentId": agent_id}
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
+        # ==========================================
+        # 3. Lightning (L402 / MPP / Payment) ルート
+        # ==========================================
         elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
             if getattr(parsed, "payment_intent", None) == "session":
                 raise PaymentExecutionError("mpp_session_not_supported_yet")
@@ -909,8 +997,10 @@ class LnChurchClient(Payment402Client):
         self, 
         agent_id: Optional[str] = None, 
         private_key: Optional[str] = None, 
+        svm_private_key: Optional[str] = None,  # 追加: EVMとSolanaのキーを分離
+        svm_rpc_url: Optional[str] = None,
         ln_api_url: Optional[str] = None,
-        ln_api_key: Optional[str] = None,
+        ln_api_key: Optional[str] = None,   
         ln_provider: str = "lnbits",
         base_url: str = "https://kari.mayim-mayim.com",
         evm_rpc_url: Optional[str] = None,
@@ -944,6 +1034,8 @@ class LnChurchClient(Payment402Client):
         try:
             super().__init__(
                 private_key=private_key, 
+                svm_private_key=svm_private_key,  
+                svm_rpc_url=svm_rpc_url,          
                 ln_api_url=ln_api_url, 
                 ln_api_key=ln_api_key, 
                 ln_provider=ln_provider, 

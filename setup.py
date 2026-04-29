@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.6.5",
+    version="1.7.0",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     install_requires=[
         "requests>=2.31.0",
@@ -23,6 +23,18 @@ setup(
         "solana": [
             "solana>=0.34.0",
             "solders>=0.21.0"
+        ],
+        "svm": [
+            "x402[svm]>=1.0.0",
+            "solana>=0.34.0",
+            "solders>=0.21.0"
+        ],
+        "all": [
+            "langchain-core>=0.1.0", 
+            "mcp>=1.0.0", 
+            "solana>=0.34.0", 
+            "solders>=0.21.0",
+            "x402[svm]>=1.0.0"
         ]
     },
     author="LN Church",

@@ -120,7 +120,15 @@ def parse_www_authenticate(auth_header: str, source: ChallengeSource = Challenge
         decoded_request_valid=decoded_request_valid
     )
 
-def parse_challenge_from_response(response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None) -> ParsedChallenge:
+SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+def parse_challenge_from_response(
+    response: httpx.Response, 
+    expected_asset: str = "USDC", 
+    expected_chain_id: Optional[str] = None,
+    allowed_networks: Optional[list] = None,  # 追加: Policy由来の許可ネットワーク
+    prefer_svm: bool = False                  # 追加: signer有無による優先フラグ
+) -> ParsedChallenge:
     h = response.headers
     auth_h = h.get("WWW-Authenticate", "")
     if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
@@ -132,15 +140,27 @@ def parse_challenge_from_response(response: httpx.Response, expected_asset: str 
         if payload:
             accepted_params = {}
             if "accepts" in payload and isinstance(payload["accepts"], list):
+                
+                # 1. 許可されたネットワークのみに絞り込む
+                valid_accepts = payload["accepts"]
+                if allowed_networks:
+                    valid_accepts = [opt for opt in valid_accepts if opt.get("network") in allowed_networks]
+
                 selected_accept = None
+                
+                # 2. 明示的な expected_chain_id があれば EVM 優先
                 if expected_chain_id:
                     target_network = f"eip155:{expected_chain_id}"
-                    for opt in payload["accepts"]:
-                        if opt.get("network") == target_network:
-                            selected_accept = opt
-                            break
+                    selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
 
-                if not selected_accept and len(payload["accepts"]) > 0:
+                # 3. SVM (Solana) サインが利用可能なら優先して探す
+                if not selected_accept and prefer_svm:
+                    selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
+
+                # 4. 該当がない場合は安全な候補の先頭、あるいは元の配列の先頭にフォールバック
+                if not selected_accept and len(valid_accepts) > 0:
+                    selected_accept = valid_accepts[0]
+                elif not selected_accept and len(payload["accepts"]) > 0:
                     selected_accept = payload["accepts"][0]
 
                 if selected_accept:
@@ -152,6 +172,10 @@ def parse_challenge_from_response(response: httpx.Response, expected_asset: str 
                     if isinstance(raw_asset, str) and raw_asset.startswith("0x"):
                         extracted_token = raw_asset
                         logical_asset = expected_asset
+                    # 要件6: Solana USDC mint address を論理asset `USDC` に正規化
+                    elif raw_asset == SOLANA_USDC_MINT:
+                        extracted_token = raw_asset
+                        logical_asset = "USDC"
 
                     human_amount = float(raw_amount)
                     if logical_asset == "USDC":

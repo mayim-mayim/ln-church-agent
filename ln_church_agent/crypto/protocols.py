@@ -1,5 +1,5 @@
 # protocols.py
-from typing import Protocol, Optional, Dict, Any
+from typing import Protocol, Optional, Dict, Any, Union
 from ..models import ParsedChallenge, L402ExecutionReport
 
 class EVMSigner(Protocol):
@@ -36,3 +36,13 @@ class L402Executor(Protocol):
     def execute_l402(
         self, url: str, method: str, parsed: ParsedChallenge, headers: Dict[str, str], payload: Dict[str, Any]
     ) -> L402ExecutionReport: ...
+
+class X402SvmSigner(Protocol):
+    """Solana SVM における x402 exact 決済を抽象化するインターフェース"""
+    @property
+    def address(self) -> str: ...
+
+    def generate_svm_exact_payload(
+        self, network: str, asset: str, amount: Union[str, int, float], pay_to: str, 
+        fee_payer: str, memo: Optional[str] = None
+    ) -> Dict[str, Any]: ...
