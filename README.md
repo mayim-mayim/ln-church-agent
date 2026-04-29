@@ -143,7 +143,6 @@ When upstream standards evolve, this SDK aims to absorb those changes behind a s
 **Note on Evolving MPP Standards:**
 `ln-church-agent` does not attempt to replace official MPP SDKs. Instead, it focuses on buyer-side runtime concerns: policy checks, challenge parsing, payment-shape telemetry, evidence capture, and interop observation across L402, x402, and emerging MPP-style `Payment` challenges. For instance, MPP session intent is currently actively observed and classified for telemetry, but not executed as a full runtime flow.
 
-
 ---
 
 ## ⚖️ Advisor & Final Judge Architecture

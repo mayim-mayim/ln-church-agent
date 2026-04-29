@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.5] - 2026-04-29 (Challenge Parser Boundary Refactor)
+* **Changed (Internal)**: Extracted HTTP 402 challenge parsing and Payment/MPP challenge shape classification into a dedicated internal module (`ln_church_agent/challenges.py`).
+* **Compatibility**: Preserved `Payment402Client` compatibility wrappers. No public API changes were introduced, and all payment execution, settlement logic, and v1.6.4 telemetry behaviors remain strictly unchanged.
+* **Details**: [v1.6.5 Release Notes](docs/release_notes/v1.6.5.md)
+
 ## [1.6.4] - 2026-04-29 (Payment Draft Telemetry & Interop Observation)
 * **Added**: Payment HTTP Authentication draft-aware parsing. The SDK safely parses `Payment` scheme challenges and decodes Base64URL JSON requests to extract underlying invoices.
 * **Added**: Advanced Interop Matrix telemetry for MPP. Challenges are now classified by `draft_shape` (e.g., `payment-auth-draft`, `legacy-mpp-flat`), `payment_method`, and `payment_intent`.
