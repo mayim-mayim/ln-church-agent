@@ -140,6 +140,10 @@ This SDK is designed to follow the evolving open standards around HTTP 402 agent
 
 When upstream standards evolve, this SDK aims to absorb those changes behind a stable developer-facing interface. **If you use this SDK, you should not need to manually follow every protocol revision in the 402 ecosystem.**
 
+**Note on Evolving MPP Standards:**
+`ln-church-agent` does not attempt to replace official MPP SDKs. Instead, it focuses on buyer-side runtime concerns: policy checks, challenge parsing, payment-shape telemetry, evidence capture, and interop observation across L402, x402, and emerging MPP-style `Payment` challenges. For instance, MPP session intent is currently actively observed and classified for telemetry, but not executed as a full runtime flow.
+
+
 ---
 
 ## ⚖️ Advisor & Final Judge Architecture

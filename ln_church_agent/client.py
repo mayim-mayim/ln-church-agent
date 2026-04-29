@@ -38,58 +38,44 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.6.3" 
+        return "1.6.4" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
 
 def _decode_jwt_payload(token: str) -> dict:
-    """Lightweight base64 decoder to extract JWT/JWS claims without cryptographic verification."""
     try:
         parts = token.split('.')
         if len(parts) != 3: 
             return {}
         payload_b64 = parts[1]
         padded = payload_b64 + '=' * (-len(payload_b64) % 4)
-        import base64, json
         return json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
     except Exception:
         return {}
 
-# base64対応
 def _b64url_decode(b64_str: str) -> dict:
-    """Base64URL文字列をデコードしてJSON辞書として返す安全なヘルパー"""
     try:
-        # 足りないパディング(=)を自動補完
         padded = b64_str + '=' * (-len(b64_str) % 4)
         decoded_bytes = base64.urlsafe_b64decode(padded)
-        return json.loads(decoded_bytes.decode('utf-8'))
+        decoded = json.loads(decoded_bytes.decode('utf-8'))
+        return decoded if isinstance(decoded, dict) else {}
     except Exception:
         return {}
 
 def _b64url_encode(data_dict: dict) -> str:
-    """JSON辞書をBase64URL文字列（パディングなし）にエンコードするヘルパー"""
     json_str = json.dumps(data_dict)
     b64_bytes = base64.urlsafe_b64encode(json_str.encode('utf-8'))
     return b64_bytes.decode('utf-8').rstrip('=')
 
-# 内部用のレガシーSchemeマッピングヘルパー
-# ⛩️ 本殿の新しい命名規則（語彙体系）へ追随
 def _normalize_scheme(raw_scheme: str) -> str:
     s = raw_scheme.lower()
-    # 独自仕様のレガシーエイリアスを正規化
     if s == "x402-direct": return SchemeType.lnc_evm_transfer.value
     if s == "x402-solana": return SchemeType.lnc_solana_transfer.value
     if s == "x402-relay":  return SchemeType.lnc_evm_relay.value
-    
-    # 'x402' は標準仕様 (Foundation準拠) としてそのまま通す
     if s == "x402": return SchemeType.x402.value
-    
     return raw_scheme
 
-# ==========================================
-# 🌟 CORE: 汎用的な402決済 & HATEOASクライアント
-# ==========================================
 class Payment402Client:
     def __init__(
         self, 
@@ -111,9 +97,10 @@ class Payment402Client:
         solana_signer: Optional[SolanaSigner] = None,
         trust_evaluators: Optional[List[Callable]] = None,
         evidence_repo: Optional[EvidenceRepository] = None,
-        l402_executor: Optional[Any] = None, # 循環参照回避のためAny許容、内部で型判定
+        l402_executor: Optional[Any] = None,
         prefer_lightninglabs_l402: bool = False,
         l402_delegate_allowed_hosts: Optional[List[str]] = None,
+        allow_legacy_payment_auth_fallback: bool = False,
     ):
         self.private_key = private_key
         self.ln_api_url = ln_api_url
@@ -157,32 +144,21 @@ class Payment402Client:
         self.l402_executor = l402_executor
         self.prefer_lightninglabs_l402 = prefer_lightninglabs_l402
         self.l402_delegate_allowed_hosts = l402_delegate_allowed_hosts or []
+        self.allow_legacy_payment_auth_fallback = allow_legacy_payment_auth_fallback
 
-    # ==========================================
-    # v1.3.0: 共通責務の分離 (Cold Spec & Policy Layer)
-    # ==========================================
     def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None) -> ParsedChallenge:
         h = response.headers
-
-        # ★ 1. Lightning系 (L402/MPP) を最優先で処理
         auth_h = h.get("WWW-Authenticate", "")
         if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
             return self._parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
 
-        # ★ 2. x402系 (PAYMENT-REQUIRED)
         if "PAYMENT-REQUIRED" in h:
             val = h["PAYMENT-REQUIRED"]
-            
-            # --- (A) V2 & Base64 JSON パース ---
             payload = _b64url_decode(val)
             if payload:
-                # ==========================================
-                # x402 V2 標準準拠: accepts 配列からの動的選択と正規化
-                # ==========================================
                 accepted_params = {}
                 if "accepts" in payload and isinstance(payload["accepts"], list):
                     selected_accept = None
-
                     if expected_chain_id:
                         target_network = f"eip155:{expected_chain_id}"
                         for opt in payload["accepts"]:
@@ -194,7 +170,6 @@ class Payment402Client:
                         selected_accept = payload["accepts"][0]
 
                     if selected_accept:
-                        # 1. アセット名とトークンアドレスの解決
                         raw_asset = selected_accept.get("asset", expected_asset)
                         raw_amount = selected_accept.get("amount", 0)
                         logical_asset = raw_asset
@@ -202,16 +177,13 @@ class Payment402Client:
 
                         if isinstance(raw_asset, str) and raw_asset.startswith("0x"):
                             extracted_token = raw_asset
-                            logical_asset = expected_asset # symbolにフォールバック
+                            logical_asset = expected_asset
 
-                        # 2. 金額の単位変換 (Raw unit -> Human unit)
                         human_amount = float(raw_amount)
                         if logical_asset == "USDC":
-                            if human_amount >= 100: # 100以上の場合はWei単位とみなす安全策
-                                human_amount /= 1_000_000
+                            if human_amount >= 100: human_amount /= 1_000_000
                         elif logical_asset == "JPYC":
-                            if human_amount >= 10000:
-                                human_amount /= 10**18
+                            if human_amount >= 10000: human_amount /= 10**18
 
                         accepted_params = {
                             "scheme": selected_accept.get("scheme", "exact"),
@@ -237,7 +209,6 @@ class Payment402Client:
                     "_raw_resource": accepted_params.get("_raw_resource"),
                     "_raw_extensions": accepted_params.get("_raw_extensions")
                 }
-                # 正規化後の値で最終パラメータを上書き
                 params["amount"] = accepted_params.get("amount", params["amount"])
 
                 return ParsedChallenge(
@@ -250,7 +221,6 @@ class Payment402Client:
                     raw_header=val
                 )
 
-            # レガシー String 形式のフォールバック ---
             params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
             if params:
                 return ParsedChallenge(
@@ -263,7 +233,6 @@ class Payment402Client:
                     raw_header=val
                 )
 
-        # 3. フォールバック: レスポンスボディ (LN教旧仕様)
         try:
             body = response.json()
             if "challenge" in body:
@@ -279,35 +248,94 @@ class Payment402Client:
         except Exception:
             pass
 
-        # 4. 最終手段: 旧カスタムヘッダー
         if "x-402-payment-required" in h:
             return self._parse_legacy_header(h["x-402-payment-required"])
 
         raise PaymentChallengeError("No valid 402 challenge found in headers or body.")
 
     def _parse_www_authenticate(self, auth_header: str, source: ChallengeSource) -> ParsedChallenge:
-        """WWW-Authenticate (L402 / MPP) ヘッダーのパース処理"""
+        """WWW-Authenticate (L402 / MPP / Payment) ヘッダーのパース処理"""
         parts = auth_header.split(" ", 1)
         scheme = parts[0]
         params = {}
         if len(parts) > 1:
             params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', parts[1])}
             
+        draft_shape = "unknown-payment-shape"
+        payment_method = "unknown"
+        payment_intent = "unknown"
+        request_b64_present = False
+        decoded_request_valid = False
+        parsed_amount = 0.0   
+        parsed_asset = "SATS" 
+
+        if scheme in ["Payment", "MPP"]:
+            if "invoice" in params and "request" not in params:
+                draft_shape = "legacy-mpp-flat"
+            
+            req_json = {}
+            if "request" in params:
+                request_b64_present = True
+                req_json = _b64url_decode(params["request"])
+                
+                # _b64url_decode は必ず dict を返すので空判定のみでOK
+                if req_json:
+                    decoded_request_valid = True
+                    params["request_json"] = req_json 
+                    
+                    has_required = all(k in params for k in ["id", "method", "intent", "request"])
+                    draft_shape = "payment-auth-draft" if has_required else "payment-auth-draft-partial"
+                    
+                    invoice = req_json.get("methodDetails", {}).get("invoice") or req_json.get("invoice")
+                    if invoice:
+                        params["invoice"] = invoice
+
+                    # 💡 追加: amount と currency を抽出して Policy に反映
+                    if "amount" in req_json:
+                        try:
+                            parsed_amount = float(req_json["amount"])
+                        except (ValueError, TypeError): 
+                            pass
+                    
+                    if "currency" in req_json:
+                        currency = str(req_json["currency"]).upper()
+                        if currency in ["SAT", "SATS"]:
+                            parsed_asset = "SATS"
+                        elif currency in ["USDC", "USD"]:
+                            parsed_asset = "USDC"
+                        else:
+                            parsed_asset = currency
+                else:
+                    draft_shape = "payment-auth-draft-invalid-request"
+            
+            method_val = params.get("method") or req_json.get("method")
+            if method_val:
+                payment_method = method_val
+            elif params.get("invoice", "").startswith(("lnbc", "lntb")):
+                payment_method = "lightning"
+                
+            intent_val = params.get("intent") or req_json.get("intent")
+            if intent_val:
+                payment_intent = intent_val
+            elif draft_shape == "legacy-mpp-flat":
+                payment_intent = "charge"
+
         return ParsedChallenge(
             scheme=scheme,
-            network="Lightning", # デフォルトネットワーク
-            amount=0.0,          # 通常L402はインボイス内に金額が含まれるため0とする
-            asset="SATS",
+            network="Lightning",
+            amount=parsed_amount, 
+            asset=parsed_asset,   
             parameters=params,
             source=source,
-            raw_header=auth_header
+            raw_header=auth_header,
+            draft_shape=draft_shape,
+            payment_method=payment_method,
+            payment_intent=payment_intent,
+            request_b64_present=request_b64_present,
+            decoded_request_valid=decoded_request_valid
         )
 
-    # ==========================================
-    # v1.5.9 Update: Session Budget Persistence Helpers
-    # ==========================================
     def _estimate_usd_value(self, parsed: ParsedChallenge) -> float:
-        """ParsedChallengeから決済のUSD換算見積額を算出するヘルパー"""
         usd_value = 0.0
         if parsed.asset == "USDC": usd_value = parsed.amount
         elif parsed.asset == "JPYC": usd_value = parsed.amount * 0.0067
@@ -315,12 +343,10 @@ class Payment402Client:
         return usd_value
 
     def _sum_budget_events(self, records: List[PaymentEvidenceRecord]) -> float:
-        """過去のEvidenceから重複を除外して消費USDの合計を算出する"""
         total_usd = 0.0
         seen_receipts = set()
         for record in records:
             if record.session_spend_delta_usd is not None:
-                # receipt_id が存在する場合は、二重計上を防ぐために重複チェック
                 receipt_id = None
                 if record.receipt_summary and isinstance(record.receipt_summary, dict):
                     receipt_id = record.receipt_summary.get("receipt_id")
@@ -334,26 +360,21 @@ class Payment402Client:
         return total_usd
 
     def _restore_session_spend_from_evidence(self, context: ExecutionContext) -> None:
-        """EvidenceRepositoryからセッション予算をワンショットで復元する"""
         if not self.policy or not self.evidence_repo or context.session_budget_restored:
             return
-        
         try:
             if hasattr(self.evidence_repo, "import_session_evidence"):
                 records = self.evidence_repo.import_session_evidence(context)
-                # 履歴が空でも0.0で上書きし、セッションを切り替えた際のリークを防ぐ
                 restored_usd = self._sum_budget_events(records) if records else 0.0
                 self.policy._session_spent_usd = restored_usd
         except Exception:
-            pass # 復元エラーで推論全体を止めないようサイレントフォールバック
+            pass 
         finally:
             context.session_budget_restored = True
 
     async def _restore_session_spend_from_evidence_async(self, context: ExecutionContext) -> None:
-        """EvidenceRepositoryからセッション予算をワンショットで復元する(非同期)"""
         if not self.policy or not self.evidence_repo or context.session_budget_restored:
             return
-        
         try:
             if hasattr(self.evidence_repo, "import_session_evidence_async"):
                 records = await self.evidence_repo.import_session_evidence_async(context)
@@ -361,7 +382,6 @@ class Payment402Client:
                 records = self.evidence_repo.import_session_evidence(context)
             else:
                 records = []
-            
             restored_usd = self._sum_budget_events(records) if records else 0.0
             self.policy._session_spent_usd = restored_usd
         except Exception:
@@ -369,52 +389,33 @@ class Payment402Client:
         finally:
             context.session_budget_restored = True
 
-    # ------------------------------------------
-    # Policy Enforcement (USD換算をヘルパーに集約)
-    # ------------------------------------------
     def _enforce_policy(self, parsed: ParsedChallenge, target_url: str):
-        """正規化されたChallengeに対してセキュリティポリシーを強制する"""
         if not self.policy:
             return
-
         domain = urlparse(target_url).netloc
-
         if self.policy.blocked_hosts and domain in self.policy.blocked_hosts:
             raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is explicitly blocked.")
         if self.policy.allowed_hosts is not None and domain not in self.policy.allowed_hosts:
             raise PaymentExecutionError(f"Policy Violation: Host '{domain}' is not in allowed_hosts.")
-
         if parsed.scheme not in self.policy.allowed_schemes:
             raise PaymentExecutionError(f"Policy Violation: Scheme '{parsed.scheme}' is restricted.")
-            
         if parsed.asset not in self.policy.allowed_assets:
             raise PaymentExecutionError(f"Policy Violation: Asset '{parsed.asset}' is restricted.")
 
-        # v1.5.9 Update: 換算ロジックの集約
         usd_value = self._estimate_usd_value(parsed)
-
         if usd_value > self.policy.max_spend_per_tx_usd:
-            raise PaymentExecutionError(
-                f"Policy Violation: Amount ({usd_value:.4f} USD) exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd})."
-            )
-
+            raise PaymentExecutionError(f"Policy Violation: Amount ({usd_value:.4f} USD) exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd}).")
         if self.policy._session_spent_usd + usd_value > self.policy.max_spend_per_session_usd:
-            raise PaymentExecutionError(
-                f"Policy Violation: Total session spend ({self.policy._session_spent_usd + usd_value:.4f} USD) "
-                f"would exceed limit ({self.policy.max_spend_per_session_usd} USD)."
-            )
+            raise PaymentExecutionError(f"Policy Violation: Total session spend ({self.policy._session_spent_usd + usd_value:.4f} USD) would exceed limit.")
 
     def _record_session_spend(self, parsed: ParsedChallenge, l402_report: Optional[Any] = None):
-        """決済成功後にのみセッション予算を消費する (キャッシュ利用時はスキップ)"""
         if not self.policy:
             return
         if l402_report and not l402_report.payment_performed:
-            return # L402sdk 等がキャッシュ済みトークンを使い、実決済を行わなかった場合は消費しない
-        
+            return 
         self.policy._session_spent_usd += self._estimate_usd_value(parsed)
 
     def _parse_legacy_header(self, header_val: str) -> ParsedChallenge:
-        """旧カスタムヘッダー (x-402-payment-required) のパース処理"""
         params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', header_val)}
         return ParsedChallenge(
             scheme=params.get("scheme", "unknown"),
@@ -427,38 +428,24 @@ class Payment402Client:
         )
 
     def execute_paid_action(self, *args, **kwargs) -> dict:
-        """
-        [Deprecated] 1.2.x互換シグネチャと1.3.x新シグネチャを両方サポートする互換ラッパー。
-        """
-        warnings.warn(
-            "execute_paid_action() is deprecated. Use execute_request() or execute_detailed() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        # 1.2.x 互換判定: execute_paid_action(endpoint_path, payload, headers=None)
-        # 第一引数がパス(str)かつ、第二引数がペイロード(dict)の場合は旧形式とみなす
+        warnings.warn("execute_paid_action() is deprecated. Use execute_request() or execute_detailed() instead.", DeprecationWarning, stacklevel=2)
         if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], dict):
             endpoint_path = args[0]
             payload = args[1]
             headers = args[2] if len(args) > 2 else kwargs.get("headers")
             return self.execute_request("POST", endpoint_path, payload, headers)
 
-        # 1.3.x 新形式: execute_paid_action(method, endpoint_path, payload=None, headers=None)
         method = args[0] if len(args) > 0 else kwargs.get("method", "POST")
         endpoint_path = args[1] if len(args) > 1 else kwargs.get("endpoint_path")
         payload = args[2] if len(args) > 2 else kwargs.get("payload")
         headers = args[3] if len(args) > 3 else kwargs.get("headers")
-        
         return self.execute_request(method, endpoint_path, payload, headers)
 
     def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict, method: str = "POST", url: str = "") -> tuple[str, str, Optional[Any]]:
-        """実際の決済実行をカプセル化 (同期・非同期共通で利用)"""
         proof_ref = ""
         network_name = parsed.network or "UNKNOWN"
         l402_report = None
 
-        # 1. EVM系 (x402, lnc-evm-*, exact) の処理
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value, "exact"]:
             if not self.evm_signer:
                 raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
@@ -473,11 +460,7 @@ class Payment402Client:
             elif parsed.network.startswith("eip155:"):
                 chain_id_to_use = int(parsed.network.split(":")[1])
 
-            # ==========================================
-            # 執行フェーズ
-            # ==========================================
             if parsed.scheme == "exact":
-                # x402 V2 公式仕様 (EIP-3009 オフチェーン署名: ガス代ゼロ、待機時間ゼロ)
                 eip3009_payload = self.evm_signer.generate_eip3009_payload(
                     parsed.asset, parsed.amount, dest, chain_id_to_use, 
                     parsed.parameters.get("token_address")
@@ -485,29 +468,22 @@ class Payment402Client:
                 proof_ref = "eip3009_signature_payload"
                 
             elif parsed.scheme == SchemeType.lnc_evm_transfer.value:
-                # LN教独自: オンチェーン直接送金 (Agent自身がガス代を払う)
                 proof_ref = self.evm_signer.execute_lnc_evm_transfer_settlement(
                     parsed.asset, parsed.amount, dest, chain_id_to_use, 
                     parsed.parameters.get("token_address"), self.evm_rpc_url
                 )
                 
             elif parsed.scheme == SchemeType.lnc_evm_relay.value:
-                # LN教独自: リレイヤー経由ガスレス送金
                 proof_ref = self.evm_signer.execute_lnc_evm_relay_settlement(
                     parsed.asset, parsed.amount, parsed.parameters.get("relayer_endpoint"), 
                     dest, chain_id_to_use, parsed.parameters.get("token_address")
                 )
                 
             elif parsed.scheme == SchemeType.x402.value:
-                # V1 標準仕様
                 from .crypto.evm import sign_standard_x402_evm
                 proof_ref = sign_standard_x402_evm(self.private_key, parsed)
 
-            # ==========================================
-            # エンベロープ構築フェーズ
-            # ==========================================
             if parsed.scheme == "exact":
-                # V2 公式エンベロープの構築
                 raw_accepted = parsed.parameters.get("_raw_accepted")
                 if not raw_accepted:
                     decimals = 6 if parsed.asset == "USDC" else 18
@@ -523,7 +499,6 @@ class Payment402Client:
                 if not raw_resource:
                     raw_resource = {"url": url, "description": "Agent Payment", "mimeType": "application/json"}
                 
-                # V2 エンベロープの構築
                 cdp_v2_payload = {
                     "x402Version": 2,
                     "accepted": raw_accepted,
@@ -531,34 +506,27 @@ class Payment402Client:
                     "resource": raw_resource
                 }
                 
-                # サーバーが提示した拡張機能(Bazaar等)があれば、そのままエコーバック(復唱)する
                 raw_extensions = parsed.parameters.get("_raw_extensions")
                 if raw_extensions:
                     cdp_v2_payload["extensions"] = raw_extensions
                 
-                # Base64URLでエンコード
                 encoded_payload = _b64url_encode(cdp_v2_payload)
-                
-                # x402 V2 仕様のヘッダー設定
                 headers["PAYMENT-SIGNATURE"] = encoded_payload
                 headers["Authorization"] = f"x402 {encoded_payload}"
                 headers["X-PAYMENT"] = encoded_payload
                 
             elif parsed.scheme == SchemeType.x402.value:
-                # V1 レガシーペイロード
                 payment_payload = {"proof": proof_ref, "challenge": parsed.parameters.get("challenge", "")}
                 headers["PAYMENT-SIGNATURE"] = _b64url_encode(payment_payload)
                 headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
                 
             else:
-                # LN教互換用ボディ (lnc-evm-transfer / relay 等)
                 payload["paymentAuth"] = {
                     "scheme": parsed.scheme, "proof": proof_ref, 
                     "chainId": str(chain_id_to_use), "standard_x402": False
                 }
                 headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
                 
-        # 2. Solana系の処理
         elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
                 raise PaymentExecutionError("solana_signer が必要です。")
@@ -570,16 +538,19 @@ class Payment402Client:
             payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "agentId": agent_id}
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        # 3. Lightning系 (L402, MPP) の処理
         elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
+            if getattr(parsed, "payment_intent", None) == "session":
+                raise PaymentExecutionError("mpp_session_not_supported_yet")
+
+            if parsed.scheme == "Payment" and getattr(parsed, "draft_shape", None) == "payment-auth-draft":
+                if not getattr(self, "allow_legacy_payment_auth_fallback", False):
+                    raise PaymentExecutionError("unsupported-payment-auth-json")
             
-            # --- [L402 Delegate Seam] ---
             if parsed.scheme == SchemeType.l402.value:
                 host = urlparse(url).netloc
                 is_get = method.upper() == "GET"
                 is_empty_payload = not bool(payload)
                 
-                # Mode Selection Policy
                 use_delegate = (
                     self.prefer_lightninglabs_l402 and 
                     host in self.l402_delegate_allowed_hosts and 
@@ -600,7 +571,6 @@ class Payment402Client:
                 proof_ref = l402_report.preimage or ""
                 network_name = "Lightning"
 
-            # --- [既存の MPP パス] ---
             else:
                 if not self.ln_adapter:
                     raise PaymentExecutionError(f"{parsed.scheme} 決済には ln_adapter が必要です。")
@@ -619,23 +589,16 @@ class Payment402Client:
         return proof_ref, network_name, l402_report
 
     def execute_request(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
-        """[後方互換性維持] 内部で execute_detailed を呼び出し、レスポンスの辞書のみを返却する。"""
         result = self.execute_detailed(method, endpoint_path, payload, headers)
         return result.response
 
-    # ==========================================
-    # v1.5.8: Navigation Hint Normalization
-    # ==========================================
     def _resolve_next_action(self, error_data: dict, headers: dict) -> tuple[Optional[NextAction], str]:
-        """Normalize various HATEOAS hints from JSON or Headers into a canonical NextAction model."""
-        # 1. Canonical Body (Highest Priority)
         if "next_action" in error_data and isinstance(error_data["next_action"], dict):
             try:
                 return NextAction(**error_data["next_action"]), "canonical_body"
             except Exception:
                 pass
 
-        # 2. Body Aliases (next, action, retry_action)
         for alias_key in ["next", "action", "retry_action"]:
             if alias_key in error_data and isinstance(error_data[alias_key], dict):
                 raw = error_data[alias_key]
@@ -650,7 +613,6 @@ class Payment402Client:
                 except Exception:
                     pass
 
-        # 3. Header Hints (Location / Link, forced to GET)
         location = headers.get("Location") or headers.get("location")
         if location and isinstance(location, str):
             return NextAction(instruction_for_agent="Follow Location header", method="GET", url=location), "location_header"
@@ -663,9 +625,6 @@ class Payment402Client:
 
         return None, "none"
 
-    # ==========================================
-    # 同期 (Sync) Runtime Layer
-    # ==========================================
     def execute_detailed(
         self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, 
         _current_hop: int = 0, _payment_retry_count: int = 0,
@@ -675,7 +634,6 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
-        # v1.5.9 Update: HATEOAS実行前にワンショットで予算を復元
         self._restore_session_spend_from_evidence(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -695,10 +653,8 @@ class Payment402Client:
         res = requests.request(method_upper, url, **req_kwargs)
 
         if 200 <= res.status_code < 300:
-            # v1.5.8 Hardening: Satisfy Pydantic without polluting business data
             try:
                 raw_json = res.json() if res.content else {"status": "success"}
-                # If it's already a dict, use as-is. If not (like MagicMock), wrap it safely.
                 resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
             except Exception:
                 resp_data = {"status": "success", "message": "unparseable"}
@@ -707,7 +663,6 @@ class Payment402Client:
             
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
-            # Strict type check to avoid TypeError with MagicMock headers
             if raw_response and isinstance(raw_response, str):
                 if not raw_response.startswith('status='):
                     payload_b64 = _b64url_decode(raw_response)
@@ -716,7 +671,6 @@ class Payment402Client:
                     match = re.search(r'receipt="?([^",]+)"?', raw_response)
                     token = match.group(1) if match else raw_response
             else:
-                # Handle fallback headers safely
                 candidate = res.headers.get("Payment-Receipt")
                 token = candidate if isinstance(candidate, str) else None
 
@@ -726,7 +680,6 @@ class Payment402Client:
                 _current_receipt.verification_status = "verified"
             
             if outcome_matcher:
-                # 🎯 修正: 開発者が入れ忘れても大丈夫なように、SDK側でURLとMethodを自動補完
                 context.hints["target_url"] = url
                 context.hints["http_method"] = method
 
@@ -741,12 +694,12 @@ class Payment402Client:
             if _payment_retry_count >= self.max_payment_retries:
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
-            # ★ 修正2: payload から chainId を取得してパース関数に渡す
             parsed = self._parse_challenge(
                 res, 
                 expected_asset=payload.get("asset", "SATS"),
                 expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
             )
+            self._last_parsed_challenge = parsed
             self._enforce_policy(parsed, url)
 
             if self.evidence_repo:
@@ -777,7 +730,6 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                # 💡 修正: 3つの戻り値を受け取り、urlとmethodを渡す
                 proof_ref, network_name, l402_report = self._process_payment(parsed, headers, payload, method=method, url=url)
                 self._record_session_spend(parsed, l402_report)
                 
@@ -835,7 +787,6 @@ class Payment402Client:
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
                         "trust_decision": decision, "error_message": str(e)
                     }
-                    # 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
                         record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
@@ -855,7 +806,6 @@ class Payment402Client:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
             
-            # --- Guardrail: Method & Cross-Origin Netloc Check ---
             is_unsafe = next_method not in ["GET", "HEAD"]
             if next_url:
                 current_netloc = urlparse(url).netloc
@@ -866,22 +816,18 @@ class Payment402Client:
                         is_unsafe = True
 
             if is_unsafe and not self.allow_unsafe_navigate:
-                # Matches exact test regex requirement
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
 
             if next_url and next_method != "NONE":
-                # --- Guardrail: Header Hardening ---
                 forbidden_headers = {"authorization", "cookie", "proxy-authorization", "host", "content-length"}
                 safe_suggested = {k: v for k, v in (next_action.suggested_headers or {}).items() if k.lower() not in forbidden_headers}
 
                 merged_headers = {**headers, **safe_suggested}
                 
-                # Fix NameError
                 merged_payload = {**payload, **(next_action.suggested_payload or {})}
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
 
-                # Recursive SYNC call (No await)
                 next_result = self.execute_detailed(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
@@ -900,11 +846,7 @@ class Payment402Client:
         error_msg = error_data.get('message', res.text)
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_msg}")
 
-    # ==========================================
-    # ⚡ 非同期 (Async) Runtime Layer
-    # ==========================================
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
-        """[後方互換性維持] 内部で execute_detailed_async を呼び出し、レスポンスの辞書のみを返却する。"""
         result = await self.execute_detailed_async(method, endpoint_path, payload, headers)
         return result.response
 
@@ -917,7 +859,6 @@ class Payment402Client:
     ) -> ExecutionResult:
         
         context = context or ExecutionContext()
-        # v1.5.9 Update: 非同期でのワンショット予算復元
         await self._restore_session_spend_from_evidence_async(context)
         
         url = endpoint_path if endpoint_path.startswith("http") else f"{self.base_url}{endpoint_path}"
@@ -966,11 +907,9 @@ class Payment402Client:
                 _current_receipt.verification_status = "verified"
             
             if outcome_matcher:
-                # 🎯 修正: 開発者が入れ忘れても大丈夫なように、SDK側でURLとMethodを自動補完
                 context.hints["target_url"] = url
                 context.hints["http_method"] = method
 
-                # ⚡ 修正: 非同期ループをブロックしないように別スレッド(executor)で実行
                 loop = asyncio.get_running_loop()
                 sig = inspect.signature(outcome_matcher)
                 if len(sig.parameters) == 3:
@@ -983,12 +922,12 @@ class Payment402Client:
             if _payment_retry_count >= self.max_payment_retries: 
                 raise PaymentExecutionError("Max 402 retries exceeded")
             
-            # ★ 修正3: 非同期側も同様に chainId を渡す
             parsed = self._parse_challenge(
                 res, 
                 expected_asset=payload.get("asset", "SATS"),
                 expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
             )
+            self._last_parsed_challenge = parsed
             self._enforce_policy(parsed, url)
 
             if getattr(self, "evidence_repo", None):
@@ -1024,7 +963,6 @@ class Payment402Client:
                     if not decision.is_trusted:
                         raise CounterpartyTrustError(f"Trust Evaluation Blocked Payment: {decision.reason}")
 
-                # 💡 修正: 3つの戻り値を受け取る。methodとurlもkwargsで渡す
                 def _process_wrapper():
                     return self._process_payment(parsed, headers, payload, method=method, url=url)
                 
@@ -1087,7 +1025,6 @@ class Payment402Client:
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
                         "trust_decision": decision, "error_message": str(e)
                     }
-                    # 決済成立後にダウンストリームで失敗した場合、証跡と消費USDを残す
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
                         record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
@@ -1111,7 +1048,6 @@ class Payment402Client:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
             
-            # --- Guardrail: Method & Cross-Origin Netloc Check ---
             is_unsafe = next_method not in ["GET", "HEAD"]
             if next_url:
                 current_netloc = urlparse(url).netloc
@@ -1125,7 +1061,6 @@ class Payment402Client:
                 raise NavigationGuardrailError(f"[Guardrail] Stopped unsafe automatic navigation to {next_method} {next_url}")
 
             if next_url and next_method != "NONE":
-                # --- Guardrail: Header Hardening ---
                 forbidden_headers = {"authorization", "cookie", "proxy-authorization", "host", "content-length"}
                 safe_suggested = {k: v for k, v in (next_action.suggested_headers or {}).items() if k.lower() not in forbidden_headers}
 
@@ -1135,7 +1070,6 @@ class Payment402Client:
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
 
-                # Recursive ASYNC call (Proper await, no sleep)
                 next_result = await self.execute_detailed_async(
                     next_method, next_url, merged_payload, merged_headers, _current_hop + 1, _payment_retry_count,
                     context=context, outcome_matcher=outcome_matcher,
@@ -1158,24 +1092,18 @@ class Payment402Client:
         raise PaymentExecutionError(f"API Error {res.status_code}: {error_msg}")
 
     async def aclose(self):
-        """v1.3.1: 非同期セッションを明示的に閉じるためのメソッド"""
         if self._async_client:
             await self._async_client.aclose()
             self._async_client = None
 
     async def __aenter__(self):
-        """v1.3.1: async with ブロックに入った時の処理"""
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(follow_redirects=True)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """v1.3.1: async with ブロックを抜けた時に自動でセッションを閉じる"""
         await self.aclose()
 
-# ==========================================
-# ⛩️ ADAPTER: LN Church 専用拡張クラス
-# ==========================================
 class LnChurchClient(Payment402Client):
     def __init__(
         self, 
@@ -1240,31 +1168,19 @@ class LnChurchClient(Payment402Client):
         self.grant_token = None
 
     def set_grant_token(self, token: str):
-        """Stores a grant token to be used as a payment override."""
         self.grant_token = token
 
     def has_valid_scoped_grant(self, target_path: str, method: str) -> bool:
-        """
-        Locally evaluates if the grant token is valid and scoped for the intended request.
-        This serves as the fallback decision gateway.
-        """
         if not self.grant_token: return False
-        
         claims = _decode_jwt_payload(self.grant_token)
         if not claims: return False
 
         import time
-        # 1. Check Expiration
         if claims.get("exp", 0) < time.time(): return False
-        
-        # 2. Check Agent Identity Binding
         if claims.get("sub") != self.agent_id: return False
-
-        # 3. Check Audience (Matches Base URL)
         aud = claims.get("aud", "")
         if aud.rstrip("/") != self.base_url.rstrip("/"): return False
 
-        # 4. Check Routes & Methods Scopes
         scope = claims.get("scope", {})
         routes = scope.get("routes", [])
         methods = scope.get("methods", [])
@@ -1289,24 +1205,18 @@ class LnChurchClient(Payment402Client):
         telemetry_headers = self._inject_telemetry(headers)
         return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers)
 
-    # ==========================================
-    # 🔒 Internal Access Selection (v1.6+)
-    # ==========================================
     def _collect_execution_access_candidates(self, target_path: str, method: str, asset: str, scheme: str) -> List[_ExecutionAccessPlan]:
         candidates = []
-        
-        # 1. Grant candidate
         if self.has_valid_scoped_grant(target_path, method):
             candidates.append(_ExecutionAccessPlan(
                 unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
                 funding_policy=_FundingPolicy.FULLY_SPONSORED,
                 entitlement_kind=_EntitlementKind.GRANT,
-                settlement_scheme=scheme, # Fallback base requirements
+                settlement_scheme=scheme,
                 settlement_asset=asset,
                 selected_reason="Valid scoped grant token available."
             ))
             
-        # 2. Faucet candidate (Legacy Omikuji fallback)
         if self.faucet_token and target_path == "/api/agent/omikuji":
             candidates.append(_ExecutionAccessPlan(
                 unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
@@ -1317,7 +1227,6 @@ class LnChurchClient(Payment402Client):
                 selected_reason="Legacy faucet token available for Omikuji."
             ))
             
-        # 3. Direct settlement candidate
         candidates.append(_ExecutionAccessPlan(
             unlock=_ExecutionUnlock.SETTLEMENT_PROOF,
             funding_policy=_FundingPolicy.SELF_FUNDED,
@@ -1330,17 +1239,13 @@ class LnChurchClient(Payment402Client):
         return candidates
 
     def _select_execution_access_plan(self, candidates: List[_ExecutionAccessPlan]) -> _ExecutionAccessPlan:
-        # Priority: 1. GRANT, 2. FAUCET, 3. Direct Settlement
         for kind in [_EntitlementKind.GRANT, _EntitlementKind.FAUCET]:
             for c in candidates:
                 if c.entitlement_kind == kind:
                     return c
-                    
-        # Fallback to direct settlement
         for c in candidates:
             if c.unlock == _ExecutionUnlock.SETTLEMENT_PROOF:
                 return c
-                
         return candidates[-1]
 
     def _build_payment_override_from_plan(self, plan: _ExecutionAccessPlan) -> Optional[dict]:
@@ -1358,9 +1263,6 @@ class LnChurchClient(Payment402Client):
             }
         return None
 
-# ------------------------------------------
-    # 同期 (Sync) メソッド群: Convenience Defaults 修正
-    # ------------------------------------------
     def init_probe(self, **kwargs):
         payload = kwargs if kwargs else None
         res = self.execute_request("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk", payload=payload)
@@ -1381,7 +1283,6 @@ class LnChurchClient(Payment402Client):
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
         
-        # 内部セレクタによる計画決定
         candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
         plan = self._select_execution_access_plan(candidates)
         
@@ -1392,12 +1293,10 @@ class LnChurchClient(Payment402Client):
             "asset": plan.settlement_asset
         }
 
-        # ビルダーから Override の注入
         override = self._build_payment_override_from_plan(plan)
         if override:
             payload["paymentOverride"] = override
 
-        # ★ ここで chainId 等の追加パラメータを結合！
         payload.update(kwargs)
 
         headers = {"x-probe-token": self.probe_token} if self.probe_token else {}
@@ -1406,7 +1305,7 @@ class LnChurchClient(Payment402Client):
     def submit_confession(self, raw_message: str, asset: AssetType = AssetType.SATS, context: dict = None, scheme: Optional[str] = None, **kwargs) -> ConfessionResponse:
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         payload = {"agentId": self.agent_id, "raw_message": raw_message, "context": context or {}, "scheme": target_scheme, "asset": asset.value}
-        payload.update(kwargs)  # ★ 追加引数を結合
+        payload.update(kwargs)  
         return ConfessionResponse(**self.execute_request("POST", "/api/agent/confession", payload))
 
     def offer_hono(self, amount: float, asset: AssetType = AssetType.SATS, scheme: Optional[str] = None, **kwargs) -> HonoResponse:
@@ -1465,9 +1364,6 @@ class LnChurchClient(Payment402Client):
         res = self.execute_request("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
-    # ------------------------------------------
-    # ⚡ 非同期 (Async) メソッド群: Convenience Defaults 修正
-    # ------------------------------------------
     async def init_probe_async(self, **kwargs):
         payload = kwargs if kwargs else None
         res = await self.execute_request_async("GET", f"/api/agent/probe?agentId={self.agent_id}&src=sdk_async", payload=payload)
@@ -1488,7 +1384,6 @@ class LnChurchClient(Payment402Client):
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
 
-        # 内部セレクタによる計画決定
         candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
         plan = self._select_execution_access_plan(candidates)
         
@@ -1499,7 +1394,6 @@ class LnChurchClient(Payment402Client):
             "asset": plan.settlement_asset
         }
 
-        # ビルダーから Override の注入
         override = self._build_payment_override_from_plan(plan)
         if override:
             payload["paymentOverride"] = override
@@ -1578,14 +1472,7 @@ class LnChurchClient(Payment402Client):
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
-    # ------------------------------------------
-    # 🧪 Sandbox Harness Integration
-    # ------------------------------------------
     def run_l402_sandbox_harness(self) -> "InteropRunResult":
-        """
-        Native L402 Path を使用して Sandbox Harness を End-to-End で実行し、
-        プロトコル互換性を確認して Interop Report まで自動で閉じる。
-        """
         import json
         import hashlib
         import re
@@ -1594,19 +1481,15 @@ class LnChurchClient(Payment402Client):
         basic_path = "/api/agent/sandbox/l402/basic"
         report_path = "/api/agent/sandbox/interop/report"
 
-        # 1. Execute Native L402 Flow (402 -> Pay -> 200)
-        # 既存の execute_detailed を呼ぶことで、Policy/TrustのGuardrailに完全に乗る
         exec_result = self.execute_detailed("GET", basic_path)
         resp = exec_result.response
 
-        # 2. Extract Metadata
         meta = resp.get("meta", {})
         run_id = meta.get("run_id", "")
         scenario_id = meta.get("scenario_id", "")
         expected_hash = meta.get("canonical_hash_expected", "")
         interop_token = meta.get("interop_token", "")
 
-        # 3. Calculate Observed Hash (Node.js JSON.stringify equivalent)
         deterministic_payload = {
             "message": resp.get("message"),
             "scenario": resp.get("scenario"),
@@ -1616,15 +1499,20 @@ class LnChurchClient(Payment402Client):
         json_str = json.dumps(deterministic_payload, separators=(',', ':'))
         observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
-        # 4. Prepare Report
         receipt = exec_result.settlement_receipt
         payment_performed = receipt.payment_performed if receipt else True
         cached_token_used = receipt.cached_token_used if receipt else False
         delegate_source = receipt.delegate_source if receipt else "native"
         executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
 
-        # 動的スキーム取得
         auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
+
+        # L402側もサーバーレシートの存在を厳密に判定
+        payment_receipt_present = bool(
+            receipt
+            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
+        )
 
         report_payload = {
             "run_id": run_id,
@@ -1640,14 +1528,12 @@ class LnChurchClient(Payment402Client):
             "interop_token": interop_token,
             "comparison_class": "production_like",
             "test_mode": "normal",
-            # --- L402にも拡張テレメトリーを搭載 ---
             "rail": "L402",
             "payment_intent": "charge",
             "authorization_scheme": auth_scheme,
-            "payment_receipt_present": True if receipt else False
+            "payment_receipt_present": payment_receipt_present
         }
 
-        # 5. POST Interop Report
         report_resp = {}
         status_code = 500
         accepted = False
@@ -1662,7 +1548,6 @@ class LnChurchClient(Payment402Client):
                 status_code = int(m.group(1))
             report_resp = {"error": str(e)}
 
-        # 6. Return Structured Result
         return InteropRunResult(
             ok=accepted and (expected_hash == observed_hash),
             target_url=exec_result.final_url,
@@ -1682,7 +1567,6 @@ class LnChurchClient(Payment402Client):
         )
 
     async def run_l402_sandbox_harness_async(self) -> "InteropRunResult":
-        """非同期版の Sandbox Harness 実行ヘルパー"""
         import json
         import hashlib
         import re
@@ -1717,6 +1601,13 @@ class LnChurchClient(Payment402Client):
 
         auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
 
+        # L402側もサーバーレシートの存在を厳密に判定
+        payment_receipt_present = bool(
+            receipt
+            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
+        )
+
         report_payload = {
             "run_id": run_id,
             "scenario_id": scenario_id,
@@ -1734,7 +1625,7 @@ class LnChurchClient(Payment402Client):
             "rail": "L402",
             "payment_intent": "charge",
             "authorization_scheme": auth_scheme,
-            "payment_receipt_present": True if receipt else False
+            "payment_receipt_present": payment_receipt_present
         }
 
         report_resp = {}
@@ -1769,14 +1660,7 @@ class LnChurchClient(Payment402Client):
             raw_report_response=report_resp
         )
 
-    # ------------------------------------------
-    # 🧪 MPP Charge Sandbox Harness Integration (新規追加)
-    # ------------------------------------------
     def run_mpp_charge_sandbox_harness(self) -> "InteropRunResult":
-        """
-        MPP Charge Path を使用して Sandbox Harness を End-to-End で実行し、
-        プロトコル互換性を確認して Interop Report まで自動で閉じる。
-        """
         import json
         import hashlib
         import re
@@ -1785,35 +1669,76 @@ class LnChurchClient(Payment402Client):
         basic_path = "/api/agent/sandbox/mpp/charge/basic"
         report_path = "/api/agent/sandbox/interop/report"
 
-        # 1. Execute MPP Flow (402 -> Pay -> 200)
-        exec_result = self.execute_detailed("GET", basic_path)
-        resp = exec_result.response
+        exec_result = None
+        failure_reason = None
+        error_msg = ""
+        
+        try:
+            exec_result = self.execute_detailed("GET", basic_path)
+            resp = exec_result.response
+        except Exception as e:
+            error_msg = str(e)
+            if "mpp_session_not_supported_yet" in error_msg:
+                failure_reason = "mpp_session_not_supported_yet"
+            else:
+                failure_reason = "payment_failed"
+            resp = {}
 
-        # 2. Extract Metadata
         meta = resp.get("meta", {})
         run_id = meta.get("run_id", "")
         scenario_id = meta.get("scenario_id", "")
         expected_hash = meta.get("canonical_hash_expected", "")
         interop_token = meta.get("interop_token", "")
 
-        # 3. Calculate Observed Hash
-        deterministic_payload = {
-            "message": resp.get("message"),
-            "scenario": resp.get("scenario"),
-            "contract": resp.get("contract"),
-            "verifiable": resp.get("verifiable")
-        }
-        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+        observed_hash = ""
+        if not failure_reason:
+            deterministic_payload = {
+                "message": resp.get("message"),
+                "scenario": resp.get("scenario"),
+                "contract": resp.get("contract"),
+                "verifiable": resp.get("verifiable")
+            }
+            json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+            observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
-        # 4. Prepare Report (MPP 拡張フィールドを追加)
-        receipt = exec_result.settlement_receipt
-        payment_performed = receipt.payment_performed if receipt else True
+        parsed = getattr(self, "_last_parsed_challenge", None)
+
+        receipt = exec_result.settlement_receipt if exec_result else None
+        payment_performed = receipt.payment_performed if receipt else (failure_reason is None)
         cached_token_used = receipt.cached_token_used if receipt else False
-        executor_mode = "ln-church-agent-native" 
+        executor_mode = "ln-church-agent-native"
 
-        # ハードコード("Payment")を廃止し、実際に決済に使用されたスキームを動的取得
-        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "Payment")
+        if receipt and receipt.scheme:
+            auth_scheme = receipt.scheme
+        elif exec_result and exec_result.used_scheme:
+            auth_scheme = exec_result.used_scheme
+        elif parsed and parsed.scheme:
+            auth_scheme = parsed.scheme
+        else:
+            auth_scheme = "Payment"
+
+        credential_shape = "legacy-preimage" if receipt else "unsupported-payment-auth-json"
+
+        p_intent = "charge"
+        p_method = "lightning"
+        p_shape = "unknown"
+        p_b64 = False
+        p_decoded = False
+        
+        if parsed:
+            if getattr(parsed, "payment_intent", "unknown") != "unknown":
+                p_intent = parsed.payment_intent
+            if getattr(parsed, "payment_method", "unknown") != "unknown":
+                p_method = parsed.payment_method
+            p_shape = getattr(parsed, "draft_shape", "unknown")
+            p_b64 = getattr(parsed, "request_b64_present", False)
+            p_decoded = getattr(parsed, "decoded_request_valid", False)
+
+        payment_receipt_present = bool(
+            receipt
+            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
+        )
 
         report_payload = {
             "run_id": run_id,
@@ -1830,12 +1755,17 @@ class LnChurchClient(Payment402Client):
             "comparison_class": "production_like",
             "test_mode": "normal",
             "rail": "MPP",
-            "payment_intent": "charge",
-            "authorization_scheme": auth_scheme, # 動的変数に変更
-            "payment_receipt_present": True if receipt else False
+            "payment_intent": p_intent,
+            "payment_method": p_method,
+            "authorization_scheme": auth_scheme,
+            "draft_shape": p_shape,
+            "request_b64_present": p_b64,
+            "decoded_request_valid": p_decoded,
+            "credential_shape": credential_shape,
+            "payment_receipt_present": payment_receipt_present,
+            "failure_reason": failure_reason
         }
 
-        # 5. POST Interop Report
         report_resp = {}
         status_code = 500
         accepted = False
@@ -1849,17 +1779,18 @@ class LnChurchClient(Payment402Client):
             if m: status_code = int(m.group(1))
             report_resp = {"error": str(e)}
 
-        # 6. Return Structured Result
+        ok_status = accepted and (expected_hash == observed_hash) if not failure_reason else False
+
         return InteropRunResult(
-            ok=accepted and (expected_hash == observed_hash),
-            target_url=exec_result.final_url,
+            ok=ok_status,
+            target_url=exec_result.final_url if exec_result else basic_path,
             run_id=run_id,
             scenario_id=scenario_id,
             executor_mode=executor_mode,
             delegate_source="native",
             canonical_hash_expected=expected_hash,
             canonical_hash_observed=observed_hash,
-            canonical_hash_matched=(expected_hash == observed_hash),
+            canonical_hash_matched=(expected_hash == observed_hash) if expected_hash else False,
             report_status_code=status_code,
             report_accepted=accepted,
             payment_performed=payment_performed,
@@ -1869,7 +1800,6 @@ class LnChurchClient(Payment402Client):
         )
 
     async def run_mpp_charge_sandbox_harness_async(self) -> "InteropRunResult":
-        """非同期版の MPP Charge Sandbox Harness 実行ヘルパー"""
         import json
         import hashlib
         import re
@@ -1878,8 +1808,20 @@ class LnChurchClient(Payment402Client):
         basic_path = "/api/agent/sandbox/mpp/charge/basic"
         report_path = "/api/agent/sandbox/interop/report"
 
-        exec_result = await self.execute_detailed_async("GET", basic_path)
-        resp = exec_result.response
+        exec_result = None
+        failure_reason = None
+        error_msg = ""
+        
+        try:
+            exec_result = await self.execute_detailed_async("GET", basic_path)
+            resp = exec_result.response
+        except Exception as e:
+            error_msg = str(e)
+            if "mpp_session_not_supported_yet" in error_msg:
+                failure_reason = "mpp_session_not_supported_yet"
+            else:
+                failure_reason = "payment_failed"
+            resp = {}
 
         meta = resp.get("meta", {})
         run_id = meta.get("run_id", "")
@@ -1887,21 +1829,55 @@ class LnChurchClient(Payment402Client):
         expected_hash = meta.get("canonical_hash_expected", "")
         interop_token = meta.get("interop_token", "")
 
-        deterministic_payload = {
-            "message": resp.get("message"),
-            "scenario": resp.get("scenario"),
-            "contract": resp.get("contract"),
-            "verifiable": resp.get("verifiable")
-        }
-        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+        observed_hash = ""
+        if not failure_reason:
+            deterministic_payload = {
+                "message": resp.get("message"),
+                "scenario": resp.get("scenario"),
+                "contract": resp.get("contract"),
+                "verifiable": resp.get("verifiable")
+            }
+            json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+            observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
-        receipt = exec_result.settlement_receipt
-        payment_performed = receipt.payment_performed if receipt else True
+        parsed = getattr(self, "_last_parsed_challenge", None)
+
+        receipt = exec_result.settlement_receipt if exec_result else None
+        payment_performed = receipt.payment_performed if receipt else (failure_reason is None)
         cached_token_used = receipt.cached_token_used if receipt else False
         executor_mode = "ln-church-agent-native"
 
-        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "Payment")
+        if receipt and receipt.scheme:
+            auth_scheme = receipt.scheme
+        elif exec_result and exec_result.used_scheme:
+            auth_scheme = exec_result.used_scheme
+        elif parsed and parsed.scheme:
+            auth_scheme = parsed.scheme
+        else:
+            auth_scheme = "Payment"
+
+        credential_shape = "legacy-preimage" if receipt else "unsupported-payment-auth-json"
+        
+        p_intent = "charge"
+        p_method = "lightning"
+        p_shape = "unknown"
+        p_b64 = False
+        p_decoded = False
+        
+        if parsed:
+            if getattr(parsed, "payment_intent", "unknown") != "unknown":
+                p_intent = parsed.payment_intent
+            if getattr(parsed, "payment_method", "unknown") != "unknown":
+                p_method = parsed.payment_method
+            p_shape = getattr(parsed, "draft_shape", "unknown")
+            p_b64 = getattr(parsed, "request_b64_present", False)
+            p_decoded = getattr(parsed, "decoded_request_valid", False)
+            
+        payment_receipt_present = bool(
+            receipt
+            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
+        )
 
         report_payload = {
             "run_id": run_id,
@@ -1918,9 +1894,15 @@ class LnChurchClient(Payment402Client):
             "comparison_class": "production_like",
             "test_mode": "normal",
             "rail": "MPP",
-            "payment_intent": "charge",
-            "authorization_scheme": auth_scheme, # 動的変数に変更
-            "payment_receipt_present": True if receipt else False
+            "payment_intent": p_intent,
+            "payment_method": p_method,
+            "authorization_scheme": auth_scheme,
+            "draft_shape": p_shape,
+            "request_b64_present": p_b64,
+            "decoded_request_valid": p_decoded,
+            "credential_shape": credential_shape,
+            "payment_receipt_present": payment_receipt_present,
+            "failure_reason": failure_reason
         }
 
         report_resp = {}
@@ -1936,16 +1918,18 @@ class LnChurchClient(Payment402Client):
             if m: status_code = int(m.group(1))
             report_resp = {"error": str(e)}
 
+        ok_status = accepted and (expected_hash == observed_hash) if not failure_reason else False
+
         return InteropRunResult(
-            ok=accepted and (expected_hash == observed_hash),
-            target_url=exec_result.final_url,
+            ok=ok_status,
+            target_url=exec_result.final_url if exec_result else basic_path,
             run_id=run_id,
             scenario_id=scenario_id,
             executor_mode=executor_mode,
             delegate_source="native",
             canonical_hash_expected=expected_hash,
             canonical_hash_observed=observed_hash,
-            canonical_hash_matched=(expected_hash == observed_hash),
+            canonical_hash_matched=(expected_hash == observed_hash) if expected_hash else False,
             report_status_code=status_code,
             report_accepted=accepted,
             payment_performed=payment_performed,
@@ -1954,9 +1938,6 @@ class LnChurchClient(Payment402Client):
             raw_report_response=report_resp
         )
 
-    # ------------------------------------------
-    # 🧪 External Protocol Verification (Live Endpoints)
-    # ------------------------------------------
     def run_external_protocol_verification(
         self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
     ) -> "ExternalProtocolRunResult":
@@ -1977,8 +1958,6 @@ class LnChurchClient(Payment402Client):
         origin = "unknown"
         upstream_host = None
 
-        # --- A. Attribution Bug の修正: 実行前に確定させる ---
-        # 以前のコードは成功時の receipt から判定していたため、失敗時に Native と誤認されていた
         is_get = True
         use_delegate = (
             self.prefer_lightninglabs_l402 and 
@@ -1989,19 +1968,15 @@ class LnChurchClient(Payment402Client):
         
         dlog(f"Target: {target_url} | Mode: {executor_mode} | Delegate: {use_delegate}")
         if self.ln_adapter:
-            # 秘密鍵を伏せて LNBits URL を確認
             masked_url = re.sub(r'://.*?@', '://[redacted]@', getattr(self.ln_adapter, 'api_url', 'unknown'))
             dlog(f"Payment Backend: {masked_url}")
 
         try:
-            # --- 段階1: チャレンジ取得 ---
             stage = "challenge_fetch"
             dlog("Step 1: Fetching 402 challenge...")
             
-            # execute_detailed を実行。この中で 402 検知 -> 決済 -> 200 リトライが走る
             exec_result = self.execute_detailed("GET", target_url)
             
-            # --- 段階2: レスポンス検証 ---
             stage = "response_shape_check"
             resp_data = exec_result.response
             receipt = exec_result.settlement_receipt
@@ -2010,18 +1985,16 @@ class LnChurchClient(Payment402Client):
             
         except Exception as e:
             error_reason = str(e)
-            # --- B. 発生源のヒューリスティック分析 ---
             if "LNBits Payment Failed" in error_reason:
                 origin = "payment_backend"
                 stage = "payment_initiation"
             elif "initiated but not settled" in error_reason:
                 origin = "payment_backend"
-                stage = "payment_settlement_check" # あなたの画像の状態（決済済みなのにLNBits APIが同期中）
+                stage = "payment_settlement_check" 
             elif "402 challenge" in error_reason:
                 origin = "target_endpoint"
                 stage = "challenge_parse"
             
-            # Cloudflare 520 HTML からのメタデータ抽出
             m_code = re.search(r"Error code (\d+)", error_reason)
             if m_code: status_code = int(m_code.group(1))
             
@@ -2065,10 +2038,6 @@ class LnChurchClient(Payment402Client):
     async def run_external_protocol_verification_async(
         self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
     ) -> "ExternalProtocolRunResult":
-        """
-        外部のLive Endpointに対するプロトコル成功とレスポンス形状を検証する (非同期版)。
-        同期版とロジックを同期させ、Attribution修正と詳細デバッグログを実装。
-        """
         import time, re
         from .models import ExternalProtocolRunResult
 
@@ -2086,7 +2055,6 @@ class LnChurchClient(Payment402Client):
         origin = "unknown"
         upstream_host = None
 
-        # --- A. Attribution Bug の修正: 実行前に確定させる ---
         use_delegate = (
             self.prefer_lightninglabs_l402 and 
             urlparse(target_url).netloc in self.l402_delegate_allowed_hosts
@@ -2100,14 +2068,11 @@ class LnChurchClient(Payment402Client):
             dlog(f"Payment Backend: {masked_url}")
 
         try:
-            # --- 段階1: チャレンジ取得 ---
             stage = "challenge_fetch"
             dlog("Step 1: Fetching 402 challenge (Async)...")
             
-            # 非同期版の実行メソッドを呼び出す
             exec_result = await self.execute_detailed_async("GET", target_url)
             
-            # --- 段階2: レスポンス検証 ---
             stage = "response_shape_check"
             resp_data = exec_result.response
             receipt = exec_result.settlement_receipt
@@ -2116,7 +2081,6 @@ class LnChurchClient(Payment402Client):
             
         except Exception as e:
             error_reason = str(e)
-            # --- B. 発生源のヒューリスティック分析 (同期版と共通) ---
             if "LNBits Payment Failed" in error_reason:
                 origin = "payment_backend"
                 stage = "payment_initiation"
@@ -2127,7 +2091,6 @@ class LnChurchClient(Payment402Client):
                 origin = "target_endpoint"
                 stage = "challenge_parse"
             
-            # Cloudflare 520 HTML からのメタデータ抽出
             m_code = re.search(r"Error code (\d+)", error_reason)
             if m_code: status_code = int(m_code.group(1))
             
@@ -2138,7 +2101,6 @@ class LnChurchClient(Payment402Client):
 
         latency_ms = int((time.time() - start_time) * 1000)
         
-        # Shape Check ロジック
         response_shape_ok = False
         if resp_data:
             response_shape_ok = True

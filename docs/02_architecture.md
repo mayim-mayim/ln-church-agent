@@ -131,10 +131,10 @@ The items below are **not** treated as frozen public contract yet. They remain u
 * **SDK Stance:** This would primarily affect the boundary between Trust evaluation, Outcome verification, and structured proof handling.
 * **Why Deferred:** This is not yet a widely deployed gateway pattern, so introducing a stable API now would be premature.
 
-### 5. x402 Session Mode
-* **Observation:** Stateful session-based payment flows are being explored to reduce repeated settlement overhead in continuous inference loops.
-* **SDK Stance:** The current architecture (`PaymentPolicy` + `EvidenceRepository`) is intentionally shaped so session-like behavior can be absorbed later without redesigning the entire execution loop.
-* **Why Deferred:** The wire-level challenge format is not yet stable enough to standardize against.
+### 5. Session Intent (MPP / x402)
+* **Observation:** Stateful session-based payment flows are being explored to reduce repeated settlement overhead in continuous inference loops (e.g., `intent="session"` in Payment drafts).
+* **SDK Stance:** As of v1.6.4, the SDK actively parses, detects, and reports session intents to the Interop Matrix for telemetry purposes. However, it safely halts execution (`mpp_session_not_supported_yet`) rather than attempting unverified stateful credential generation.
+* **Why Deferred:** The wire-level challenge format and credential generation logic are not yet stable enough to standardize a robust buyer-side execution loop.
 
 ### 6. L402 Token Attenuation
 * **Observation:** Multi-agent or delegated agent flows may eventually require caveat-based restriction and re-delegation of L402 capabilities.
@@ -147,4 +147,5 @@ If you are building on `ln-church-agent` today, you should treat the current sta
 - stable developer-facing execution loop
 - fallback-compatible legacy absorption where needed
 
-You should **not** assume that receipt cache semantics, Bazaar discovery metadata, session-mode channels, or attenuation workflows are finalized public APIs in the current 1.6.x line.---
+You should **not** assume that receipt cache semantics, Bazaar discovery metadata, full MPP Session execution channels, or attenuation workflows are finalized public APIs in the current 1.6.x line. They are observed, but not yet fully executed.
+---

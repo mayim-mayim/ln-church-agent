@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.6.4] - 2026-04-29 (Payment Draft Telemetry & Interop Observation)
+* **Added**: Payment HTTP Authentication draft-aware parsing. The SDK safely parses `Payment` scheme challenges and decodes Base64URL JSON requests to extract underlying invoices.
+* **Added**: Advanced Interop Matrix telemetry for MPP. Challenges are now classified by `draft_shape` (e.g., `payment-auth-draft`, `legacy-mpp-flat`), `payment_method`, and `payment_intent`.
+* **Changed**: MPP session intent is successfully observed and classified, but execution is safely halted (`mpp_session_not_supported_yet`) to prevent unverified runtime flows while still capturing the telemetry.
+
 ## [1.6.3] - 2026-04-27 (MPP Charge Sandbox Harness Integration)
 * **Added**: Introduced `run_mpp_charge_sandbox_harness()` and `run_mpp_charge_sandbox_harness_async()` to `LnChurchClient` to seamlessly validate the IETF draft Machine Payments Protocol (MPP) flows.
 * **Changed**: Upgraded Interop Report telemetry for *both* MPP and L402 harnesses to include dynamic protocol metadata (`rail`, `payment_intent`, `authorization_scheme`, `payment_receipt_present`), enhancing observability on the public Interop Matrix.

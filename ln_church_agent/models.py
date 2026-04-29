@@ -90,6 +90,12 @@ class ParsedChallenge(BaseModel):
     parameters: Dict[str, Any]
     source: ChallengeSource                    
     raw_header: Optional[str] = None
+    # 💡 新規追加: MPP / Payment draft telemetry
+    draft_shape: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_intent: Optional[str] = None
+    request_b64_present: bool = False
+    decoded_request_valid: bool = False
 
 class TrustEvidence(BaseModel):
     """評価の根拠を束ねるコンテナ（Source-Agnostic）"""
@@ -107,6 +113,9 @@ class ExecutionResult(BaseModel):
     used_asset: Optional[str] = None
     verification_status: Optional[str] = None
     outcome: Optional[OutcomeSummary] = None
+    # 💡 新規追加: 失敗時のテレメトリ伝播用
+    credential_shape: Optional[str] = None
+    failure_reason: Optional[str] = None
 
 class EvidenceRepository:
     """v1.5.1 / v1.5.9 Experimental: Evidenceの保存と取得を行うための抽象インターフェース"""
@@ -135,12 +144,13 @@ class EvidenceRepository:
 class PaymentPolicy:
     """
     エージェントの自律経済行動を制限するガードレール (Policy Layer)
-    v1.3.0: セッション上限とホスト制限を追加し、ハルシネーションによる資金枯渇を防止。
     """
-    # 許可リストに "exact" を追加
-    allowed_schemes: List[str] = field(default_factory=lambda: ["L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP", "exact"])
+    # 💡 修正: "Payment" を許可リストに追加
+    allowed_schemes: List[str] = field(default_factory=lambda: [
+        "L402", "x402", "lnc-evm-relay", "lnc-evm-transfer", "lnc-solana-transfer", "MPP", "Payment", "exact"
+    ])
     allowed_assets: List[str] = field(default_factory=lambda: ["SATS", "USDC", "JPYC"])
-    max_spend_per_tx_usd: float = 5.0 # デフォルトで1回5ドルを上限とする安全装置
+    max_spend_per_tx_usd: float = 5.0
     max_spend_per_session_usd: float = 10.0
     allowed_hosts: Optional[List[str]] = None
     blocked_hosts: List[str] = field(default_factory=list)
