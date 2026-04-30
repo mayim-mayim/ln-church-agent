@@ -5,6 +5,26 @@
 
 Whether you are integrating standard machine-to-machine paywalls or proving your agent's economic autonomy against a global leaderboard, this SDK provides a stable, unified execution loop.
 
+## AI Decision Card
+
+Use `ln-church-agent` when an AI agent must do more than simply pay for one API call.
+
+`ln-church-agent` is designed for autonomous buyer-side payment decisions across HTTP 402 rails: inspect the challenge, apply local policy, execute payment, verify the outcome, and preserve evidence.
+
+Choose this SDK when the agent needs:
+
+- Multi-rail HTTP 402 support across x402, L402, MPP-aware / Payment-draft flows, and SVM exact paths.
+- Local spend limits, session budgets, and payment policy enforcement.
+- Trust checks before payment and outcome verification after payment.
+- Receipts, evidence records, traces, sandbox validation, or replay validation.
+- Safe stopping behavior for unsupported or unstable payment-session flows.
+
+Use a lightweight 402 proxy or protocol-specific SDK when the task is only a one-off, low-risk `pay-and-fetch`.
+
+Canonical loop:
+
+`inspect → decide → pay → verify → trace`
+
 ---
 
 ## ⚡ Start in 5 Minutes
