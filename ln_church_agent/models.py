@@ -439,3 +439,25 @@ class ExternalProtocolRunResult(BaseModel):
     upstream_host_excerpt: Optional[str] = None
     debug_logs: List[str] = Field(default_factory=list)
 
+class CorpusReplayResult(BaseModel):
+    """
+    Agent-side synthetic corpus replay (dry-run) validation result.
+    """
+    ok: bool
+    corpus_id: str
+    replay_type: str
+    expected_action: str
+    observed_action: str
+    challenge_status_code: Optional[int] = None
+
+    descriptor_schema_version: Optional[str] = None
+    source_observation_id: Optional[str] = None
+
+    parsed_scheme: Optional[str] = None
+    parsed_rail: Optional[str] = None
+    parsed_payment_intent: Optional[str] = None
+    parsed_draft_shape: Optional[str] = None
+
+    failure_reason: Optional[str] = None
+    raw_descriptor: Optional[Dict[str, Any]] = None
+    raw_challenge_body: Optional[Dict[str, Any]] = None

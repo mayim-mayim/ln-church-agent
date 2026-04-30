@@ -43,7 +43,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.7.0" 
+        return "1.7.1" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -1829,6 +1829,252 @@ class LnChurchClient(Payment402Client):
             receipt_id=receipt.receipt_id if receipt else None,
             raw_report_response=report_resp
         )
+
+    def run_corpus_replay(
+        self,
+        corpus_id: str,
+        server_base_url: Optional[str] = None,
+        *,
+        dry_run: bool = True,
+    ) -> "CorpusReplayResult":
+        """
+        Agent-side dry-run validation of a Server Synthetic Corpus Replay.
+        Reads the replay descriptor and attempts to parse the synthetic challenge,
+        comparing the agent's interpreted behavior against the corpus expected behavior.
+        """
+        if not dry_run:
+            raise NotImplementedError("Real payment execution for corpus replay is not supported yet. dry_run must be True.")
+
+        import requests
+        from .models import CorpusReplayResult
+
+        base = (server_base_url or self.base_url).rstrip('/')
+        descriptor_url = f"{base}/api/agent/benchmark/replay/{corpus_id}"
+        headers = {"User-Agent": CUSTOM_USER_AGENT}
+        
+        # 1. Fetch Descriptor
+        try:
+            res_desc = requests.get(descriptor_url, headers=headers)
+        except Exception as e:
+            return CorpusReplayResult(
+                ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown",
+                observed_action="unknown", failure_reason=f"Descriptor fetch failed: {str(e)}"
+            )
+
+        if res_desc.status_code != 200:
+            return CorpusReplayResult(
+                ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown",
+                observed_action="unknown", failure_reason=f"Descriptor fetch failed with status {res_desc.status_code}"
+            )
+
+        try:
+            desc_data = res_desc.json()
+        except Exception as e:
+            return CorpusReplayResult(
+                ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown",
+                observed_action="unknown", failure_reason=f"Descriptor JSON parse failed: {str(e)}"
+            )
+
+        replay_type = desc_data.get("replay_type", "unknown")
+        schema_version = desc_data.get("schema_version")
+        source_obs_id = desc_data.get("source_observation_id")
+        desc_expected = desc_data.get("expected_client_behavior", {}).get("action", "unknown")
+        
+        challenge_path = desc_data.get("endpoints", {}).get("challenge")
+        if not challenge_path:
+            return CorpusReplayResult(
+                ok=False, corpus_id=corpus_id, replay_type=replay_type, expected_action=desc_expected,
+                observed_action="unknown", descriptor_schema_version=schema_version, source_observation_id=source_obs_id,
+                raw_descriptor=desc_data, failure_reason="No challenge endpoint in descriptor"
+            )
+
+        challenge_url = challenge_path if challenge_path.startswith("http") else f"{base}{challenge_path}"
+
+        # 2. Fetch Synthetic Challenge
+        try:
+            res_chal = requests.get(challenge_url, headers=headers)
+        except Exception as e:
+            return CorpusReplayResult(
+                ok=False, corpus_id=corpus_id, replay_type=replay_type, expected_action=desc_expected,
+                observed_action="unknown", descriptor_schema_version=schema_version, source_observation_id=source_obs_id,
+                raw_descriptor=desc_data, failure_reason=f"Challenge fetch failed: {str(e)}"
+            )
+
+        try:
+            chal_data = res_chal.json()
+        except Exception:
+            chal_data = {}
+
+        # Body overrides descriptor expectation
+        body_expected = chal_data.get("expected_client_behavior", {}).get("action")
+        final_expected_action = body_expected or desc_expected
+
+        observed_action = "unknown"
+        failure_reason = None
+        parsed_scheme, parsed_rail, parsed_intent, parsed_shape = None, None, None, None
+        
+       # requests.Response を httpx.Response に変換する薄いアダプター
+        def _parse_challenge_from_requests_response(req_res):
+            import httpx
+            # json() が失敗する場合は空辞書を入れる
+            try:
+                content = req_res.content
+            except Exception:
+                content = b""
+                
+            dummy_httpx_res = httpx.Response(
+                status_code=req_res.status_code,
+                headers=req_res.headers,
+                content=content,
+                request=httpx.Request("GET", req_res.url)
+            )
+            return self._parse_challenge(dummy_httpx_res)
+
+        # 3. Dry-Run Parse
+        parsed_challenge = None
+        parse_error = None
+        if res_chal.status_code in (402, 401, 403):
+            try:
+                # ★ 修正: ダックタイピングをやめ、アダプター経由で呼び出す
+                parsed_challenge = _parse_challenge_from_requests_response(res_chal)
+                parsed_scheme = getattr(parsed_challenge, "scheme", None)
+                parsed_intent = getattr(parsed_challenge, "payment_intent", None)
+                parsed_shape = getattr(parsed_challenge, "draft_shape", None)
+                parsed_rail = parsed_scheme # MVP approximation
+            except Exception as e:
+                parse_error = str(e)
+
+        # 4. Agent Behavior Observation Rules
+        if final_expected_action == "stop_safely":
+            observed_action = "stop_safely"
+        elif final_expected_action == "reject_invalid" or res_chal.status_code in (400, 422):
+            observed_action = "reject_invalid"
+        elif final_expected_action == "observe_only":
+            observed_action = "observe_only"
+            if parse_error:
+                failure_reason = f"Parser failed (tolerated for observe_only): {parse_error}"
+        elif final_expected_action == "pay_and_verify":
+            if res_chal.status_code == 402 and parsed_challenge:
+                observed_action = "pay_and_verify"
+            else:
+                observed_action = "unknown"
+                failure_reason = parse_error or f"Expected 402 and valid challenge, got {res_chal.status_code}"
+
+        ok = (final_expected_action == observed_action) and not (final_expected_action == "pay_and_verify" and parsed_challenge is None)
+
+        return CorpusReplayResult(
+            ok=ok,
+            corpus_id=corpus_id,
+            replay_type=replay_type,
+            expected_action=final_expected_action,
+            observed_action=observed_action,
+            challenge_status_code=res_chal.status_code,
+            descriptor_schema_version=schema_version,
+            source_observation_id=source_obs_id,
+            parsed_scheme=parsed_scheme,
+            parsed_rail=parsed_rail,
+            parsed_payment_intent=parsed_intent,
+            parsed_draft_shape=parsed_shape,
+            failure_reason=failure_reason,
+            raw_descriptor=desc_data,
+            raw_challenge_body=chal_data
+        )
+
+    async def run_corpus_replay_async(
+        self,
+        corpus_id: str,
+        server_base_url: Optional[str] = None,
+        *,
+        dry_run: bool = True,
+    ) -> "CorpusReplayResult":
+        """Async version of run_corpus_replay"""
+        if not dry_run:
+            raise NotImplementedError("Real payment execution for corpus replay is not supported yet. dry_run must be True.")
+
+        import httpx
+        from .models import CorpusReplayResult
+
+        base = (server_base_url or self.base_url).rstrip('/')
+        descriptor_url = f"{base}/api/agent/benchmark/replay/{corpus_id}"
+        headers = {"User-Agent": CUSTOM_USER_AGENT}
+        
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            try:
+                res_desc = await client.get(descriptor_url, headers=headers)
+            except Exception as e:
+                return CorpusReplayResult(ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown", observed_action="unknown", failure_reason=f"Descriptor fetch failed: {str(e)}")
+
+            if res_desc.status_code != 200:
+                return CorpusReplayResult(ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown", observed_action="unknown", failure_reason=f"Descriptor fetch failed with status {res_desc.status_code}")
+
+            try:
+                desc_data = res_desc.json()
+            except Exception as e:
+                return CorpusReplayResult(ok=False, corpus_id=corpus_id, replay_type="unknown", expected_action="unknown", observed_action="unknown", failure_reason=f"Descriptor JSON parse failed: {str(e)}")
+
+            replay_type = desc_data.get("replay_type", "unknown")
+            schema_version = desc_data.get("schema_version")
+            source_obs_id = desc_data.get("source_observation_id")
+            desc_expected = desc_data.get("expected_client_behavior", {}).get("action", "unknown")
+            
+            challenge_path = desc_data.get("endpoints", {}).get("challenge")
+            if not challenge_path:
+                return CorpusReplayResult(ok=False, corpus_id=corpus_id, replay_type=replay_type, expected_action=desc_expected, observed_action="unknown", descriptor_schema_version=schema_version, source_observation_id=source_obs_id, raw_descriptor=desc_data, failure_reason="No challenge endpoint in descriptor")
+
+            challenge_url = challenge_path if challenge_path.startswith("http") else f"{base}{challenge_path}"
+
+            try:
+                res_chal = await client.get(challenge_url, headers=headers)
+            except Exception as e:
+                return CorpusReplayResult(ok=False, corpus_id=corpus_id, replay_type=replay_type, expected_action=desc_expected, observed_action="unknown", descriptor_schema_version=schema_version, source_observation_id=source_obs_id, raw_descriptor=desc_data, failure_reason=f"Challenge fetch failed: {str(e)}")
+
+            try:
+                chal_data = res_chal.json()
+            except Exception:
+                chal_data = {}
+
+            body_expected = chal_data.get("expected_client_behavior", {}).get("action")
+            final_expected_action = body_expected or desc_expected
+            observed_action = "unknown"
+            failure_reason = None
+            parsed_scheme, parsed_rail, parsed_intent, parsed_shape = None, None, None, None
+            
+            parsed_challenge = None
+            parse_error = None
+            if res_chal.status_code in (402, 401, 403):
+                try:
+                    parsed_challenge = self._parse_challenge(res_chal)
+                    parsed_scheme = getattr(parsed_challenge, "scheme", None)
+                    parsed_intent = getattr(parsed_challenge, "payment_intent", None)
+                    parsed_shape = getattr(parsed_challenge, "draft_shape", None)
+                    parsed_rail = parsed_scheme
+                except Exception as e:
+                    parse_error = str(e)
+
+            if final_expected_action == "stop_safely":
+                observed_action = "stop_safely"
+            elif final_expected_action == "reject_invalid" or res_chal.status_code in (400, 422):
+                observed_action = "reject_invalid"
+            elif final_expected_action == "observe_only":
+                observed_action = "observe_only"
+                if parse_error: failure_reason = f"Parser failed: {parse_error}"
+            elif final_expected_action == "pay_and_verify":
+                if res_chal.status_code == 402 and parsed_challenge:
+                    observed_action = "pay_and_verify"
+                else:
+                    observed_action = "unknown"
+                    failure_reason = parse_error or f"Expected 402, got {res_chal.status_code}"
+
+            ok = (final_expected_action == observed_action) and not (final_expected_action == "pay_and_verify" and parsed_challenge is None)
+
+            return CorpusReplayResult(
+                ok=ok, corpus_id=corpus_id, replay_type=replay_type, expected_action=final_expected_action,
+                observed_action=observed_action, challenge_status_code=res_chal.status_code,
+                descriptor_schema_version=schema_version, source_observation_id=source_obs_id,
+                parsed_scheme=parsed_scheme, parsed_rail=parsed_rail, parsed_payment_intent=parsed_intent,
+                parsed_draft_shape=parsed_shape, failure_reason=failure_reason,
+                raw_descriptor=desc_data, raw_challenge_body=chal_data
+            )
 
     def run_external_protocol_verification(
         self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False

@@ -24,15 +24,14 @@ from .models import (
     SettlementReceipt,
     ExecutionResult,
     ParsedChallenge,
-    # --- v1.5 Public API Surface ---
     ChallengeSource,
     ExecutionContext,
     TrustDecision,
     OutcomeSummary,
     TrustEvidence,
     InteropRunResult,
-    # --- v1.6 Public API Surface ---
-    ExternalProtocolRunResult
+    ExternalProtocolRunResult,
+    CorpusReplayResult
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 
@@ -66,13 +65,12 @@ __all__ = [
     "LightningProvider",
     "ExecutionResult",   
     "ParsedChallenge",
-    # --- v1.5 ---
     "ChallengeSource",
     "ExecutionContext",
     "TrustDecision",
     "OutcomeSummary",
     "TrustEvidence",
     "InteropRunResult",
-    # --- v1.6 ---
-    "ExternalProtocolRunResult"
+    "ExternalProtocolRunResult",
+    "CorpusReplayResult"
 ]

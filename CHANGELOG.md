@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.7.1] - 2026-04-30 (Agent-Side Synthetic Corpus Replay Runner)
+* **Added**: `LnChurchClient.run_corpus_replay()` and async counterpart for dry-run validation of Server Synthetic Corpus Replays.
+* **Added**: `CorpusReplayResult` model to encapsulate the comparison between `expected_action` and `observed_action`.
+* **Details**: [v1.7.1 Release Notes](docs/release_notes/v1.7.1.md)
+
 ## [1.7.0] - 2026-04-29 (Official x402 v2 SVM Exact Path)
 * **Added**: Native buyer-side runtime support for official x402 v2 SVM exact payments (`scheme: "exact"`, `network: "solana:<genesisHash>"`).
 * **Added**: Native SVM Exact Transaction Builder to construct x402 v2 compatible VersionedTransaction payloads natively.

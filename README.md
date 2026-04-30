@@ -55,6 +55,33 @@ print(f"L402 Hash Matched: {l402_result.canonical_hash_matched}")
 print(f"MPP Hash Matched: {mpp_result.canonical_hash_matched}")
 ```
 
+### Observation → Corpus → Synthetic Replay → Agent Dry-run Validation
+
+`ln-church-agent` v1.7.1+ closes the agent-side of the LN Church interop loop.
+
+It can read server-side `synthetic_from_corpus_v1` replay descriptors and validate whether the local parser and decision engine choose the expected behavior:
+
+- `pay_and_verify`
+- `observe_only`
+- `stop_safely`
+- `reject_invalid`
+
+This is a dry-run validation path. It does not execute real payments and does not attempt raw wire-level replay.
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(private_key="0x...")
+
+# Dry-run a synthetic replay descriptor from the Corpus
+replay_result = client.run_corpus_replay(
+    corpus_id="corp_12345",
+    dry_run=True
+)
+
+print(f"Success: {replay_result.ok}")
+print(f"Expected: {replay_result.expected_action}, Observed: {replay_result.observed_action}")
+```
 ---
 
 ## 🧠 What this runtime is
