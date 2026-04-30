@@ -461,3 +461,19 @@ class CorpusReplayResult(BaseModel):
     failure_reason: Optional[str] = None
     raw_descriptor: Optional[Dict[str, Any]] = None
     raw_challenge_body: Optional[Dict[str, Any]] = None
+
+class InspectResult(BaseModel):
+    """CLI inspect コマンド用の実行結果モデル"""
+    ok: bool
+    url: str
+    http_status: Optional[int] = None
+    rails_detected: List[str] = Field(default_factory=list)
+    challenge_source: Optional[str] = None
+    payment_intent: Optional[str] = None
+    draft_shape: Optional[str] = None
+    recommended_action: str
+    will_execute_payment: bool = False
+    reason: str = ""
+    next_command: Optional[str] = None
+    error_stage: Optional[str] = None
+    failure_reason: Optional[str] = None

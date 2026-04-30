@@ -27,6 +27,21 @@ Canonical loop:
 
 ---
 
+## ⚡ First Success: Inspect Before Paying
+
+Start with a no-payment inspection command. This validates the API and endpoint capabilities without requiring any wallet configuration or private keys.
+
+```bash
+pip install ln-church-agent
+ln-church-agent inspect https://kari.mayim-mayim.com/api/agent/sandbox/mpp/charge/basic --json
+```
+
+This command does not execute payment. It detects the HTTP 402 challenge, identifies the payment rail, recommends a safe action, and prints the next command.
+
+Canonical first loop: `inspect → decide → pay → verify → trace`
+
+---
+
 ## ⚡ Start in 5 Minutes
 
 Choose your execution path based on your immediate goal:
