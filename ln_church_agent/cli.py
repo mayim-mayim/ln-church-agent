@@ -57,11 +57,17 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
 
             action = "pay_and_verify"
             reason = "Payment challenge detected. Inspect-only mode does not execute payments."
-            next_cmd = None  # 未実装の sandbox CLI はサジェストしない
+            next_cmd = None  
+            diagnostic_class = None
 
             if intent == "session":
                 action = "stop_safely"
                 reason = "MPP session execution is observed but not executed by default."
+                next_cmd = None
+            elif scheme == "exact":
+                action = "observe_only"
+                diagnostic_class = "post_settlement_proof_required"
+                reason = "This endpoint exposes an x402 exact challenge but validates only post-settlement evidence. The SDK-generated unbroadcasted exact payload will be rejected unless a submitted tx hash/signature is provided."
                 next_cmd = None
             elif shape in ["payment-auth-draft-partial", "payment-auth-draft-invalid-request"]:
                 action = "reject_invalid"
@@ -79,7 +85,8 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
                 recommended_action=action,
                 reason=reason,
                 next_command=next_cmd,
-                will_execute_payment=False
+                will_execute_payment=False,
+                diagnostic_class=diagnostic_class
             )
             
         except PaymentChallengeError as e:
@@ -137,6 +144,8 @@ def main():
             print(f"  Reason             : {result.reason}")
             if result.next_command:
                 print(f"  Next Command       : {result.next_command}")
+            if getattr(result, "diagnostic_class", None):
+                print(f"  Diagnostic Class   : {result.diagnostic_class}")
             if not result.ok and result.failure_reason:
                 print(f"  Failure            : {result.error_stage} -> {result.failure_reason}")
 

@@ -89,7 +89,9 @@ def test_v2_exact_envelope_construction_and_extension_echo(mock_gen_payload, moc
     mock_request.side_effect = [res_402, res_200]
     
     client = Payment402Client(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    client.execute_detailed("POST", "http://api.test")
+    
+    # 💡 修正: SATS にフォールバックして巨額決済とみなされないよう、asset を明示的に USDC にする
+    client.execute_detailed("POST", "http://api.test", payload={"asset": "USDC"})
     
     # リトライ時(インデックス1)の送信リクエスト引数を検証
     args, kwargs = mock_request.call_args_list[1]

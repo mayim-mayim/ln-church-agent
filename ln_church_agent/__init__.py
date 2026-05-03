@@ -31,7 +31,9 @@ from .models import (
     TrustEvidence,
     InteropRunResult,
     ExternalProtocolRunResult,
-    CorpusReplayResult
+    CorpusReplayResult,
+    InspectResult,            # v1.7.3
+    X402ExactDiagnosticResult # v1.7.3
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 
@@ -72,5 +74,7 @@ __all__ = [
     "TrustEvidence",
     "InteropRunResult",
     "ExternalProtocolRunResult",
-    "CorpusReplayResult"
+    "CorpusReplayResult",
+    "InspectResult",
+    "X402ExactDiagnosticResult"
 ]

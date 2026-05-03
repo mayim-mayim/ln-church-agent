@@ -145,6 +145,7 @@ The SDK supports multiple settlement rails through a unified interface.
 **Standard x402 v2 (Global Standards):**
 * **EVM exact (`x402`)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads.
 * **SVM exact (Solana)**: Official x402 v2 SVM exact payments via CAIP-2 `solana:<genesisHash>` networks. This SDK features a built-in transaction builder for standard x402 SVM exact compatible payloads.
+  * *Note: The current LN Church exact sandboxes act as **post-settlement validators**. They require submitted tx hash / signature evidence and will reject unbroadcasted payloads. True V2 exact settlement (facilitator broadcasting) is a future phase.*
 * **L402 / MPP**: Standard Lightning Network settlement (SATS) supporting Macaroon and BOLT11 invoice parsing.
 
 **Compatibility & Sandbox Paths (LN Church Extensions):**

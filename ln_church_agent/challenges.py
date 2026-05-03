@@ -126,8 +126,8 @@ def parse_challenge_from_response(
     response: httpx.Response, 
     expected_asset: str = "USDC", 
     expected_chain_id: Optional[str] = None,
-    allowed_networks: Optional[list] = None,  # 追加: Policy由来の許可ネットワーク
-    prefer_svm: bool = False                  # 追加: signer有無による優先フラグ
+    allowed_networks: Optional[list] = None,
+    prefer_svm: bool = False
 ) -> ParsedChallenge:
     h = response.headers
     auth_h = h.get("WWW-Authenticate", "")
@@ -138,50 +138,54 @@ def parse_challenge_from_response(
         val = h["PAYMENT-REQUIRED"]
         payload = b64url_decode_json(val)
         if payload:
+            # 💡 修正: スコープエラー（UnboundLocalError）を防ぐため、ここで初期化
             accepted_params = {}
+            selected_accept = None
+            
             if "accepts" in payload and isinstance(payload["accepts"], list):
-                
-                # 1. 許可されたネットワークのみに絞り込む
                 valid_accepts = payload["accepts"]
                 if allowed_networks:
                     valid_accepts = [opt for opt in valid_accepts if opt.get("network") in allowed_networks]
 
-                selected_accept = None
-                
-                # 2. 明示的な expected_chain_id があれば EVM 優先
                 if expected_chain_id:
                     target_network = f"eip155:{expected_chain_id}"
                     selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
 
-                # 3. SVM (Solana) サインが利用可能なら優先して探す
                 if not selected_accept and prefer_svm:
                     selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
 
-                # 4. 該当がない場合は安全な候補の先頭、あるいは元の配列の先頭にフォールバック
                 if not selected_accept and len(valid_accepts) > 0:
                     selected_accept = valid_accepts[0]
                 elif not selected_accept and len(payload["accepts"]) > 0:
                     selected_accept = payload["accepts"][0]
 
                 if selected_accept:
+                    # Accepts[].asset is the raw contract/mint address
                     raw_asset = selected_accept.get("asset", expected_asset)
+                    # Logical symbol comes from accepts[].symbol or root asset
+                    logical_asset = selected_accept.get("symbol") or payload.get("asset") or expected_asset
                     raw_amount = selected_accept.get("amount", 0)
-                    logical_asset = raw_asset
-                    extracted_token = ""
+                    extracted_token = raw_asset
 
-                    if isinstance(raw_asset, str) and raw_asset.startswith("0x"):
+                    # Explicit resolution if it's a known format
+                    if isinstance(raw_asset, str) and (raw_asset.startswith("0x") or len(raw_asset) > 30):
                         extracted_token = raw_asset
-                        logical_asset = expected_asset
-                    # 要件6: Solana USDC mint address を論理asset `USDC` に正規化
-                    elif raw_asset == SOLANA_USDC_MINT:
-                        extracted_token = raw_asset
-                        logical_asset = "USDC"
+                        
+                    if not selected_accept.get("symbol"):
+                        if raw_asset == SOLANA_USDC_MINT:
+                            logical_asset = "USDC"
 
                     human_amount = float(raw_amount)
-                    if logical_asset == "USDC":
-                        if human_amount >= 100: human_amount /= 1_000_000
-                    elif logical_asset == "JPYC":
-                        if human_amount >= 10000: human_amount /= 10**18
+                    # Decimals fallback: root -> accepts -> heuristics
+                    decimals = payload.get("decimals") or selected_accept.get("decimals")
+                    
+                    if decimals is not None:
+                        human_amount = human_amount / (10 ** int(decimals))
+                    else:
+                        if logical_asset == "USDC":
+                            if human_amount >= 100: human_amount /= 1_000_000
+                        elif logical_asset == "JPYC":
+                            if human_amount >= 10000: human_amount /= 10**18
 
                     accepted_params = {
                         "scheme": selected_accept.get("scheme", "exact"),
@@ -202,6 +206,8 @@ def parse_challenge_from_response(
                 "destination": payload.get("destination") or accepted_params.get("payTo", ""),
                 "payTo": payload.get("payTo") or accepted_params.get("payTo", ""),
                 "token_address": payload.get("token_address") or accepted_params.get("token_address", ""),
+                "decimals": payload.get("decimals") or (selected_accept.get("decimals") if selected_accept else None),
+                "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None),
                 "challenge": payload.get("challenge", ""),
                 "_raw_accepted": accepted_params.get("_raw_accepted"),
                 "_raw_resource": accepted_params.get("_raw_resource"),

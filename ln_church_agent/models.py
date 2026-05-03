@@ -477,3 +477,22 @@ class InspectResult(BaseModel):
     next_command: Optional[str] = None
     error_stage: Optional[str] = None
     failure_reason: Optional[str] = None
+    # --- 💡 新規追加 (v1.7.3) ---
+    diagnostic_class: Optional[str] = None
+    failure_class: Optional[str] = None
+
+class X402ExactDiagnosticResult(BaseModel):
+    ok: bool
+    scenario_id: str
+    endpoint: str
+    network: Optional[str] = None
+    asset: Optional[str] = None
+    token_address: Optional[str] = None
+    draft_shape: Optional[str] = None
+    settlement_model: str = "post_settlement_verification"
+    challenge_shape_ok: bool = False
+    expected_rejection: bool = False
+    rejection_reason: Optional[str] = None
+    recommended_action: str = "observe_only"
+    diagnostic_class: Optional[str] = None
+    failure_class: Optional[str] = None

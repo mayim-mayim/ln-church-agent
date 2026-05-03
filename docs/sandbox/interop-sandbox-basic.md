@@ -9,12 +9,19 @@ The LN Church provides a set of public, state-free sandbox endpoints designed st
 
 * **L402 Basic:** `GET https://kari.mayim-mayim.com/api/agent/sandbox/l402/basic`
 * **MPP Charge Basic:** `GET https://kari.mayim-mayim.com/api/agent/sandbox/mpp/charge/basic`
+* **x402 EVM Exact Basic:** `GET https://kari.mayim-mayim.com/api/agent/sandbox/x402/evm/exact/basic`
+* **x402 SVM Exact Basic:** `GET https://kari.mayim-mayim.com/api/agent/sandbox/x402/svm/exact/basic`
 
 *(Note: Additional sandboxes for `x402` will be provided under `/api/agent/sandbox/x402/*` in the future.)*
 
-### Execution Flow
-1. **Unpaid Request**: Returns `HTTP 402 Payment Required` along with the standard protocol challenge (`WWW-Authenticate: L402` or `WWW-Authenticate: MPP` / `PAYMENT-REQUIRED`).
-2. **Paid Request**: Providing a valid cryptographic proof (e.g., Preimage) in the `Authorization` header returns an `HTTP 200 OK`.
+### Execution Flow & Post-Settlement Validation
+1. **Unpaid Request**: Returns `HTTP 402 Payment Required` along with the standard protocol challenge (`WWW-Authenticate` or `PAYMENT-REQUIRED`).
+2. **Paid Request**: Providing a valid cryptographic proof in the `Authorization` or `PAYMENT-SIGNATURE` header returns an `HTTP 200 OK`.
+
+> **⚠️ Architecture Boundary for x402 Exact:**
+> The current x402 EVM and SVM exact endpoints operate strictly as **post-settlement validators**. They require submitted transaction hashes or signatures as evidence. 
+> They do **not** broadcast unsubmitted exact payloads (e.g., EIP-3009 signatures or VersionedTransactions). The SDK's `run_x402_*_exact_sandbox_diagnostic` runners will intentionally submit unbroadcasted payloads and verify that the server correctly rejects them with a `403`. True x402 V2 exact settlement (where the sandbox acts as a facilitator and broadcasts) is slated for a future phase.
+
 
 ### Deterministic Payload & Canonical Hash
 To facilitate strict programmatic comparison across different execution environments, the server always returns a deterministic JSON payload alongside its `canonical_hash`. No dynamic state changes occur on the server.

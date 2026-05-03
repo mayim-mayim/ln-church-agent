@@ -43,7 +43,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.7.2" 
+        return "1.7.3" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -150,17 +150,17 @@ class Payment402Client:
         self.l402_delegate_allowed_hosts = l402_delegate_allowed_hosts or []
         self.allow_legacy_payment_auth_fallback = allow_legacy_payment_auth_fallback
 
-    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None) -> ParsedChallenge:
+    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None, prefer_svm: bool = False) -> ParsedChallenge:
         # PolicyとSignerの情報を渡して、acceptsの選択精度を向上させる
         allowed = getattr(self.policy, "allowed_networks", None) if self.policy else None
-        prefer_svm = self.svm_signer is not None
+        prefer_svm_flag = prefer_svm or self.svm_signer is not None
         
         return parse_challenge_from_response(
             response, 
             expected_asset=expected_asset, 
             expected_chain_id=expected_chain_id,
             allowed_networks=allowed,
-            prefer_svm=prefer_svm
+            prefer_svm=prefer_svm_flag
         )
 
     def _parse_www_authenticate(self, auth_header: str, source: ChallengeSource) -> ParsedChallenge:
@@ -2268,3 +2268,250 @@ class LnChurchClient(Payment402Client):
             upstream_host_excerpt=upstream_host,
             debug_logs=logs
         )
+# ln_church_agent/client.py 内 (LnChurchClient クラスの最後に追加)
+
+    # ==========================================
+    # Phase 3: x402 Exact Sandbox Diagnostic Runners
+    # ==========================================
+    def run_x402_evm_exact_sandbox_diagnostic(self) -> "X402ExactDiagnosticResult":
+        from .models import X402ExactDiagnosticResult
+        endpoint = "/api/agent/sandbox/x402/evm/exact/basic"
+        expected_rejections = ["Invalid TxHash format", "Transaction not found"]
+        
+        ok = False
+        rejection_reason = None
+        diagnostic_class = None
+        failure_class = None
+        
+        try:
+            self.execute_detailed("GET", endpoint, payload={"asset": "USDC"})
+        except Exception as e:
+            error_msg = str(e)
+            if any(r in error_msg for r in expected_rejections):
+                ok = True
+                rejection_reason = error_msg
+                diagnostic_class = "post_settlement_proof_required"
+                failure_class = "settlement_model_mismatch"
+            else:
+                rejection_reason = error_msg
+
+        parsed = getattr(self, "_last_parsed_challenge", None)
+        
+        return X402ExactDiagnosticResult(
+            ok=ok,
+            scenario_id="x402-evm-exact-basic-v1",
+            endpoint=endpoint,
+            network=parsed.network if parsed else None,
+            asset=parsed.asset if parsed else None,
+            token_address=parsed.parameters.get("token_address") if parsed else None,
+            draft_shape=parsed.draft_shape if parsed else None,
+            challenge_shape_ok=parsed is not None,
+            expected_rejection=ok,
+            rejection_reason=rejection_reason,
+            diagnostic_class=diagnostic_class,
+            failure_class=failure_class
+        )
+
+    async def run_x402_evm_exact_sandbox_diagnostic_async(self) -> "X402ExactDiagnosticResult":
+        from .models import X402ExactDiagnosticResult
+        endpoint = "/api/agent/sandbox/x402/evm/exact/basic"
+        expected_rejections = ["Invalid TxHash format", "Transaction not found"]
+        
+        ok = False
+        rejection_reason = None
+        diagnostic_class = None
+        failure_class = None
+        
+        try:
+            await self.execute_detailed_async("GET", endpoint, payload={"asset": "USDC"})
+        except Exception as e:
+            error_msg = str(e)
+            if any(r in error_msg for r in expected_rejections):
+                ok = True
+                rejection_reason = error_msg
+                diagnostic_class = "post_settlement_proof_required"
+                failure_class = "settlement_model_mismatch"
+            else:
+                rejection_reason = error_msg
+
+        parsed = getattr(self, "_last_parsed_challenge", None)
+        
+        return X402ExactDiagnosticResult(
+            ok=ok,
+            scenario_id="x402-evm-exact-basic-v1",
+            endpoint=endpoint,
+            network=parsed.network if parsed else None,
+            asset=parsed.asset if parsed else None,
+            token_address=parsed.parameters.get("token_address") if parsed else None,
+            draft_shape=parsed.draft_shape if parsed else None,
+            challenge_shape_ok=parsed is not None,
+            expected_rejection=ok,
+            rejection_reason=rejection_reason,
+            diagnostic_class=diagnostic_class,
+            failure_class=failure_class
+        )
+
+    def run_x402_svm_exact_sandbox_diagnostic(self) -> "X402ExactDiagnosticResult":
+        from .models import X402ExactDiagnosticResult
+        endpoint = "/api/agent/sandbox/x402/svm/exact/basic"
+        expected_rejections = ["Invalid Solana signature format", "Transaction not found"]
+        
+        ok = False
+        rejection_reason = None
+        diagnostic_class = None
+        failure_class = None
+        
+        try:
+            self.execute_detailed("GET", endpoint)
+        except Exception as e:
+            error_msg = str(e)
+            if any(r in error_msg for r in expected_rejections):
+                ok = True
+                rejection_reason = error_msg
+                diagnostic_class = "post_settlement_proof_required"
+                failure_class = "settlement_model_mismatch"
+            else:
+                rejection_reason = error_msg
+
+        parsed = getattr(self, "_last_parsed_challenge", None)
+        
+        return X402ExactDiagnosticResult(
+            ok=ok,
+            scenario_id="x402-svm-exact-basic-v1",
+            endpoint=endpoint,
+            network=parsed.network if parsed else None,
+            asset=parsed.asset if parsed else None,
+            token_address=parsed.parameters.get("token_address") if parsed else None,
+            draft_shape=parsed.draft_shape if parsed else None,
+            challenge_shape_ok=parsed is not None,
+            expected_rejection=ok,
+            rejection_reason=rejection_reason,
+            diagnostic_class=diagnostic_class,
+            failure_class=failure_class
+        )
+
+    async def run_x402_svm_exact_sandbox_diagnostic_async(self) -> "X402ExactDiagnosticResult":
+        from .models import X402ExactDiagnosticResult
+        endpoint = "/api/agent/sandbox/x402/svm/exact/basic"
+        expected_rejections = ["Invalid Solana signature format", "Transaction not found"]
+        
+        ok = False
+        rejection_reason = None
+        diagnostic_class = None
+        failure_class = None
+        
+        try:
+            await self.execute_detailed_async("GET", endpoint)
+        except Exception as e:
+            error_msg = str(e)
+            if any(r in error_msg for r in expected_rejections):
+                ok = True
+                rejection_reason = error_msg
+                diagnostic_class = "post_settlement_proof_required"
+                failure_class = "settlement_model_mismatch"
+            else:
+                rejection_reason = error_msg
+
+        parsed = getattr(self, "_last_parsed_challenge", None)
+        
+        return X402ExactDiagnosticResult(
+            ok=ok,
+            scenario_id="x402-svm-exact-basic-v1",
+            endpoint=endpoint,
+            network=parsed.network if parsed else None,
+            asset=parsed.asset if parsed else None,
+            token_address=parsed.parameters.get("token_address") if parsed else None,
+            draft_shape=parsed.draft_shape if parsed else None,
+            challenge_shape_ok=parsed is not None,
+            expected_rejection=ok,
+            rejection_reason=rejection_reason,
+            diagnostic_class=diagnostic_class,
+            failure_class=failure_class
+        )
+
+    # ==========================================
+    # Phase 3: External Observation API (M2M)
+    # ==========================================
+    def _strip_secrets_from_evidence(self, d: Optional[dict]) -> dict:
+        """Raw Secret が外部に送信されるのを防ぐローカルストリップ処理"""
+        if not d:
+            return {}
+        safe_dict = d.copy()
+        secret_keywords = ["preimage", "macaroon", "private_key", "signature", "authorization", "secret"]
+        keys_to_remove = [
+            k for k in safe_dict.keys() 
+            if any(keyword in k.lower() for keyword in secret_keywords)
+        ]
+        for k in keys_to_remove:
+            safe_dict.pop(k, None)
+        return safe_dict
+
+    def submit_external_observation(
+        self,
+        target_url: str,
+        method: str = "GET",
+        status_code: int = 402,
+        source_scope: str = "external_agent_report",
+        evidence_class: str = "self_reported_challenge",
+        protocol: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        challenge: Optional[dict] = None,
+        sdk_version: Optional[str] = None,
+    ) -> dict:
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": target_url,
+            "method": method,
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "evidence_class": evidence_class,
+            "protocol": protocol or {},
+            "evidence": self._strip_secrets_from_evidence(evidence),
+            "challenge": self._strip_secrets_from_evidence(challenge),
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+        return self.execute_request("POST", "/api/agent/external/observe", payload=payload)
+
+    async def submit_external_observation_async(
+        self,
+        target_url: str,
+        method: str = "GET",
+        status_code: int = 402,
+        source_scope: str = "external_agent_report",
+        evidence_class: str = "self_reported_challenge",
+        protocol: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        challenge: Optional[dict] = None,
+        sdk_version: Optional[str] = None,
+    ) -> dict:
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": target_url,
+            "method": method,
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "evidence_class": evidence_class,
+            "protocol": protocol or {},
+            "evidence": self._strip_secrets_from_evidence(evidence),
+            "challenge": self._strip_secrets_from_evidence(challenge),
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+        return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
+
+    def get_external_observations(
+        self, limit: int = 50, rail: Optional[str] = None, quality: Optional[str] = None, source: Optional[str] = None
+    ) -> dict:
+        params = {"limit": limit}
+        if rail: params["rail"] = rail
+        if quality: params["quality"] = quality
+        if source: params["source"] = source
+        return self.execute_request("GET", "/api/agent/external/observations", payload=params)
+
+    async def get_external_observations_async(
+        self, limit: int = 50, rail: Optional[str] = None, quality: Optional[str] = None, source: Optional[str] = None
+    ) -> dict:
+        params = {"limit": limit}
+        if rail: params["rail"] = rail
+        if quality: params["quality"] = quality
+        if source: params["source"] = source
+        return await self.execute_request_async("GET", "/api/agent/external/observations", payload=params)
