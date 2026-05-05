@@ -1,29 +1,46 @@
 # ln-church-agent
-**A Buyer-Side HTTP 402 SDK & Agentic Payment Runtime**
 
-`ln-church-agent` is a generic **HTTP 402 runtime** for autonomous AI agents. While it natively handles open standards (`x402`, `L402`, `MPP`) across the open web, **LN Church** serves as the reference **Agentic Payment Sandbox** for public benchmarking—validating the complete `Probe → Pay → Execute → Trace` lifecycle.
+Your agent will hit a 402 paywall in the wild.
 
-Whether you are integrating standard machine-to-machine paywalls or proving your agent's economic autonomy against a global leaderboard, this SDK provides a stable, unified execution loop.
+Will it inspect, decide, pay, recover, verify, and continue — or freeze?
 
-## AI Decision Card
+`ln-church-agent` is a **buyer-side HTTP 402 runtime** for autonomous agents.  
+It helps agents prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
+
+## What it does
+
+Most payment SDKs help agents *pay*.  
+`ln-church-agent` helps agents complete the whole **paid-action loop**:
+
+**Probe → Inspect → Decide → Pay → Execute → Verify → Trace**
+
+It is designed for agents that must:
+- **Inspect** HTTP 402 challenges before committing funds.
+- **Choose** between L402, x402, MPP, or safe-stop paths based on local policy.
+- **Execute** paid actions through policy-aware runtime controls (budgets, trust).
+- **Recover** through HATEOAS-style next actions if a flow is interrupted.
+- **Verify** receipts and semantic outcomes after payment.
+- **Report** trace evidence to a public sandbox or local observer.
+
+## Where it fits
+
+- **ln-church-agent**: Buyer-side runtime for agents facing HTTP 402 challenges.
+- **ln-church-server**: Provider-side starter for building agent-facing paid APIs.
+- **LN Church Sandbox**: Public proving ground for benchmark, receipt, trace, and interop evidence.
+
+---
+
+## 🧠 AI Decision Card
 
 Use `ln-church-agent` when an AI agent must do more than simply pay for one API call.
 
-`ln-church-agent` is designed for autonomous buyer-side payment decisions across HTTP 402 rails: inspect the challenge, apply local policy, execute payment, verify the outcome, and preserve evidence.
-
 Choose this SDK when the agent needs:
+- **Multi-rail support**: L402, x402, and MPP-aware flows.
+- **Policy enforcement**: Local spend limits, session budgets, and trust checks.
+- **Verifiable evidence**: Receipts, evidence records, and traces for auditing.
+- **Safe stopping**: Graceful handling of unsupported or unstable payment sessions.
 
-- Multi-rail HTTP 402 support across x402, L402, MPP-aware / Payment-draft flows, and SVM exact paths.
-- Local spend limits, session budgets, and payment policy enforcement.
-- Trust checks before payment and outcome verification after payment.
-- Receipts, evidence records, traces, sandbox validation, or replay validation.
-- Safe stopping behavior for unsupported or unstable payment-session flows.
-
-Use a lightweight 402 proxy or protocol-specific SDK when the task is only a one-off, low-risk `pay-and-fetch`.
-
-Canonical loop:
-
-`inspect → decide → pay → verify → trace`
+*Use a lightweight 402 proxy when the task is only a one-off, low-risk `pay-and-fetch`.*
 
 ---
 
@@ -35,7 +52,6 @@ Start with a no-payment inspection command. This validates the API and endpoint 
 pip install ln-church-agent
 ln-church-agent inspect https://kari.mayim-mayim.com/api/agent/sandbox/mpp/charge/basic --json
 ```
-
 This command does not execute payment. It detects the HTTP 402 challenge, identifies the payment rail, recommends a safe action, and prints the next command.
 
 Canonical first loop: `inspect → decide → pay → verify → trace`
