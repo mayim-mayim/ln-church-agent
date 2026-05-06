@@ -1,4 +1,4 @@
-# Public Interop Sandbox (L402 & MPP Basic)
+# Public Interop Sandbox (L402, MPP & x402 Diagnostics)
 
 The LN Church provides a set of public, state-free sandbox endpoints designed strictly for **Protocol Interoperability, Benchmarking, and Delegated Executor Validation** (e.g., comparing `ln-church-agent` native execution vs external delegated paths).
 

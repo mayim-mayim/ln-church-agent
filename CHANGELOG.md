@@ -2,6 +2,16 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.0] - 2026-05-06 (Agent Commerce Surface Inspector & APP Detection)
+* **Added**: Introduced the **Agent Commerce Surface Inspector** capability to the CLI `inspect` tool.
+* **Added**: Safe detection for OKX Agent Payments Protocol (APP) metadata without payment execution.
+* **Added**: Extensible commerce classification fields: `commerce_protocol`, `commerce_intent`, `commerce_transport`, `authorization_artifact`, `settlement_rail`, `settlement_method`, and `broker_required`.
+* **Added**: Automated settlement rail normalization (e.g., mapping `scheme: exact` to `rail: x402`).
+* **Behavior**: Challenge co-existence support. Can now detect both a Commerce layer and its underlying Settlement rail simultaneously (e.g., `rails_detected: ["APP", "x402"]`).
+* **Architecture**: Aligned internal models with future Agent Commerce standards (Google AP2, ACP, UCP) as a buyer-side observation layer.
+* **Maintained**: 100% backward compatibility for existing `L402`, `x402`, and `MPP` paths.
+* **Details**: [v1.8.0 Release Notes](docs/release_notes/v1.8.0.md)
+
 ## [1.7.3] - 2026-05-03 (External Observation Client & x402 Exact Diagnostics)
 * **Added**: `run_x402_evm_exact_sandbox_diagnostic()` and `run_x402_svm_exact_sandbox_diagnostic()` to test post-settlement validation of V2 exact envelopes.
 * **Added**: `submit_external_observation()` and `get_external_observations()` for protocol-level telemetry, with strict local stripping of raw secrets.

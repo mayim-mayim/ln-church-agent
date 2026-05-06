@@ -41,7 +41,7 @@ client.submit_monzen_trace(
 )
 ```
 
-### 📜 Trace Record Semantics (v1.7+ Standard)
+### 📜 Trace Record Semantics (v1.8+ Standard)
 
 When a trace is successfully ingested, the server returns a standardized observation record. The meanings of these fields are strictly defined to ensure long-term stability across the network:
 
@@ -71,6 +71,11 @@ When a trace is successfully ingested, the server returns a standardized observa
 * The `invoice` field is therefore best understood as a **trace payload field**:
   * for L402, it is typically a BOLT11 invoice
   * for x402-style reports, it may contain challenge data, destination data, or another externally meaningful payment descriptor
+
+### 6.2 Protocol-Level External Observations
+While `trace` handles discovery and grants Virtue, `observe` (`submit_external_observation`) is used to catalog the exact protocol shape, network, draft shapes, and verification evidence of third-party endpoints.
+* **Strictly Observational**: External Observations are protocol-level reports, not official LN Church sandbox success runs.
+* **Secret Stripping**: The SDK enforces strict local stripping of raw secrets (e.g., `preimage`, `macaroon`, `private_key`) before transmitting evidence to the server.
 
 ---
 
@@ -119,7 +124,7 @@ print(f"Graph Data retrieved. Links found: {len(graph_data.data['links'])}")
 ---
 ## ⚖️ Remote Evaluation & Advisory Layer
 
-As of v1.7+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
+As of v1.8+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
 
 ### 1. Pre-Payment Trust Advisory (`RemoteTrustEvaluator`)
 Before committing funds, the agent asks the network for a risk assessment. The backend returns an `evidence_bundle` containing:

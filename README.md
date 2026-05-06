@@ -4,8 +4,10 @@ Your agent will hit a 402 paywall in the wild.
 
 Will it inspect, decide, pay, recover, verify, and continue — or freeze?
 
-`ln-church-agent` is a **buyer-side HTTP 402 runtime** for autonomous agents.  
-It helps agents prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
+`ln-church-agent` is a **buyer-side HTTP 402 runtime and agent-commerce surface inspector** for autonomous agents.  
+It helps agents inspect paid-action surfaces, distinguish executable payment rails from higher-order commerce protocols, and prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
+
+In v1.8+, the inspect layer can classify emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP)** without executing payment logic. Future protocols such as **Google AP2, ACP, and UCP** are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
 
 ## What it does
 
@@ -21,6 +23,14 @@ It is designed for agents that must:
 - **Recover** through HATEOAS-style next actions if a flow is interrupted.
 - **Verify** receipts and semantic outcomes after payment.
 - **Report** trace evidence to a public sandbox or local observer.
+
+## 🧠 What this runtime is
+
+* **Generic Buyer-Side Runtime**: A pure client-side execution engine that keeps your AI agent's reasoning loop clean by abstracting away the HTTP 402 negotiation layer.
+* **Agent Commerce Surface Inspector**: Classifies emerging commerce and authorization layers such as OKX APP, AP2, ACP, and UCP separately from executable settlement rails.
+* **Open-Web 402 Interoperability**: Natively supports Base64URL JSON headers, CAIP-2 network routing, and multi-chain execution out of the box.
+* **Reference Sandbox Support**: Optionally integrates with the LN Church observation network for public benchmarking, trace reporting, and discovery workflows.
+* **Stable Interface**: An unchanging developer API surface that safely absorbs the constant fluctuations of upstream protocol drafts.
 
 ## Where it fits
 
@@ -39,6 +49,7 @@ Choose this SDK when the agent needs:
 - **Policy enforcement**: Local spend limits, session budgets, and trust checks.
 - **Verifiable evidence**: Receipts, evidence records, and traces for auditing.
 - **Safe stopping**: Graceful handling of unsupported or unstable payment sessions.
+- **Commerce surface inspection**: Detect OKX APP-style agent-commerce metadata while keeping execution disabled unless a supported 402 rail is present.
 
 *Use a lightweight 402 proxy when the task is only a one-off, low-risk `pay-and-fetch`.*
 
@@ -58,6 +69,37 @@ Canonical first loop: `inspect → decide → pay → verify → trace`
 
 ---
 
+## 🧭 Agent Commerce Surface Inspection
+
+`ln-church-agent` v1.8+ extends `inspect` from a payment-rail preflight tool into an **Agent Commerce Surface Inspector**.
+
+It can safely detect higher-order commerce metadata, starting with OKX Agent Payments Protocol (APP), while keeping settlement execution strictly disabled during inspection.
+
+Example output:
+
+```json
+{
+  "rails_detected": ["APP", "x402"],
+  "commerce_protocol": "okx_app",
+  "commerce_intent": "charge",
+  "commerce_transport": "http",
+  "settlement_rail": "x402",
+  "settlement_method": "evm_eip3009",
+  "recommended_action": "observe_only",
+  "will_execute_payment": false
+}
+```
+
+This distinction is intentional:
+
+* **L402 / x402 / MPP** are treated as executable payment rails.
+* **OKX APP / AP2 / ACP / UCP / card-network agent payments** are treated as commerce, authorization, identity, or checkout surfaces unless they expose a concrete HTTP 402-compatible settlement path.
+* `inspect` never executes payment, initializes wallets, signs payloads, or calls brokers.
+
+Use this mode when your agent needs to understand a paid-action surface before deciding whether payment execution is safe, unsupported, or observation-only.
+
+---
+
 ## ⚡ Start in 5 Minutes
 
 Choose your execution path based on your immediate goal:
@@ -70,7 +112,7 @@ from ln_church_agent import Payment402Client
 
 client = Payment402Client(base_url="https://your-402-api.com", private_key="0x...")
 
-# Detects 402 -> Pays invoice -> Retries -> Returns JSON
+# Inspects 402 -> Applies policy -> Pays if allowed -> Retries -> Verifies response
 result = client.execute_request(
     method="POST",
     endpoint_path="/api/protected",
@@ -108,7 +150,7 @@ print(f"MPP Hash Matched: {mpp_result.canonical_hash_matched}")
 
 ### Observation → Corpus → Synthetic Replay → Agent Dry-run Validation
 
-`ln-church-agent` v1.7.1+ closes the agent-side of the LN Church interop loop.
+`ln-church-agent` v1.8+ closes the agent-side of the LN Church interop loop.
 
 It can read server-side `synthetic_from_corpus_v1` replay descriptors and validate whether the local parser and decision engine choose the expected behavior:
 
@@ -133,15 +175,6 @@ replay_result = client.run_corpus_replay(
 print(f"Success: {replay_result.ok}")
 print(f"Expected: {replay_result.expected_action}, Observed: {replay_result.observed_action}")
 ```
----
-
-## 🧠 What this runtime is
-
-* **Generic Buyer-Side Runtime**: A pure client-side execution engine that keeps your AI agent's reasoning loop clean by abstracting away the HTTP 402 negotiation layer.
-* **Open-Web 402 Interoperability**: Natively supports Base64URL JSON headers, CAIP-2 network routing, and multi-chain execution out of the box.
-* **Reference Sandbox Support**: Optionally integrates with the LN Church observation network for public benchmarking, trace reporting, and discovery workflows.
-* **Stable Interface**: An unchanging developer API surface that safely absorbs the constant fluctuations of upstream protocol drafts.
-
 ---
 
 ## 🛡️ Why teams adopt this runtime
@@ -169,6 +202,11 @@ The SDK supports multiple settlement rails through a unified interface.
 * **`lnc-evm-relay`**: Optimized gasless relayer orchestration.
 * **`grant` / `faucet`**: Cold-start overrides and sponsored access.
 * *Legacy aliases like `x402-direct` are transparently normalized internally.*
+
+**Observable Commerce / Authorization Surfaces (Inspect-Only):**
+* **OKX APP**: Detected as an agent-commerce surface when explicit APP metadata, broker objects, or higher-order commerce intents are present. The SDK does not execute OKX APP payments.
+* **AP2 / ACP / UCP**: Reserved classification space for emerging agent-commerce, mandate, checkout, and authorization protocols. These are not treated as executable rails unless they expose a concrete HTTP 402-compatible settlement path.
+* **Card-network / wallet-mediated agent payments**: Treated as observable commerce or authorization patterns, not native SDK execution targets.
 
 ---
 

@@ -477,9 +477,23 @@ class InspectResult(BaseModel):
     next_command: Optional[str] = None
     error_stage: Optional[str] = None
     failure_reason: Optional[str] = None
-    # --- 💡 新規追加 (v1.7.3) ---
     diagnostic_class: Optional[str] = None
     failure_class: Optional[str] = None
+    # --- 💡 新規追加 (v1.8.0: Agent Commerce Surfaces / AP2 / ACP / OKX APP) ---
+    commerce_protocol: Optional[str] = None
+    commerce_intent: Optional[str] = None
+    commerce_transport: Optional[str] = None
+    authorization_artifact: Optional[str] = None
+    settlement_rail: Optional[str] = None
+    settlement_method: Optional[str] = None
+    network: Optional[str] = None
+    broker_required: Optional[bool] = None
+    classification_confidence: Optional[str] = None
+    
+    # 互換用エイリアス
+    app_protocol: Optional[str] = None
+    app_intent: Optional[str] = None
+    app_transport: Optional[str] = None
 
 class X402ExactDiagnosticResult(BaseModel):
     ok: bool
