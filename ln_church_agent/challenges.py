@@ -122,6 +122,12 @@ def parse_www_authenticate(auth_header: str, source: ChallengeSource = Challenge
 
 SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
+def _safe_float(val) -> float:
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
 def parse_challenge_from_response(
     response: httpx.Response, 
     expected_asset: str = "USDC", 
@@ -130,127 +136,140 @@ def parse_challenge_from_response(
     prefer_svm: bool = False
 ) -> ParsedChallenge:
     h = response.headers
+    
+    # 1. WWW-Authenticateのチェックを広げ、X402も含める
     auth_h = h.get("WWW-Authenticate", "")
-    if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
+    if auth_h.upper().startswith(("L402", "PAYMENT", "MPP", "X402")):
         return parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
 
-    if "PAYMENT-REQUIRED" in h:
-        val = h["PAYMENT-REQUIRED"]
-        payload = b64url_decode_json(val)
-        if payload:
-            # 💡 修正: スコープエラー（UnboundLocalError）を防ぐため、ここで初期化
-            accepted_params = {}
-            selected_accept = None
-            
-            if "accepts" in payload and isinstance(payload["accepts"], list):
-                valid_accepts = payload["accepts"]
-                if allowed_networks:
-                    valid_accepts = [opt for opt in valid_accepts if opt.get("network") in allowed_networks]
+    # 2. 多様なヘッダーケースを安全にキャプチャする
+    pay_req = h.get("payment-required") or h.get("x-payment-required") or h.get("PAYMENT-REQUIRED")
+    
+    payload = None
+    source_type = ChallengeSource.STANDARD_X402
+    raw_header_val = pay_req
 
-                if expected_chain_id:
-                    target_network = f"eip155:{expected_chain_id}"
-                    selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
+    if pay_req:
+        payload = b64url_decode_json(pay_req)
+        # JSONでない場合のレガシーフォールバック
+        if not payload:
+            params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', pay_req)}
+            if params:
+                return ParsedChallenge(
+                    scheme=params.get("scheme", "x402"),
+                    network=params.get("network", "unknown"),
+                    amount=_safe_float(params.get("amount", 0)),
+                    asset=params.get("asset", expected_asset),
+                    parameters=params,
+                    source=source_type,
+                    raw_header=pay_req
+                )
 
-                if not selected_accept and prefer_svm:
-                    selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
+    # 3. ヘッダーにペイロードがない場合、JSONボディをチェック（Alchemyやカスタムシェイプ）
+    if not payload:
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                if "challenge" in body:
+                    c = body["challenge"]
+                    return ParsedChallenge(
+                        scheme=c.get("scheme", "unknown"),
+                        network=c.get("network", "unknown"),
+                        amount=_safe_float(c.get("amount", 0)),
+                        asset=c.get("asset", "unknown"),
+                        parameters=c.get("parameters", {}),
+                        source=ChallengeSource.BODY_CHALLENGE
+                    )
+                elif any(k in body for k in ["accepts", "x402Version", "paymentRequirements", "resource"]):
+                    payload = body
+                    source_type = ChallengeSource.BODY_CHALLENGE
+                    raw_header_val = None
+        except Exception:
+            pass
 
-                if not selected_accept and len(valid_accepts) > 0:
-                    selected_accept = valid_accepts[0]
-                elif not selected_accept and len(payload["accepts"]) > 0:
-                    selected_accept = payload["accepts"][0]
+    # 4. 抽出したペイロード（ヘッダーまたはボディ）を処理する
+    if payload:
+        accepted_params = {}
+        selected_accept = None
+        
+        if "accepts" in payload and isinstance(payload["accepts"], list):
+            valid_accepts = payload["accepts"]
+            if allowed_networks:
+                valid_accepts = [opt for opt in valid_accepts if opt.get("network") in allowed_networks]
 
-                if selected_accept:
-                    # Accepts[].asset is the raw contract/mint address
-                    raw_asset = selected_accept.get("asset", expected_asset)
-                    # Logical symbol comes from accepts[].symbol or root asset
-                    logical_asset = selected_accept.get("symbol") or payload.get("asset") or expected_asset
-                    raw_amount = selected_accept.get("amount", 0)
+            if expected_chain_id:
+                target_network = f"eip155:{expected_chain_id}"
+                selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
+
+            if not selected_accept and prefer_svm:
+                selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
+
+            if not selected_accept and len(valid_accepts) > 0:
+                selected_accept = valid_accepts[0]
+            elif not selected_accept and len(payload["accepts"]) > 0:
+                selected_accept = payload["accepts"][0]
+
+            if selected_accept:
+                raw_asset = selected_accept.get("asset", expected_asset)
+                logical_asset = selected_accept.get("symbol") or payload.get("asset") or expected_asset
+                raw_amount = selected_accept.get("amount", 0)
+                extracted_token = raw_asset
+
+                if isinstance(raw_asset, str) and (raw_asset.startswith("0x") or len(raw_asset) > 30):
                     extracted_token = raw_asset
-
-                    # Explicit resolution if it's a known format
-                    if isinstance(raw_asset, str) and (raw_asset.startswith("0x") or len(raw_asset) > 30):
-                        extracted_token = raw_asset
-                        
-                    if not selected_accept.get("symbol"):
-                        if raw_asset == SOLANA_USDC_MINT:
-                            logical_asset = "USDC"
-
-                    human_amount = float(raw_amount)
-                    # Decimals fallback: root -> accepts -> heuristics
-                    decimals = payload.get("decimals") or selected_accept.get("decimals")
                     
-                    if decimals is not None:
-                        human_amount = human_amount / (10 ** int(decimals))
-                    else:
-                        if logical_asset == "USDC":
-                            if human_amount >= 100: human_amount /= 1_000_000
-                        elif logical_asset == "JPYC":
-                            if human_amount >= 10000: human_amount /= 10**18
+                if not selected_accept.get("symbol"):
+                    if raw_asset == SOLANA_USDC_MINT:
+                        logical_asset = "USDC"
 
-                    accepted_params = {
-                        "scheme": selected_accept.get("scheme", "exact"),
-                        "network": selected_accept.get("network", "unknown"),
-                        "amount": human_amount,
-                        "asset": logical_asset,
-                        "payTo": selected_accept.get("payTo", ""),
-                        "token_address": extracted_token,
-                        "_raw_accepted": selected_accept,
-                        "_raw_resource": payload.get("resource", {}),
-                        "_raw_extensions": payload.get("extensions")
-                    }
+                human_amount = _safe_float(raw_amount)
+                decimals = payload.get("decimals") or selected_accept.get("decimals")
+                
+                if decimals is not None:
+                    human_amount = human_amount / (10 ** int(decimals))
+                else:
+                    if logical_asset == "USDC":
+                        if human_amount >= 100: human_amount /= 1_000_000
+                    elif logical_asset == "JPYC":
+                        if human_amount >= 10000: human_amount /= 10**18
 
-            params = {
-                "network": payload.get("network") or accepted_params.get("network", "unknown"),
-                "amount": payload.get("amount") or accepted_params.get("amount", 0),
-                "asset": payload.get("asset") or accepted_params.get("asset", expected_asset),
-                "destination": payload.get("destination") or accepted_params.get("payTo", ""),
-                "payTo": payload.get("payTo") or accepted_params.get("payTo", ""),
-                "token_address": payload.get("token_address") or accepted_params.get("token_address", ""),
-                "decimals": payload.get("decimals") or (selected_accept.get("decimals") if selected_accept else None),
-                "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None),
-                "challenge": payload.get("challenge", ""),
-                "_raw_accepted": accepted_params.get("_raw_accepted"),
-                "_raw_resource": accepted_params.get("_raw_resource"),
-                "_raw_extensions": accepted_params.get("_raw_extensions")
-            }
-            params["amount"] = accepted_params.get("amount", params["amount"])
+                accepted_params = {
+                    "scheme": selected_accept.get("scheme", "exact"),
+                    "network": selected_accept.get("network", "unknown"),
+                    "amount": human_amount,
+                    "asset": logical_asset,
+                    "payTo": selected_accept.get("payTo", ""),
+                    "token_address": extracted_token,
+                    "_raw_accepted": selected_accept,
+                    "_raw_resource": payload.get("resource", {}),
+                    "_raw_extensions": payload.get("extensions")
+                }
 
-            return ParsedChallenge(
-                scheme=payload.get("scheme") or accepted_params.get("scheme") or "x402",
-                network=params["network"],
-                amount=float(params["amount"]),
-                asset=params["asset"],
-                parameters=params,
-                source=ChallengeSource.STANDARD_X402,
-                raw_header=val
-            )
+        params = {
+            "network": payload.get("network") or accepted_params.get("network", "unknown"),
+            "amount": payload.get("amount") or accepted_params.get("amount", 0),
+            "asset": payload.get("asset") or accepted_params.get("asset", expected_asset),
+            "destination": payload.get("destination") or accepted_params.get("payTo", ""),
+            "payTo": payload.get("payTo") or accepted_params.get("payTo", ""),
+            "token_address": payload.get("token_address") or accepted_params.get("token_address", ""),
+            "decimals": payload.get("decimals") or (selected_accept.get("decimals") if selected_accept else None),
+            "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None),
+            "challenge": payload.get("challenge", ""),
+            "_raw_accepted": accepted_params.get("_raw_accepted"),
+            "_raw_resource": accepted_params.get("_raw_resource"),
+            "_raw_extensions": accepted_params.get("_raw_extensions")
+        }
+        params["amount"] = accepted_params.get("amount", params["amount"])
 
-        params = {k.strip(): v.strip('"') for k, v in re.findall(r'(\w+)="?([^",]+)"?', val)}
-        if params:
-            return ParsedChallenge(
-                scheme=params.get("scheme", "x402"),
-                network=params.get("network", "unknown"),
-                amount=float(params.get("amount", 0)),
-                asset=params.get("asset", expected_asset),
-                parameters=params,
-                source=ChallengeSource.STANDARD_X402,
-                raw_header=val
-            )
-
-    try:
-        body = response.json()
-        if "challenge" in body:
-            c = body["challenge"]
-            return ParsedChallenge(
-                scheme=c.get("scheme"),
-                network=c.get("network"),
-                amount=float(c.get("amount", 0)),
-                asset=c.get("asset"),
-                parameters=c.get("parameters", {}),
-                source=ChallengeSource.BODY_CHALLENGE
-            )
-    except Exception:
-        pass
+        return ParsedChallenge(
+            scheme=payload.get("scheme") or accepted_params.get("scheme") or "x402",
+            network=params["network"],
+            amount=_safe_float(params["amount"]),
+            asset=params["asset"],
+            parameters=params,
+            source=source_type,
+            raw_header=raw_header_val
+        )
 
     if "x-402-payment-required" in h:
         return parse_legacy_header(h["x-402-payment-required"])

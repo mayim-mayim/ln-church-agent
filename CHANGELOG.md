@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.1] - 2026-05-07 (Inspector Robustness & OpenClaw Stability)
+* **Fixed**: Resolved execution environment dependencies for the `inspect` CLI. It now supports stable worker execution via direct Python API calls or `sys.executable`.
+* **Improved**: Hardened the x402 challenge parser to capture non-standard shapes, such as Alchemy-style challenges that place `accepts` or `resource` fields directly within the JSON body.
+* **Added**: Advanced classification logic for the `Payment` scheme, automatically mapping it to `MPP` or `x402` rails based on the provided `payment_method`.
+* **Improved**: Enhanced `InspectResult` diagnostics by returning detailed `error_stage`, `failure_reason`, and `diagnostic_class` fields to facilitate automated system registration decisions.
+* **Fixed**: Introduced `_safe_float` to prevent crashes when the `amount` field contains non-numeric strings or objects, ensuring they are safely handled as `0.0`.
+
 ## [1.8.0] - 2026-05-06 (Agent Commerce Surface Inspector & APP Detection)
 * **Added**: Introduced the **Agent Commerce Surface Inspector** capability to the CLI `inspect` tool.
 * **Added**: Safe detection for OKX Agent Payments Protocol (APP) metadata without payment execution.

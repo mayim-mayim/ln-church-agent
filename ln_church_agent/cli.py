@@ -20,10 +20,17 @@ def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET")
         request=httpx.Request(method.upper(), req_res.url)
     )
 
-def _settlement_rail_from_scheme(scheme: str) -> Optional[str]:
-    """スキーム名から決済レール名への正規化"""
+def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
+    """スキーム名から決済レール名への正規化 (v1.8.1 Payment対応)"""
     if scheme == "exact":
         return "x402"
+    if scheme == "Payment" and parsed:
+        method = getattr(parsed, "payment_method", "").lower()
+        if method == "lightning" or parsed.parameters.get("invoice"):
+            return "MPP"
+        if method in ["eip3009", "exact", "evm", "x402"]:
+            return "x402"
+        return "unknown"
     if scheme in ["L402", "MPP", "Payment"]:
         return scheme
     return scheme if scheme and scheme != "unknown" else None
@@ -60,11 +67,18 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
     # 3. Commerce Surface が検出された場合
     if app_info:
         scheme = getattr(parsed, "scheme", "unknown") if parsed else "unknown"
-        s_rail = _settlement_rail_from_scheme(scheme)
+        s_rail = _settlement_rail_from_scheme(scheme, parsed)
         
         rails_detected = ["APP"]
-        if s_rail:
+        if scheme == "Payment":
+            rails_detected.append("Payment")
+            if s_rail and s_rail not in ["Payment", "unknown"]:
+                rails_detected.append(s_rail)
+        elif s_rail and s_rail != "unknown":
             rails_detected.append(s_rail)
+        else:
+            if scheme and scheme != "unknown":
+                rails_detected.append(scheme)
 
         c_intent = app_info.get("commerce_intent")
         action = "observe_only"
@@ -92,11 +106,9 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             network=app_info.get("network"),
             broker_required=app_info.get("broker_required"),
             classification_confidence=app_info.get("confidence"),
-            # 互換用エイリアス
             app_protocol=app_info.get("commerce_protocol"),
             app_intent=c_intent,
             app_transport=app_info.get("commerce_transport"),
-            # 💡 APP検出時はトップレベルのエラーは出さない（紛らわしさを排除）
             error_stage=None,
             failure_reason=None
         )
@@ -114,30 +126,44 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
 
     if res.status_code in (402, 401, 403):
         if parse_error:
-            if "No valid 402" in parse_error or "Failed to parse" in parse_error:
-                return InspectResult(
-                    ok=True,
-                    url=url,
-                    http_status=res.status_code,
-                    recommended_action="reject_invalid",
-                    reason=f"Failed to parse challenge: {parse_error}",
-                    will_execute_payment=False
-                )
+            is_invalid_challenge = "No valid 402" in parse_error or "Failed to parse" in parse_error
+            
+            if "No valid 402" in parse_error:
+                diag_cls = "unsupported_challenge_shape"
+                fail_cls = "no_valid_challenge"
+            elif "Failed to parse" in parse_error:
+                diag_cls = "invalid_payment_auth_request"
+                fail_cls = "parse_failure"
             else:
-                return InspectResult(
-                    ok=False,
-                    url=url,
-                    http_status=res.status_code,
-                    error_stage="parse",
-                    failure_reason=parse_error,
-                    recommended_action="stop_safely",
-                    reason="Unexpected error parsing challenge. Stopping safely.",
-                    will_execute_payment=False
-                )
+                diag_cls = "x402_parse_error"
+                fail_cls = "unexpected_error"
+            
+            return InspectResult(
+                ok=is_invalid_challenge,
+                url=url,
+                http_status=res.status_code,
+                error_stage="parse",
+                failure_reason=parse_error,
+                diagnostic_class=diag_cls,
+                failure_class=fail_cls,
+                recommended_action="reject_invalid" if is_invalid_challenge else "stop_safely",
+                reason=f"Failed to parse challenge: {parse_error}" if is_invalid_challenge else f"Unexpected error parsing challenge: {parse_error}",
+                will_execute_payment=False
+            )
 
         scheme = getattr(parsed, "scheme", "unknown")
-        s_rail = _settlement_rail_from_scheme(scheme)
-        rails = [s_rail] if s_rail else []
+        s_rail = _settlement_rail_from_scheme(scheme, parsed)
+        
+        rails = []
+        if scheme == "Payment":
+            rails.append("Payment")
+            if s_rail and s_rail not in ["Payment", "unknown"]:
+                rails.append(s_rail)
+        elif s_rail and s_rail != "unknown":
+            rails.append(s_rail)
+        else:
+            if scheme and scheme != "unknown":
+                rails.append(scheme)
         
         intent = getattr(parsed, "payment_intent", None)
         shape = getattr(parsed, "draft_shape", None)
@@ -159,8 +185,13 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             next_cmd = None
         elif shape in ["payment-auth-draft-partial", "payment-auth-draft-invalid-request"]:
             action = "reject_invalid"
+            diagnostic_class = "invalid_payment_auth_request"
             reason = "Challenge shape is incomplete or invalid."
             next_cmd = None
+        elif scheme == "Payment" and s_rail == "unknown":
+            action = "observe_only"
+            diagnostic_class = "unsupported_challenge_shape"
+            reason = "Payment scheme detected but payment method is unknown. Cannot map to a settlement rail."
 
         return InspectResult(
             ok=True,
