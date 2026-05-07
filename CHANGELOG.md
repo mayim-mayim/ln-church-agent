@@ -2,6 +2,10 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.2] - 2026-05-07 (Response Adapter Decompression Hotfix)
+* **Fixed**: Resolved `httpx.DecodingError` during `inspect` by safely stripping hop-by-hop headers (`Content-Encoding`, `Transfer-Encoding`, `Content-Length`) from the response adapter.
+* **Improved**: Ensures `inspect` fails gracefully with a structured `response_decoding_error` diagnostic instead of completely crashing the pipeline when upstream metadata is severely malformed.
+
 ## [1.8.1] - 2026-05-07 (Inspector Robustness & OpenClaw Stability)
 * **Fixed**: Resolved execution environment dependencies for the `inspect` CLI. It now supports stable worker execution via direct Python API calls or `sys.executable`.
 * **Improved**: Hardened the x402 challenge parser to capture non-standard shapes, such as Alchemy-style challenges that place `accepts` or `resource` fields directly within the JSON body.

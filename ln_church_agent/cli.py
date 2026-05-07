@@ -10,12 +10,26 @@ from .app_inspect import detect_app_surface
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
     """requests のレスポンスをパーサーが期待する httpx の形に変換する内部ヘルパー"""
     try:
-        content = req_res.content
+        content = req_res.content or b""
     except Exception:
         content = b""
+
+    # httpxが再度decompressやchunk分割を行わないよう、元データ由来のヘッダーを除去する
+    unsafe_headers = {
+        "content-encoding",
+        "transfer-encoding",
+        "content-length",
+    }
+
+    safe_headers = {
+        k: v
+        for k, v in req_res.headers.items()
+        if k.lower() not in unsafe_headers
+    }
+
     return httpx.Response(
         status_code=req_res.status_code,
-        headers=req_res.headers,
+        headers=safe_headers,
         content=content,
         request=httpx.Request(method.upper(), req_res.url)
     )
@@ -50,9 +64,24 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             will_execute_payment=False
         )
 
-    httpx_res = _requests_to_httpx_response(res, method)
+    # 1. Adapterの変換で落ちないように保護し、失敗時は構造化して返す
+    try:
+        httpx_res = _requests_to_httpx_response(res, method)
+    except Exception as e:
+        is_402 = res.status_code in (402, 401, 403)
+        return InspectResult(
+            ok=is_402,  # 402が見えているならTrueにしてobserve_onlyとする
+            url=url,
+            http_status=res.status_code,
+            error_stage="response_adapter",
+            failure_class="requests_to_httpx_conversion_failed",
+            diagnostic_class="response_decoding_error",
+            failure_reason=str(e),
+            recommended_action="observe_only" if is_402 else "stop_safely",
+            reason=f"Failed to adapt HTTP response: {str(e)}",
+            will_execute_payment=False
+        )
 
-    # 1. 既存の Payment Challenge の解析を先に行う
     parsed = None
     parse_error = None
     if res.status_code in (402, 401, 403):
