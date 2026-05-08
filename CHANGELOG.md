@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.3] - 2026-05-08 (Sponsored Access Diagnostics)
+* **Added**: Introduced `GrantDiagnostics` to locally pre-evaluate JWS grant tokens.
+* **Added**: Added `diagnose_grant()` and `explain_grant()` to `LnChurchClient` for AI-friendly payload generation.
+* **Added**: Added `ln-church-agent grant inspect` command to the CLI.
+* **Clarified**: Formally decoupled Grants from settlement rails (`settlement_rail: "none"`).
+* **Maintained**: Guaranteed graceful fallback behavior for invalid grants without interrupting the core L402/x402 loop.
+
 ## [1.8.2] - 2026-05-07 (Response Adapter Decompression Hotfix)
 * **Fixed**: Resolved `httpx.DecodingError` during `inspect` by safely stripping hop-by-hop headers (`Content-Encoding`, `Transfer-Encoding`, `Content-Length`) from the response adapter.
 * **Improved**: Ensures `inspect` fails gracefully with a structured `response_decoding_error` diagnostic instead of completely crashing the pipeline when upstream metadata is severely malformed.

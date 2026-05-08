@@ -255,6 +255,16 @@ def main():
     inspect_parser.add_argument("--method", type=str, default="GET", help="HTTP method (default: GET)")
     inspect_parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
     inspect_parser.add_argument("--json", action="store_true", help="Output result as JSON")
+    
+    grant_parser = subparsers.add_parser("grant", help="Manage and inspect grant tokens")
+    grant_subparsers = grant_parser.add_subparsers(dest="grant_command", required=True)
+    
+    grant_inspect_parser = grant_subparsers.add_parser("inspect", help="Inspect a grant token locally without sending it")
+    grant_inspect_parser.add_argument("--token", type=str, required=True, help="JWS Grant Token")
+    grant_inspect_parser.add_argument("--agent-id", type=str, required=True, help="Expected Agent ID")
+    grant_inspect_parser.add_argument("--route", type=str, default="/api/agent/omikuji", help="Target route")
+    grant_inspect_parser.add_argument("--method", type=str, default="POST", help="Target HTTP method")
+    grant_inspect_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="Target base URL")
 
     args = parser.parse_args()
 
@@ -275,6 +285,27 @@ def main():
                 print(f"  Diagnostic Class   : {result.diagnostic_class}")
             if not result.ok and result.failure_reason:
                 print(f"  Failure            : {result.error_stage} -> {result.failure_reason}")
+
+    if args.command == "grant" and args.grant_command == "inspect":
+        from .grants import diagnose_grant_token
+        import json
+        diag = diagnose_grant_token(args.token, agent_id=args.agent_id, base_url=args.base_url, route=args.route, method=args.method)
+        res = {
+            "usable": diag.usable,
+            "failure_class": diag.failure_class,
+            "access_path": diag.access_path,
+            "authorization_artifact": diag.authorization_artifact,
+            "settlement_rail": diag.settlement_rail,
+            "scope": {
+                "routes": diag.scope_routes,
+                "methods": diag.scope_methods
+            },
+            "recommended_action": diag.recommended_action,
+            "note": "Local diagnostics only. Server-side validation is authoritative."
+        }
+        if diag.reason:
+            res["reason"] = diag.reason
+        print(json.dumps(res, indent=2))
 
 if __name__ == "__main__":
     main()

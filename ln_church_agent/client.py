@@ -43,7 +43,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.8.1" 
+        return "1.8.3" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -1062,25 +1062,46 @@ class LnChurchClient(Payment402Client):
     def set_grant_token(self, token: str):
         self.grant_token = token
 
+    def diagnose_grant(self, route: str = "/api/agent/omikuji", method: str = "POST") -> "GrantDiagnostics":
+        """Locally diagnose the currently set grant token."""
+        from .grants import diagnose_grant_token
+        return diagnose_grant_token(
+            self.grant_token,
+            agent_id=self.agent_id,
+            base_url=self.base_url,
+            route=route,
+            method=method
+        )
+
+    def explain_grant(self, route: str = "/api/agent/omikuji", method: str = "POST") -> dict:
+        """Returns a JSON-friendly, human/LLM-readable explanation of the grant's usability."""
+        diag = self.diagnose_grant(route=route, method=method)
+        res = {
+            "usable": diag.usable,
+            "access_path": diag.access_path,
+            "authorization_artifact": diag.authorization_artifact,
+            "settlement_rail": diag.settlement_rail,
+            "grant_jti": diag.grant_jti,
+            "scope": {
+                "routes": diag.scope_routes,
+                "methods": diag.scope_methods
+            },
+            "recommended_action": diag.recommended_action,
+            "note": "Local diagnostics only. Server-side validation is authoritative."
+        }
+        if diag.failure_class:
+            res["failure_class"] = diag.failure_class
+        if diag.reason:
+            res["reason"] = diag.reason
+        if diag.fallback_action:
+            res["fallback_action"] = diag.fallback_action
+        return res
+
     def has_valid_scoped_grant(self, target_path: str, method: str) -> bool:
-        if not self.grant_token: return False
-        claims = _decode_jwt_payload(self.grant_token)
-        if not claims: return False
-
-        import time
-        if claims.get("exp", 0) < time.time(): return False
-        if claims.get("sub") != self.agent_id: return False
-        aud = claims.get("aud", "")
-        if aud.rstrip("/") != self.base_url.rstrip("/"): return False
-
-        scope = claims.get("scope", {})
-        routes = scope.get("routes", [])
-        methods = scope.get("methods", [])
-
-        if target_path not in routes: return False
-        if method.upper() not in [m.upper() for m in methods]: return False
-
-        return True
+        """Evaluates if the grant is usable, preserving the diagnostic result internally."""
+        diag = self.diagnose_grant(route=target_path, method=method)
+        self._last_grant_diagnostics = diag  # 保存しておくことでデバッグやトレースに利用可能
+        return diag.usable
 
     def _inject_telemetry(self, headers: Optional[dict]) -> dict:
         headers = dict(headers or {})

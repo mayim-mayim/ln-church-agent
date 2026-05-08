@@ -4,6 +4,7 @@ from ln_church_agent.cli import inspect_url
 import requests
 import base64
 import json
+import subprocess
 
 @patch("ln_church_agent.cli.requests.request")
 def test_inspect_l402_pay_and_verify(mock_req):
@@ -405,7 +406,32 @@ def test_inspect_app_x402_coexistence(mock_req):
     assert "APP" in res.rails_detected
     assert "x402" in res.rails_detected
     assert res.commerce_protocol == "okx_app"
-    assert res.settlement_rail == "x402"  # 💡 exact ではなく x402 になっていること
+    assert res.settlement_rail == "x402"
     assert res.recommended_action == "observe_only"
     assert res.will_execute_payment is False
-    assert res.error_stage is None  # 💡 APP検知成功時はエラーを表示しない
+    assert res.error_stage is None
+
+def test_cli_grant_inspect_does_not_print_raw_token():
+    """grant inspectコマンドがトークン自体をログに漏洩させないことを確認"""
+    import base64
+    import json
+    
+    claims = {
+        "jti": "grant_secret_123", "asset": "GRANT_CREDIT", "iss": "issuer", 
+        "sub": "agent1", "aud": "domain.com", "exp": 9999999999, 
+        "scope": {"routes": ["/r"], "methods": ["POST"]}
+    }
+    header = base64.urlsafe_b64encode(b'{"alg":"EdDSA"}').decode().rstrip('=')
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')
+    secret_token = f"{header}.{payload}.DO_NOT_PRINT_ME_SIGNATURE"
+    
+    # サブプロセスとしてCLIを直接叩く
+    result = subprocess.run(
+        ["python", "-m", "ln_church_agent.cli", "grant", "inspect", "--token", secret_token, "--agent-id", "agent1"],
+        capture_output=True, text=True
+    )
+    
+    output = result.stdout
+    assert "DO_NOT_PRINT_ME_SIGNATURE" not in output
+    assert "usable" in output
+    assert "grant_secret_123" not in output  # JTIでさえCLIのデフォルト出力には乗らないように設計されている（res辞書構造参照）

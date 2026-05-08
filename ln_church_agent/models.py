@@ -1,7 +1,7 @@
 import uuid
 from enum import Enum
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 import time
@@ -510,3 +510,37 @@ class X402ExactDiagnosticResult(BaseModel):
     recommended_action: str = "observe_only"
     diagnostic_class: Optional[str] = None
     failure_class: Optional[str] = None
+
+class GrantDiagnostics(BaseModel):
+    """
+    v1.8.3: Local diagnostic model for sponsor-issued grant tokens.
+    Advisory only. Server-side validation remains authoritative.
+    """
+    ok: bool
+    usable: bool
+    failure_class: Optional[str] = None
+    reason: Optional[str] = None
+    
+    grant_jti: Optional[str] = None
+    issuer: Optional[str] = None
+    sponsor_id: Optional[str] = None
+    subject: Optional[str] = None
+    audience: Optional[Union[str, List[str]]] = None
+    entitlement: Optional[str] = None
+    
+    scope_routes: List[str] = Field(default_factory=list)
+    scope_methods: List[str] = Field(default_factory=list)
+    
+    asset: Optional[str] = None
+    amount: Optional[float] = None
+    exp: Optional[int] = None
+    nbf: Optional[int] = None
+    iat: Optional[int] = None
+
+    # Architecture constraints strictly separating Grant from Settlement
+    access_path: str = "sponsored_grant"
+    authorization_artifact: str = "scoped_grant"
+    settlement_rail: str = "none"
+
+    recommended_action: str = "use_grant"
+    fallback_action: Optional[str] = None

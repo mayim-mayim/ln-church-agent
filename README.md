@@ -262,6 +262,8 @@ result = client.draw_omikuji(asset=AssetType.SATS) # Uses Faucet override
 ### 2. Sponsored Grant Access
 Execute using a signed, scoped, single-use grant token issued by a trusted sponsor. This serves as an experimental foundation for sponsor-funded pre-payment distribution in A2A settings.
 
+`ln-church-agent` v1.8.3 can locally diagnose a grant token before use (`client.explain_grant()`), explaining whether it appears usable for the target route/method/audience/agentId. This diagnostic is advisory only; the LN Church backend remains the authoritative validator and enforces single-use consumption.
+
 ```python
 from ln_church_agent import LnChurchClient
 

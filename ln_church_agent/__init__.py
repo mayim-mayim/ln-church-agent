@@ -32,10 +32,12 @@ from .models import (
     InteropRunResult,
     ExternalProtocolRunResult,
     CorpusReplayResult,
-    InspectResult,            # v1.7.3
-    X402ExactDiagnosticResult # v1.7.3
+    InspectResult,           
+    X402ExactDiagnosticResult,
+    GrantDiagnostics
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
+from .grants import diagnose_grant_token, decode_grant_token
 
 # 汎用別名
 Http402Client = Payment402Client 
@@ -76,5 +78,8 @@ __all__ = [
     "ExternalProtocolRunResult",
     "CorpusReplayResult",
     "InspectResult",
-    "X402ExactDiagnosticResult"
+    "X402ExactDiagnosticResult",
+    "GrantDiagnostics",
+    "diagnose_grant_token",
+    "decode_grant_token"
 ]
