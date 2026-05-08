@@ -9,6 +9,27 @@ It helps agents inspect paid-action surfaces, distinguish executable payment rai
 
 In v1.8+, the inspect layer can classify emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP)** without executing payment logic. Future protocols such as **Google AP2, ACP, and UCP** are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
 
+## Core Doctrine
+
+**Do not spend even one LLM token on what the agent should not need to reason about.**
+
+`ln-church-agent` moves payment plumbing out of the model's reasoning loop and into a deterministic buyer-side runtime.
+
+The SDK handles mechanical HTTP 402 concerns such as:
+- payment-rail inspection,
+- challenge parsing,
+- policy checks,
+- payment execution,
+- HATEOAS recovery,
+- receipt verification,
+- evidence capture.
+
+The LLM remains responsible for the higher-level economic decisions:
+- whether the counterparty should be trusted,
+- whether payment is justified,
+- whether the expected outcome was delivered,
+- and whether the endpoint should be reused.
+
 ## What it does
 
 Most payment SDKs help agents *pay*.  
