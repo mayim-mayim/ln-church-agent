@@ -36,7 +36,8 @@ from .models import (
     X402ExactDiagnosticResult,
     GrantDiagnostics,
     SponsoredAccessEvidence,
-    SandboxEvidence  
+    SandboxEvidence,
+    SandboxCorpusCandidate
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -44,7 +45,8 @@ from .grants import diagnose_grant_token, decode_grant_token
 from .evidence import (
     build_sponsored_access_evidence,
     build_sandbox_evidence_from_response,
-    build_sandbox_interop_report_payload
+    build_sandbox_interop_report_payload,
+    build_sandbox_corpus_candidate
 )
 
 # 汎用別名
@@ -94,5 +96,7 @@ __all__ = [
     "SandboxEvidence",
     "build_sponsored_access_evidence",
     "build_sandbox_evidence_from_response",
-    "build_sandbox_interop_report_payload"
+    "build_sandbox_interop_report_payload",
+    "SandboxCorpusCandidate",
+    "build_sandbox_corpus_candidate"
 ]

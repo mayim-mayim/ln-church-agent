@@ -50,7 +50,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.8.4" 
+        return "1.8.5" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -1080,6 +1080,16 @@ class Payment402Client:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.aclose()
+
+    def get_last_sandbox_corpus_candidate(self) -> Optional['SandboxCorpusCandidate']:
+        return self.build_sandbox_corpus_candidate_from_last_evidence()
+
+    def build_sandbox_corpus_candidate_from_last_evidence(self) -> Optional['SandboxCorpusCandidate']:
+        ev = self.get_last_sandbox_evidence()
+        if ev:
+            from .evidence import build_sandbox_corpus_candidate
+            return build_sandbox_corpus_candidate(ev)
+        return None
 
 class LnChurchClient(Payment402Client):
     def __init__(

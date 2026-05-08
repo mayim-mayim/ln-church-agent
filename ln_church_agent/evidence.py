@@ -1,7 +1,7 @@
 # ln_church_agent/evidence.py
 import hashlib
 from typing import Optional
-from .models import SponsoredAccessEvidence, SandboxEvidence, GrantDiagnostics
+from .models import SponsoredAccessEvidence, SandboxEvidence, GrantDiagnostics,SandboxCorpusCandidate
 
 def sha256_redacted(value: Optional[str]) -> Optional[str]:
     """生トークンや Proof を安全にハッシュ化する"""
@@ -142,3 +142,45 @@ def build_sandbox_interop_report_payload(
         "rail": sandbox_evidence.rail,
         "payment_intent": sandbox_evidence.payment_intent
     }
+
+def build_sandbox_corpus_candidate(sandbox_evidence: SandboxEvidence) -> SandboxCorpusCandidate:
+    """SandboxEvidence を評価し、ローカルの SandboxCorpusCandidate を構築する"""
+    eligible = False
+    reason = None
+
+    if sandbox_evidence.evidence_scope != "sandbox_internal":
+        eligible = False
+        reason = "non_sandbox_scope"
+    elif sandbox_evidence.verification_status == "verified" and sandbox_evidence.canonical_hash_matched is True:
+        eligible = True
+    elif sandbox_evidence.verification_status == "mismatch":
+        eligible = False
+        reason = "canonical_mismatch"
+    elif sandbox_evidence.verification_status == "server_observed":
+        eligible = None  # candidate_pending_client_confirmation として保留扱い
+        reason = "candidate_pending_client_confirmation"
+    else:
+        eligible = False
+        reason = "unverified_or_incomplete"
+
+    return SandboxCorpusCandidate(
+        evidence_scope=sandbox_evidence.evidence_scope,
+        run_id=sandbox_evidence.run_id,
+        scenario_id=sandbox_evidence.scenario_id,
+        rail=sandbox_evidence.rail,
+        payment_intent=sandbox_evidence.payment_intent,
+        
+        network=sandbox_evidence.network,
+        asset=sandbox_evidence.asset,
+        payment_method=sandbox_evidence.payment_method,
+        authorization_scheme=sandbox_evidence.authorization_scheme,
+        draft_shape=sandbox_evidence.draft_shape,
+
+        verification_status=sandbox_evidence.verification_status,
+        canonical_hash_matched=sandbox_evidence.canonical_hash_matched,
+        payment_receipt_present=sandbox_evidence.payment_receipt_present,
+        server_payment_receipt_present=sandbox_evidence.server_payment_receipt_present,
+        client_reported_payment_receipt_present=sandbox_evidence.client_reported_payment_receipt_present,
+        corpus_eligible=eligible,
+        exclusion_reason=reason
+    )

@@ -38,6 +38,7 @@ It is designed for agents that must:
 - **ln-church-server**: Provider-side starter for building agent-facing paid APIs.
 - **LN Church Sandbox**: Public proving ground for benchmark, receipt, trace, and interop evidence.
 - **Evidence Tracking (v1.8.4+)**: `ln-church-agent` can now capture sponsored-access and sandbox execution metadata as local evidence (`SponsoredAccessEvidence` / `SandboxEvidence`). Sandbox evidence is strictly scoped to LN Church's controlled sandbox environment (`evidence_scope: "sandbox_internal"`) and intentionally does not auto-submit external observations. Raw secrets are securely redacted.
+- **Corpus Readiness (v1.8.5+)**: `SandboxEvidence` can be converted into a local `SandboxCorpusCandidate`. This does not submit to `ExternalObserve`. Final corpus acceptance remains server-side.
 
 ---
 

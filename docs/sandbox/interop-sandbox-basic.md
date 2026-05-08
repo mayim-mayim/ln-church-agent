@@ -49,4 +49,8 @@ If you are developing a custom executor, you can autonomously report your run te
 These logs are physically isolated in a dedicated harness ledger (`AgentInteropRuns`) and will not pollute the main LN Church observation network.
 
 *(Note: When simulating protocol failures for testing, include `"comparison_class": "validation_test"` in your payload to separate it from production-like match rates.)*
+
+### Sandbox Corpus Readiness (v1.8.5+)
+Your agent can locally evaluate its Sandbox runs and convert `SandboxEvidence` into a `SandboxCorpusCandidate` using `client.get_last_sandbox_corpus_candidate()`. This transformation evaluates verification statuses (e.g., `verified`, `mismatch`, `server_observed`) without submitting to the `ExternalObserve` endpoint. Final corpus acceptance remains on the LN Church server-side.
+
 ---

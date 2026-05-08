@@ -101,6 +101,33 @@ class SandboxEvidence(BaseModel):
 
     interop_token_hash: Optional[str] = None
 
+class SandboxCorpusCandidate(BaseModel):
+    """v1.8.5: Sandbox Evidence Corpus Candidate Model"""
+    schema_version: str = "sandbox_corpus_candidate.v1"
+    source_scope: str = "sandbox_internal"
+    evidence_scope: str = "sandbox_internal"
+
+    run_id: Optional[str] = None
+    scenario_id: Optional[str] = None
+    rail: Optional[str] = None
+    payment_intent: Optional[str] = None
+
+    network: Optional[str] = None
+    asset: Optional[str] = None
+    payment_method: Optional[str] = None
+    authorization_scheme: Optional[str] = None
+    draft_shape: Optional[str] = None
+
+    verification_status: Optional[str] = None
+    canonical_hash_matched: Optional[bool] = None
+
+    payment_receipt_present: Optional[bool] = None
+    server_payment_receipt_present: Optional[bool] = None
+    client_reported_payment_receipt_present: Optional[bool] = None
+
+    corpus_eligible: Optional[bool] = None
+    exclusion_reason: Optional[str] = None
+
 class PaymentEvidenceRecord(BaseModel):
     """v1.5.1 Experimental: 支払い判断と結果の証跡レコード"""
     timestamp: float = Field(default_factory=time.time)

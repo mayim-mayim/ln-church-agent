@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.5] - 2026-05-08 (Sandbox Evidence Corpus Readiness)
+* **Added**: `SandboxCorpusCandidate` model to lightly transform sandbox execution evidence into a local candidate format.
+* **Added**: `build_sandbox_corpus_candidate` helper to perform eligibility checks (e.g. `non_sandbox_scope`, `candidate_pending_client_confirmation`).
+* **Added**: `client.get_last_sandbox_corpus_candidate()` and `client.build_sandbox_corpus_candidate_from_last_evidence()`.
+* **Added**: Preserves rail metadata such as `network`, `asset`, `payment_method`, `authorization_scheme`, and `draft_shape` in corpus candidates.
+* **Maintained**: Guaranteed no automatic submissions to `ExternalObserve` telemetry API to prevent Sandbox isolation leakage. Final corpus acceptance remains server-side.
+
 ## [1.8.4] - 2026-05-08 (Sponsored Access & Sandbox Evidence Alignment)
 * **Added**: `SponsoredAccessEvidence` model to safely capture JWS grant consumption metadata (`grant_jti`, `issuer`, `scope`) with strict architectural constraints (`settlement_rail: "none"`).
 * **Added**: `SandboxEvidence` model to capture isolated testbed telemetry from `sandbox_evidence_ref.v1` and `sandbox_evidence_report.v1`.
