@@ -34,10 +34,18 @@ from .models import (
     CorpusReplayResult,
     InspectResult,           
     X402ExactDiagnosticResult,
-    GrantDiagnostics
+    GrantDiagnostics,
+    SponsoredAccessEvidence,
+    SandboxEvidence  
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
+
+from .evidence import (
+    build_sponsored_access_evidence,
+    build_sandbox_evidence_from_response,
+    build_sandbox_interop_report_payload
+)
 
 # 汎用別名
 Http402Client = Payment402Client 
@@ -81,5 +89,10 @@ __all__ = [
     "X402ExactDiagnosticResult",
     "GrantDiagnostics",
     "diagnose_grant_token",
-    "decode_grant_token"
+    "decode_grant_token",
+    "SponsoredAccessEvidence",
+    "SandboxEvidence",
+    "build_sponsored_access_evidence",
+    "build_sandbox_evidence_from_response",
+    "build_sandbox_interop_report_payload"
 ]

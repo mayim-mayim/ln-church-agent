@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from unittest.mock import patch, MagicMock
 from ln_church_agent.models import ExecutionContext, TrustDecision, PaymentEvidenceRecord, EvidenceRepository
 from ln_church_agent.client import Payment402Client
@@ -76,3 +77,38 @@ def test_evidence_import_assists_trust():
             # 成功時も Export されているか
             assert len(repo.exported_records) == 1
             assert repo.exported_records[0].error_message is None
+
+def test_evidence_export_async_is_awaited():
+    """async 環境において export_evidence_async が確実に await されることを確認"""
+    class AsyncMockRepo(EvidenceRepository):
+        def __init__(self):
+            self.exported = []
+            self.awaited = False
+        
+        async def export_evidence_async(self, record, context):
+            await asyncio.sleep(0.01) # 非同期I/Oをシミュレート
+            self.exported.append(record)
+            self.awaited = True
+
+    async def run_test():
+        repo = AsyncMockRepo()
+        client = Payment402Client(base_url="http://mock", evidence_repo=repo)
+        
+        with patch("httpx.AsyncClient.request") as mock_req:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.headers = {}
+            # ★修正: レスポンス自体に Sandbox Evidence と判定される条件を入れる
+            mock_resp.json.return_value = {
+                "status": "success",
+                "meta": {"kind": "sandbox_result", "run_id": "test_async_123"}
+            }
+            mock_req.return_value = mock_resp
+            
+            # 200 OK のみの実行（初回リクエストで証跡が含まれているためExportが発火する）
+            await client.execute_detailed_async("POST", "/test")
+            
+            assert len(repo.exported) == 1
+            assert repo.awaited is True
+
+    asyncio.run(run_test())

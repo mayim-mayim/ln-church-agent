@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.8.4] - 2026-05-08 (Sponsored Access & Sandbox Evidence Alignment)
+* **Added**: `SponsoredAccessEvidence` model to safely capture JWS grant consumption metadata (`grant_jti`, `issuer`, `scope`) with strict architectural constraints (`settlement_rail: "none"`).
+* **Added**: `SandboxEvidence` model to capture isolated testbed telemetry from `sandbox_evidence_ref.v1` and `sandbox_evidence_report.v1`.
+* **Added**: Optional fields `sponsored_access` and `sandbox` to `PaymentEvidenceRecord` for automatic EvidenceRepository exports.
+* **Added**: Safe builder helpers and `sha256_redacted` to ensure raw `interop_token` and `grant_token` secrets are permanently excluded from JSON models and exports.
+* **Added**: New public APIs including `get_last_sponsored_access_evidence()`, `get_last_sandbox_evidence()`, and `get_sandbox_evidence_logs()`.
+* **Maintained**: Guaranteed no automatic submissions to `ExternalObserve` telemetry API to prevent Sandbox isolation leakage.
+
 ## [1.8.3] - 2026-05-08 (Sponsored Access Diagnostics)
 * **Added**: Introduced `GrantDiagnostics` to locally pre-evaluate JWS grant tokens.
 * **Added**: Added `diagnose_grant()` and `explain_grant()` to `LnChurchClient` for AI-friendly payload generation.

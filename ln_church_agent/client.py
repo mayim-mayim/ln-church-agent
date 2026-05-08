@@ -39,11 +39,18 @@ from .challenges import (
     parse_www_authenticate, parse_legacy_header, parse_challenge_from_response
 )
 
+from .evidence import (
+    build_sponsored_access_evidence, 
+    build_sandbox_evidence_from_response, 
+    merge_sandbox_report_result,
+    build_sandbox_interop_report_payload
+)
+
 def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.8.3" 
+        return "1.8.4" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -72,7 +79,7 @@ class Payment402Client:
     def __init__(
         self, 
         private_key: Optional[str] = None, 
-        svm_private_key: Optional[str] = None,  # v1.7.0: SVM専用キーの明示的追加 
+        svm_private_key: Optional[str] = None,
         svm_rpc_url: Optional[str] = None,
         ln_api_url: Optional[str] = None,
         ln_api_key: Optional[str] = None,
@@ -151,7 +158,6 @@ class Payment402Client:
         self.allow_legacy_payment_auth_fallback = allow_legacy_payment_auth_fallback
 
     def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None, prefer_svm: bool = False) -> ParsedChallenge:
-        # PolicyとSignerの情報を渡して、acceptsの選択精度を向上させる
         allowed = getattr(self.policy, "allowed_networks", None) if self.policy else None
         prefer_svm_flag = prefer_svm or self.svm_signer is not None
         
@@ -273,8 +279,6 @@ class Payment402Client:
         l402_report = None
 
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value, "exact"]:
-            
-            # ✅ ここで判定します
             is_svm_exact = parsed.scheme == "exact" and parsed.network.startswith("solana:")
             
             if is_svm_exact:
@@ -292,7 +296,6 @@ class Payment402Client:
                 if not fee_payer:
                     raise PaymentExecutionError("SVM exact challenge requires extra.feePayer.")
                 
-                # Payload生成には正規化前の Raw Asset と Raw Amount を渡す
                 raw_asset = raw_accepted.get("asset") or parsed.parameters.get("token_address") or parsed.asset
                 raw_amount = raw_accepted.get("amount") or parsed.amount
 
@@ -328,7 +331,6 @@ class Payment402Client:
                 headers["X-PAYMENT"] = encoded_payload
 
             else:
-                # --- [EVM exact / x402 Path] ---
                 if not self.evm_signer:
                     raise PaymentExecutionError(f"{parsed.scheme} 決済には evm_signer が必要です。")
                 
@@ -409,9 +411,6 @@ class Payment402Client:
                     }
                     headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        # ==========================================
-        # 2. レガシーな LN Church 独自 Solana ルート
-        # ==========================================
         elif parsed.scheme == SchemeType.lnc_solana_transfer.value:
             if not self.solana_signer:
                 raise PaymentExecutionError("solana_signer が必要です。")
@@ -423,9 +422,6 @@ class Payment402Client:
             payload["paymentAuth"] = {"scheme": parsed.scheme, "proof": proof_ref, "agentId": agent_id}
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
-        # ==========================================
-        # 3. Lightning (L402 / MPP / Payment) ルート
-        # ==========================================
         elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
             if getattr(parsed, "payment_intent", None) == "session":
                 raise PaymentExecutionError("mpp_session_not_supported_yet")
@@ -576,6 +572,40 @@ class Payment402Client:
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
                 else:
                     result.outcome = outcome_matcher(resp_data, context)
+
+            # v1.8.4 Evidence Alignment
+            sponsored_ev = None
+            sandbox_ev = None
+            
+            # 1. Sponsored Access Evidence
+            if resp_data.get("access_path") == "sponsored_grant":
+                grant_diag = getattr(self, "_last_grant_diagnostics", None)
+                grant_token = getattr(self, "grant_token", None)
+                sponsored_ev = build_sponsored_access_evidence(
+                    grant_diagnostics=grant_diag,
+                    response_body=resp_data,
+                    grant_token=grant_token
+                )
+                self._last_sponsored_access_evidence = sponsored_ev
+
+            # 2. Sandbox Evidence
+            if resp_data.get("evidence_ref") or resp_data.get("meta", {}).get("kind") == "sandbox_result":
+                sandbox_ev = build_sandbox_evidence_from_response(resp_data)
+                if sandbox_ev:
+                    self._last_sandbox_evidence = sandbox_ev
+
+            # 3. Evidence の上書き (初回リクエストで直接 200 OK が返り、かつ Evidence がある場合のみ Export)
+            if getattr(self, "evidence_repo", None):
+                if _payment_retry_count == 0 and _current_hop == 0 and (sponsored_ev or sandbox_ev):
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, 
+                        outcome=result.outcome,
+                        sponsored_access=sponsored_ev, 
+                        sandbox=sandbox_ev             
+                    )
+                    self.evidence_repo.export_evidence(record, context)
+
             return result
 
         if res.status_code == 402:
@@ -661,7 +691,9 @@ class Payment402Client:
                         payment_hash=l402_report.payment_hash if l402_report else None,
                         fee_sats=l402_report.fee_sats if l402_report else None,
                         cached_token_used=l402_report.cached_token_used if l402_report else False,
-                        payment_performed=l402_report.payment_performed if l402_report else True
+                        payment_performed=l402_report.payment_performed if l402_report else True,
+                        sponsored_access=getattr(self, "_last_sponsored_access_evidence", None), 
+                        sandbox=getattr(self, "_last_sandbox_evidence", None)
                     )
 
                     self.evidence_repo.export_evidence(record, context)
@@ -673,7 +705,9 @@ class Payment402Client:
                     record_kwargs = {
                         "session_id": context.session_id, "correlation_id": context.correlation_id,
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
-                        "trust_decision": decision, "error_message": str(e)
+                        "trust_decision": decision, "error_message": str(e),
+                        "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
+                        "sandbox": getattr(self, "_last_sandbox_evidence", None)
                     }
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
@@ -726,7 +760,9 @@ class Payment402Client:
                     record = PaymentEvidenceRecord(
                         session_id=context.session_id, correlation_id=context.correlation_id,
                         target_url=url, method=method, navigation_source=source,
-                        outcome=next_result.outcome
+                        outcome=next_result.outcome,
+                        sponsored_access=getattr(self, "_last_sponsored_access_evidence", None),
+                        sandbox=getattr(self, "_last_sandbox_evidence", None)
                     )
                     self.evidence_repo.export_evidence(record, context)
                 return next_result
@@ -804,6 +840,44 @@ class Payment402Client:
                     result.outcome = outcome_matcher(resp_data, _current_receipt, context)
                 else:
                     result.outcome = outcome_matcher(resp_data, context)
+
+            # v1.8.4 Evidence Alignment
+            sponsored_ev = None
+            sandbox_ev = None
+            
+            if resp_data.get("access_path") == "sponsored_grant":
+                grant_diag = getattr(self, "_last_grant_diagnostics", None)
+                grant_token = getattr(self, "grant_token", None)
+                sponsored_ev = build_sponsored_access_evidence(
+                    grant_diagnostics=grant_diag,
+                    response_body=resp_data,
+                    grant_token=grant_token
+                )
+                self._last_sponsored_access_evidence = sponsored_ev
+
+            if resp_data.get("evidence_ref") or resp_data.get("meta", {}).get("kind") == "sandbox_result":
+                sandbox_ev = build_sandbox_evidence_from_response(resp_data)
+                if sandbox_ev:
+                    self._last_sandbox_evidence = sandbox_ev
+
+            if getattr(self, "evidence_repo", None):
+                if _payment_retry_count == 0 and _current_hop == 0 and (sponsored_ev or sandbox_ev):
+                    record = PaymentEvidenceRecord(
+                        session_id=context.session_id, correlation_id=context.correlation_id,
+                        target_url=url, method=method, 
+                        outcome=result.outcome,
+                        sponsored_access=sponsored_ev, 
+                        sandbox=sandbox_ev             
+                    )
+                    if hasattr(self.evidence_repo, "export_evidence_async"):
+                        # create_task ではなく確実に await させる
+                        if inspect.iscoroutinefunction(self.evidence_repo.export_evidence_async):
+                            await self.evidence_repo.export_evidence_async(record, context)
+                        else:
+                            self.evidence_repo.export_evidence_async(record, context)
+                    else:
+                        self.evidence_repo.export_evidence(record, context)
+
             return result
 
         if res.status_code == 402:
@@ -897,10 +971,15 @@ class Payment402Client:
                         payment_hash=l402_report.payment_hash if l402_report else None,
                         fee_sats=l402_report.fee_sats if l402_report else None,
                         cached_token_used=l402_report.cached_token_used if l402_report else False,
-                        payment_performed=l402_report.payment_performed if l402_report else True
+                        payment_performed=l402_report.payment_performed if l402_report else True,
+                        sponsored_access=getattr(self, "_last_sponsored_access_evidence", None),
+                        sandbox=getattr(self, "_last_sandbox_evidence", None)
                     )
                     if hasattr(self.evidence_repo, "export_evidence_async"):
-                        await self.evidence_repo.export_evidence_async(record, context)
+                        if inspect.iscoroutinefunction(self.evidence_repo.export_evidence_async):
+                            await self.evidence_repo.export_evidence_async(record, context)
+                        else:
+                            self.evidence_repo.export_evidence_async(record, context)
                     else:
                         self.evidence_repo.export_evidence(record, context)
 
@@ -911,7 +990,9 @@ class Payment402Client:
                     record_kwargs = {
                         "session_id": context.session_id, "correlation_id": context.correlation_id,
                         "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
-                        "trust_decision": decision, "error_message": str(e)
+                        "trust_decision": decision, "error_message": str(e),
+                        "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
+                        "sandbox": getattr(self, "_last_sandbox_evidence", None)
                     }
                     if payment_completed:
                         record_kwargs["session_spend_delta_usd"] = delta_usd
@@ -920,7 +1001,10 @@ class Payment402Client:
                     record = PaymentEvidenceRecord(**record_kwargs)
                     
                     if hasattr(self.evidence_repo, "export_evidence_async"):
-                        await self.evidence_repo.export_evidence_async(record, context)
+                        if inspect.iscoroutinefunction(self.evidence_repo.export_evidence_async):
+                            await self.evidence_repo.export_evidence_async(record, context)
+                        else:
+                            self.evidence_repo.export_evidence_async(record, context)
                     else:
                         self.evidence_repo.export_evidence(record, context)
                 raise
@@ -968,10 +1052,15 @@ class Payment402Client:
                     record = PaymentEvidenceRecord(
                         session_id=context.session_id, correlation_id=context.correlation_id,
                         target_url=url, method=method, navigation_source=source,
-                        outcome=next_result.outcome
+                        outcome=next_result.outcome,
+                        sponsored_access=getattr(self, "_last_sponsored_access_evidence", None),
+                        sandbox=getattr(self, "_last_sandbox_evidence", None)
                     )
                     if hasattr(self.evidence_repo, "export_evidence_async"):
-                        await self.evidence_repo.export_evidence_async(record, context)
+                        if inspect.iscoroutinefunction(self.evidence_repo.export_evidence_async):
+                            await self.evidence_repo.export_evidence_async(record, context)
+                        else:
+                            self.evidence_repo.export_evidence_async(record, context)
                     else:
                         self.evidence_repo.export_evidence(record, context)
                 return next_result
@@ -997,7 +1086,7 @@ class LnChurchClient(Payment402Client):
         self, 
         agent_id: Optional[str] = None, 
         private_key: Optional[str] = None, 
-        svm_private_key: Optional[str] = None,  # 追加: EVMとSolanaのキーを分離
+        svm_private_key: Optional[str] = None,
         svm_rpc_url: Optional[str] = None,
         ln_api_url: Optional[str] = None,
         ln_api_key: Optional[str] = None,   
@@ -1063,7 +1152,6 @@ class LnChurchClient(Payment402Client):
         self.grant_token = token
 
     def diagnose_grant(self, route: str = "/api/agent/omikuji", method: str = "POST") -> "GrantDiagnostics":
-        """Locally diagnose the currently set grant token."""
         from .grants import diagnose_grant_token
         return diagnose_grant_token(
             self.grant_token,
@@ -1074,7 +1162,6 @@ class LnChurchClient(Payment402Client):
         )
 
     def explain_grant(self, route: str = "/api/agent/omikuji", method: str = "POST") -> dict:
-        """Returns a JSON-friendly, human/LLM-readable explanation of the grant's usability."""
         diag = self.diagnose_grant(route=route, method=method)
         res = {
             "usable": diag.usable,
@@ -1098,9 +1185,8 @@ class LnChurchClient(Payment402Client):
         return res
 
     def has_valid_scoped_grant(self, target_path: str, method: str) -> bool:
-        """Evaluates if the grant is usable, preserving the diagnostic result internally."""
         diag = self.diagnose_grant(route=target_path, method=method)
-        self._last_grant_diagnostics = diag  # 保存しておくことでデバッグやトレースに利用可能
+        self._last_grant_diagnostics = diag
         return diag.usable
 
     def _inject_telemetry(self, headers: Optional[dict]) -> dict:
@@ -1420,7 +1506,6 @@ class LnChurchClient(Payment402Client):
 
         auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
 
-        # L402側もサーバーレシートの存在を厳密に判定
         payment_receipt_present = bool(
             receipt
             and getattr(receipt, "receipt_token", None)
@@ -1514,7 +1599,6 @@ class LnChurchClient(Payment402Client):
 
         auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
 
-        # L402側もサーバーレシートの存在を厳密に判定
         payment_receipt_present = bool(
             receipt
             and getattr(receipt, "receipt_token", None)
@@ -1873,7 +1957,6 @@ class LnChurchClient(Payment402Client):
         descriptor_url = f"{base}/api/agent/benchmark/replay/{corpus_id}"
         headers = {"User-Agent": CUSTOM_USER_AGENT}
         
-        # 1. Fetch Descriptor
         try:
             res_desc = requests.get(descriptor_url, headers=headers)
         except Exception as e:
@@ -1911,7 +1994,6 @@ class LnChurchClient(Payment402Client):
 
         challenge_url = challenge_path if challenge_path.startswith("http") else f"{base}{challenge_path}"
 
-        # 2. Fetch Synthetic Challenge
         try:
             res_chal = requests.get(challenge_url, headers=headers)
         except Exception as e:
@@ -1926,7 +2008,6 @@ class LnChurchClient(Payment402Client):
         except Exception:
             chal_data = {}
 
-        # Body overrides descriptor expectation
         body_expected = chal_data.get("expected_client_behavior", {}).get("action")
         final_expected_action = body_expected or desc_expected
 
@@ -1934,10 +2015,8 @@ class LnChurchClient(Payment402Client):
         failure_reason = None
         parsed_scheme, parsed_rail, parsed_intent, parsed_shape = None, None, None, None
         
-       # requests.Response を httpx.Response に変換する薄いアダプター
         def _parse_challenge_from_requests_response(req_res):
             import httpx
-            # json() が失敗する場合は空辞書を入れる
             try:
                 content = req_res.content
             except Exception:
@@ -1951,21 +2030,18 @@ class LnChurchClient(Payment402Client):
             )
             return self._parse_challenge(dummy_httpx_res)
 
-        # 3. Dry-Run Parse
         parsed_challenge = None
         parse_error = None
         if res_chal.status_code in (402, 401, 403):
             try:
-                # ★ 修正: ダックタイピングをやめ、アダプター経由で呼び出す
                 parsed_challenge = _parse_challenge_from_requests_response(res_chal)
                 parsed_scheme = getattr(parsed_challenge, "scheme", None)
                 parsed_intent = getattr(parsed_challenge, "payment_intent", None)
                 parsed_shape = getattr(parsed_challenge, "draft_shape", None)
-                parsed_rail = parsed_scheme # MVP approximation
+                parsed_rail = parsed_scheme
             except Exception as e:
                 parse_error = str(e)
 
-        # 4. Agent Behavior Observation Rules
         if final_expected_action == "stop_safely":
             observed_action = "stop_safely"
         elif final_expected_action == "reject_invalid" or res_chal.status_code in (400, 422):
@@ -2289,7 +2365,6 @@ class LnChurchClient(Payment402Client):
             upstream_host_excerpt=upstream_host,
             debug_logs=logs
         )
-# ln_church_agent/client.py 内 (LnChurchClient クラスの最後に追加)
 
     # ==========================================
     # Phase 3: x402 Exact Sandbox Diagnostic Runners
@@ -2454,7 +2529,6 @@ class LnChurchClient(Payment402Client):
     # Phase 3: External Observation API (M2M)
     # ==========================================
     def _strip_secrets_from_evidence(self, d: Optional[dict]) -> dict:
-        """Raw Secret が外部に送信されるのを防ぐローカルストリップ処理"""
         if not d:
             return {}
         safe_dict = d.copy()
@@ -2536,3 +2610,30 @@ class LnChurchClient(Payment402Client):
         if quality: params["quality"] = quality
         if source: params["source"] = source
         return await self.execute_request_async("GET", "/api/agent/external/observations", payload=params)
+
+    # ==========================================
+    # v1.8.4: Public API for Evidence & Sandbox
+    # ==========================================
+    def get_last_sponsored_access_evidence(self):
+        return getattr(self, "_last_sponsored_access_evidence", None)
+
+    def get_last_sandbox_evidence(self):
+        return getattr(self, "_last_sandbox_evidence", None)
+
+    def extract_sandbox_evidence(self, response_json: dict):
+        return build_sandbox_evidence_from_response(response_json)
+
+    def build_sandbox_interop_report_payload(self, **kwargs) -> dict:
+        return build_sandbox_interop_report_payload(**kwargs)
+
+    def submit_sandbox_interop_report(self, payload: dict) -> dict:
+        res = self.execute_request("POST", "/api/agent/sandbox/interop/report", payload=payload)
+        
+        sandbox_ev = self.get_last_sandbox_evidence()
+        if sandbox_ev:
+            merge_sandbox_report_result(sandbox_ev, res)
+        return res
+
+    def get_sandbox_evidence_logs(self, run_id: str) -> dict:
+        params = {"run_id": run_id}
+        return self.execute_request("GET", "/api/agent/sandbox/interop/logs", payload=params)

@@ -1,10 +1,10 @@
 import uuid
+import time
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
-import time
 
 class ChallengeSource(str, Enum):
     STANDARD_X402 = "payment_required_header"  # PAYMENT-REQUIRED
@@ -46,6 +46,61 @@ class OutcomeSummary(BaseModel):
     message: str = ""
     external_evidence: dict = Field(default_factory=dict)
 
+class SponsoredAccessEvidence(BaseModel):
+    """v1.8.4: Sponsored Access (Grant) の実行証跡"""
+    access_path: str = "sponsored_grant"
+    authorization_artifact: str = "scoped_grant"
+    settlement_rail: str = "none"
+
+    grant_jti: Optional[str] = None
+    issuer: Optional[str] = None
+    sponsor_id: Optional[str] = None
+    entitlement: Optional[str] = None
+
+    scope_routes: List[str] = Field(default_factory=list)
+    scope_methods: List[str] = Field(default_factory=list)
+
+    local_diagnostic_ok: Optional[bool] = None
+    local_diagnostic_failure_class: Optional[str] = None
+    local_diagnostic_reason: Optional[str] = None
+
+    server_consumed: Optional[bool] = None
+    receipt_present: bool = False
+    verify_token_present: bool = False
+
+    token_hash: Optional[str] = None
+
+class SandboxEvidence(BaseModel):
+    """v1.8.4: Sandboxの実行およびReport結果の証跡"""
+    schema_version: str = "sandbox_evidence.v1"
+    evidence_scope: str = "sandbox_internal"
+
+    run_id: Optional[str] = None
+    scenario_id: Optional[str] = None
+    rail: Optional[str] = None
+    payment_intent: Optional[str] = None
+    payment_method: Optional[str] = None
+    authorization_scheme: Optional[str] = None
+    draft_shape: Optional[str] = None
+    network: Optional[str] = None
+    asset: Optional[str] = None
+
+    canonical_hash_expected: Optional[str] = None
+    canonical_hash_actual: Optional[str] = None
+    canonical_hash_matched: Optional[bool] = None
+
+    payment_receipt_present: Optional[bool] = None
+    server_payment_receipt_present: Optional[bool] = None
+    client_reported_payment_receipt_present: Optional[bool] = None
+    payment_receipt_id: Optional[str] = None
+
+    verification_status: Optional[str] = None
+
+    report_interop_url: Optional[str] = None
+    logs_url: Optional[str] = None
+
+    interop_token_hash: Optional[str] = None
+
 class PaymentEvidenceRecord(BaseModel):
     """v1.5.1 Experimental: 支払い判断と結果の証跡レコード"""
     timestamp: float = Field(default_factory=time.time)
@@ -56,20 +111,21 @@ class PaymentEvidenceRecord(BaseModel):
     scheme: Optional[str] = None
     asset: Optional[str] = None
     amount: Optional[float] = None
-    trust_decision: Optional[TrustDecision] = None
+    trust_decision: Optional[Any] = None # Forward ref回避のためAny
     receipt_summary: Optional[dict] = None
-    outcome: Optional[OutcomeSummary] = None
+    outcome: Optional[Any] = None
     error_message: Optional[str] = None
-    # v1.5.8 Beta Update: Added field to track the origin of the navigation hint
     navigation_source: Optional[str] = None
-    # v1.5.9 Update: セッション予算の永続化・復元用の消費USD記録（決済成功時のみ記録）
     session_spend_delta_usd: Optional[float] = None
-    # --- 新規追加 (Widening) ---
     delegate_source: str = "native"
     payment_hash: Optional[str] = None
     fee_sats: Optional[int] = None
     cached_token_used: bool = False
     payment_performed: bool = True
+    
+    # --- v1.8.4 新規追加 (Widening) ---
+    sponsored_access: Optional[SponsoredAccessEvidence] = None
+    sandbox: Optional[SandboxEvidence] = None
 
 class ExecutionContext(BaseModel):
     """軽量な意図とセッションのコンテキスト"""
