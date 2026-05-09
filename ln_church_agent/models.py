@@ -551,6 +551,15 @@ class InspectResult(BaseModel):
     url: str
     http_status: Optional[int] = None
     rails_detected: List[str] = Field(default_factory=list)
+    
+    # --- 💡 新規追加 (v1.9.0: Commerce Surface vs Settlement Rail) ---
+    surface_type: Optional[str] = None
+    surfaces_detected: List[str] = Field(default_factory=list)
+    settlement_rails_detected: List[str] = Field(default_factory=list)
+    detection_confidence: Optional[str] = None
+    detection_reason: Optional[str] = None
+    unsupported_reason: Optional[str] = None
+    
     challenge_source: Optional[str] = None
     payment_intent: Optional[str] = None
     draft_shape: Optional[str] = None
@@ -562,7 +571,7 @@ class InspectResult(BaseModel):
     failure_reason: Optional[str] = None
     diagnostic_class: Optional[str] = None
     failure_class: Optional[str] = None
-    # --- 💡 新規追加 (v1.8.0: Agent Commerce Surfaces / AP2 / ACP / OKX APP) ---
+
     commerce_protocol: Optional[str] = None
     commerce_intent: Optional[str] = None
     commerce_transport: Optional[str] = None

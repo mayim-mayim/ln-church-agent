@@ -175,7 +175,7 @@ def build_sandbox_corpus_candidate(sandbox_evidence: SandboxEvidence) -> Sandbox
         payment_method=sandbox_evidence.payment_method,
         authorization_scheme=sandbox_evidence.authorization_scheme,
         draft_shape=sandbox_evidence.draft_shape,
-
+  
         verification_status=sandbox_evidence.verification_status,
         canonical_hash_matched=sandbox_evidence.canonical_hash_matched,
         payment_receipt_present=sandbox_evidence.payment_receipt_present,

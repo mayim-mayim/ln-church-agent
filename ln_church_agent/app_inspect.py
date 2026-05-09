@@ -4,13 +4,7 @@ from typing import Optional, Dict, Any
 from .challenges import b64url_decode_json
 
 def _extract_json_payloads(response: httpx.Response) -> list[Dict[str, Any]]:
-    """
-    HTTPレスポンスの Body および ヘッダーから潜在的なJSONペイロードを抽出する。
-    WWW-Authenticate や PAYMENT-REQUIRED に埋め込まれた Base64URL JSON にも対応。
-    """
     payloads = []
-    
-    # 1. JSON Bodyからの抽出
     try:
         body = response.json()
         if isinstance(body, dict):
@@ -18,11 +12,9 @@ def _extract_json_payloads(response: httpx.Response) -> list[Dict[str, Any]]:
     except Exception:
         pass
 
-    # 2. HTTPヘッダーからの抽出
     for header, value in response.headers.items():
         h_lower = header.lower()
         if h_lower in ["payment-required", "www-authenticate", "x-agent-payment"]:
-            # WWW-Authenticate: Payment request="<base64url>" などの形式に対応
             match = re.search(r'request="?([^",]+)"?', value)
             if match:
                 b64_val = match.group(1)
@@ -30,7 +22,6 @@ def _extract_json_payloads(response: httpx.Response) -> list[Dict[str, Any]]:
                 if decoded:
                     payloads.append(decoded)
             else:
-                # PAYMENT-REQUIRED: <base64url> の形式に対応
                 decoded = b64url_decode_json(value)
                 if decoded:
                     payloads.append(decoded)
@@ -38,102 +29,121 @@ def _extract_json_payloads(response: httpx.Response) -> list[Dict[str, Any]]:
     return payloads
 
 def _is_x_layer_network(value: Any) -> bool:
-    """X Layer ネットワークの厳密な判定"""
     s = str(value).lower().strip()
     return s in {"196", "eip155:196", "xlayer", "x-layer"}
 
-def detect_app_surface(response: httpx.Response) -> Optional[Dict[str, Any]]:
+def detect_commerce_surface(response: httpx.Response) -> Optional[Dict[str, Any]]:
     """
-    Agent Commerce surface (OKX APP, および将来の AP2 / ACP / UCP 等) を検出・分類する。
-    単独の eip3009 や appVersion では APP と判定せず、明示的なシグナルを必須とする。
-    
-    Returns:
-        Commerce Surface と判定された場合は詳細な dict を返す。そうでない場合は None。
+    Agent Commerce surface (AP2, ACP, OKX APP 等) を検出・分類する。
+    AP2/ACP は settlement proof ではなく commerce/authorization surface として扱う。
     """
     payloads = _extract_json_payloads(response)
     if not payloads:
         return None
 
-    # すべてのペイロードをフラットにマージ（ヘッダーとBodyの情報を統合評価）
     merged = {}
     for p in payloads:
         merged.update(p)
 
+    proto = str(merged.get("protocol") or merged.get("agentPaymentsProtocol") or "").lower()
+    intent = str(merged.get("intent") or merged.get("paymentIntent") or "").lower()
+
+    # --- 1. AP2 Detection & Artifact Classification ---
+    is_ap2 = False
+    if proto in ["ap2", "agent-payments-protocol"]: is_ap2 = True
+    if any(k in merged for k in ["payment_mandate", "checkout_mandate", "mandate_id", "mandate.vct"]): is_ap2 = True
+    if intent in ["payment_mandate", "checkout_mandate", "mandate"]: is_ap2 = True
+
+    if is_ap2:
+        # Artifact 分類
+        art = "payment_mandate"
+        if intent == "checkout_mandate" or "checkout_mandate" in merged:
+            art = "checkout_mandate"
+        
+        return {
+            "commerce_protocol": "ap2",
+            "surface_type": "authorization",
+            "commerce_intent": intent if intent else "payment_mandate",
+            "authorization_artifact": art,
+            "confidence": "high",
+            "reason": "AP2-like mandate metadata detected",
+            "commerce_transport": "http",
+            "raw_detected_fields": merged
+        }
+
+    # --- 2. ACP Detection & Artifact Classification ---
+    is_acp = False
+    if proto in ["acp", "agentic commerce protocol", "agentic-commerce-protocol"]: is_acp = True
+    if any(k in merged for k in ["delegate_payment", "delegated_payment", "shared_payment_token"]): is_acp = True
+    if intent in ["agentic_checkout", "cart", "catalog", "delegated_payment"]: is_acp = True
+
+    if is_acp:
+        # Artifact 分類
+        art = "delegated_payment_token" # Default for delegated_payment
+        if intent == "catalog":
+            art = "none"
+        elif "shared_payment_token" in merged:
+            art = "shared_payment_token"
+        
+        surface_type = "catalog" if intent == "catalog" else "checkout"
+        return {
+            "commerce_protocol": "acp",
+            "surface_type": surface_type,
+            "commerce_intent": intent if intent else "agentic_checkout",
+            "authorization_artifact": art,
+            "confidence": "high",
+            "reason": "ACP-like checkout or delegated payment metadata detected",
+            "commerce_transport": "http",
+            "raw_detected_fields": merged
+        }
+
+    # --- 3. OKX APP (Legacy) Detection ---
     score = 0
-    commerce_protocol = None
-    commerce_intent = None
-    settlement_method = None
-    network = None
-    broker_required = None
-    commerce_transport = "http"
     is_explicit_signal = False
-
-    # --- ヒューリスティック・スコアリング ---
-
-    # 1. プロトコルの明示的宣言
-    proto = merged.get("protocol") or merged.get("agentPaymentsProtocol")
-    if isinstance(proto, str) and proto.lower() in ["okx-app", "agent-payments-protocol", "app"]:
+    if proto in ["okx-app", "app"]:
         score += 50
         is_explicit_signal = True
-        commerce_protocol = "okx_app"
-
-    if "appVersion" in merged:
-        score += 20
-
-    # 2. Broker オブジェクトの存在 (Commerce Orchestration の特徴)
+    
     broker = merged.get("broker")
-    if broker and isinstance(broker, dict):
+    broker_req = None
+    if isinstance(broker, dict):
         score += 30
         is_explicit_signal = True
-        req = broker.get("required")
-        broker_required = bool(req) if req is not None else None
-
-    # 3. Intent (商取引の意図)
-    intent = merged.get("intent") or merged.get("paymentIntent")
-    if isinstance(intent, str):
-        intent_lower = intent.lower()
-        commerce_intent = intent_lower
+        broker_req = bool(broker.get("required"))
         
-        # 高度な Commerce Intent の場合は明示的シグナルとみなす
-        if intent_lower in ["batch", "escrow", "upto"]:
-            score += 30
-            is_explicit_signal = True
-        elif intent_lower in ["charge", "session"]:
-            score += 5
-
-    # 4. Payment / Settlement レールの特徴 (EIP-3009, X Layer等)
+    if intent in ["batch", "escrow", "upto"]:
+        score += 30
+        is_explicit_signal = True
+    elif intent in ["charge", "session"]:
+        score += 5
+        
     payment = merged.get("payment") or merged.get("settlement") or {}
-    if not isinstance(payment, dict):
-        payment = {}
-
+    if not isinstance(payment, dict): payment = {}
     method = payment.get("method") or merged.get("method")
-    if isinstance(method, str) and method.lower() == "eip3009":
-        score += 10
-        settlement_method = "evm_eip3009"
-
+    settlement_method = "evm_eip3009" if str(method).lower() == "eip3009" else str(method) if method else "unknown"
     net = payment.get("network") or merged.get("network") or merged.get("chainId")
-    if net and _is_x_layer_network(net):
-        score += 10
-        network = str(net)
+    network_val = str(net) if net else "unknown"
 
-    # --- 判定 ---
-    
-    # 誤検知防止: 明示的なシグナル（protocol, broker, 高度なintent）がない場合は棄却
-    if not is_explicit_signal:
-        return None
+    if is_explicit_signal and score >= 30:
+        return {
+            "commerce_protocol": "okx_app",
+            "surface_type": "app_payment",
+            "commerce_intent": intent if intent else "unknown",
+            "commerce_transport": "http",
+            "authorization_artifact": "none",
+            "confidence": "high" if score >= 50 else "medium",
+            "reason": "OKX APP metadata detected",
+            "broker_required": broker_req,
+            "settlement_method": settlement_method,
+            "network": network_val,
+            "raw_detected_fields": merged
+        }
 
-    # スコアが閾値に満たない場合も棄却
-    if score < 30:
-        return None
+    return None
 
-    return {
-        "rail": "APP",
-        "commerce_protocol": commerce_protocol or "unknown_commerce_protocol",
-        "commerce_intent": commerce_intent or "unknown",
-        "commerce_transport": commerce_transport,
-        "settlement_method": settlement_method or "unknown",
-        "network": network or "unknown",
-        "broker_required": broker_required,
-        "raw_detected_fields": merged,
-        "confidence": "high" if score >= 50 else "medium"
-    }
+def detect_app_surface(response: httpx.Response) -> Optional[Dict[str, Any]]:
+    """Legacy wrapper for v1.8 backward compatibility"""
+    res = detect_commerce_surface(response)
+    if res and res.get("commerce_protocol") == "okx_app":
+        return res
+    return None

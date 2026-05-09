@@ -1,20 +1,19 @@
 import argparse
 import requests
 import httpx
+import re
 from typing import Optional, List
 from .models import InspectResult
 from .challenges import parse_challenge_from_response
 from .exceptions import PaymentChallengeError
-from .app_inspect import detect_app_surface
+from .app_inspect import detect_commerce_surface, detect_app_surface
 
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
-    """requests のレスポンスをパーサーが期待する httpx の形に変換する内部ヘルパー"""
     try:
         content = req_res.content or b""
     except Exception:
         content = b""
 
-    # httpxが再度decompressやchunk分割を行わないよう、元データ由来のヘッダーを除去する
     unsafe_headers = {
         "content-encoding",
         "transfer-encoding",
@@ -35,7 +34,8 @@ def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET")
     )
 
 def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
-    """スキーム名から決済レール名への正規化 (v1.8.1 Payment対応)"""
+    if not scheme or scheme.lower() == "unknown":
+        return "unknown"
     if scheme == "exact":
         return "x402"
     if scheme == "Payment" and parsed:
@@ -45,12 +45,11 @@ def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
         if method in ["eip3009", "exact", "evm", "x402"]:
             return "x402"
         return "unknown"
-    if scheme in ["L402", "MPP", "Payment"]:
+    if scheme in ["L402", "MPP", "Payment", "x402"]:
         return scheme
-    return scheme if scheme and scheme != "unknown" else None
+    return scheme
 
 def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResult:
-    """指定URLに対して無支払いの検査リクエストを送り、チャレンジの構造を判定する"""
     try:
         res = requests.request(method, url, timeout=timeout)
     except Exception as e:
@@ -64,13 +63,12 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             will_execute_payment=False
         )
 
-    # 1. Adapterの変換で落ちないように保護し、失敗時は構造化して返す
     try:
         httpx_res = _requests_to_httpx_response(res, method)
     except Exception as e:
         is_402 = res.status_code in (402, 401, 403)
         return InspectResult(
-            ok=is_402,  # 402が見えているならTrueにしてobserve_onlyとする
+            ok=is_402,
             url=url,
             http_status=res.status_code,
             error_stage="response_adapter",
@@ -90,59 +88,99 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         except Exception as e:
             parse_error = str(e)
 
-    # 2. Commerce Surface (APP 等) の検出
-    app_info = detect_app_surface(httpx_res)
+    # 💡 Commerce Surface の検出
+    commerce_info = detect_commerce_surface(httpx_res)
 
-    # 3. Commerce Surface が検出された場合
-    if app_info:
+    if commerce_info:
+        c_protocol = commerce_info.get("commerce_protocol")
+        c_intent = commerce_info.get("commerce_intent")
+        
         scheme = getattr(parsed, "scheme", "unknown") if parsed else "unknown"
         s_rail = _settlement_rail_from_scheme(scheme, parsed)
         
-        rails_detected = ["APP"]
+        surfaces_detected = []
+        settlement_rails_detected = []
+        rails_detected = [] 
+
+        # Surface classification
+        if c_protocol == "ap2":
+            surfaces_detected.append("AP2")
+            # rails_detected には入れない
+        elif c_protocol == "acp":
+            surfaces_detected.append("ACP")
+            # rails_detected には入れない
+        elif c_protocol == "okx_app":
+            surfaces_detected.append("OKX_APP")
+            rails_detected.append("APP") # v1.8.0 互換のため維持
+
+        # Settlement rail classification (実行可能なもののみ)
         if scheme == "Payment":
-            rails_detected.append("Payment")
+            # rails_detected に Payment を残すのは互換性のため許容
+            rails_detected.append("Payment") 
             if s_rail and s_rail not in ["Payment", "unknown"]:
+                settlement_rails_detected.append(s_rail)
                 rails_detected.append(s_rail)
         elif s_rail and s_rail != "unknown":
+            settlement_rails_detected.append(s_rail)
             rails_detected.append(s_rail)
-        else:
-            if scheme and scheme != "unknown":
-                rails_detected.append(scheme)
 
-        c_intent = app_info.get("commerce_intent")
         action = "observe_only"
-        reason = "Agent Commerce surface detected. Inspect-only mode does not execute commerce payments yet."
+        unsupported_reason = None
 
-        if c_intent in ["session", "escrow", "upto"]:
-            action = "stop_safely"
-            reason = f"High-intent commerce flow ({c_intent}) observed but not executed by default."
+        if c_protocol in ["ap2", "acp"]:
+            reason = commerce_info.get("reason", "Agent Commerce surface detected.")
+            has_payment_headers = any(h.lower() in ["www-authenticate", "payment-required", "x-payment-required", "x-402-payment-required"] for h in httpx_res.headers.keys())
+            is_malformed_hint = False
+            
+            if parse_error and has_payment_headers:
+                is_malformed_hint = True
+            elif scheme != "unknown" and s_rail not in ["x402", "L402", "MPP", "Payment"]:
+                is_malformed_hint = True
+
+            if is_malformed_hint:
+                action = "stop_safely"
+                unsupported_reason = "Malformed or unsupported settlement hint co-existing with commerce surface."
+            else:
+                action = "observe_only"
+                if settlement_rails_detected:
+                    reason += " (Concrete HTTP 402 settlement challenge also detected, but payment is not executed by default for AP2/ACP)."
+        else:
+            # 💡 修正: OKX APP のレガシー互換（既存テストがこの固定文字列を期待しているため元に戻す）
+            reason = "Agent Commerce surface detected."
+            if c_intent in ["session", "escrow", "upto"]:
+                action = "stop_safely"
+                reason = f"High-intent commerce flow ({c_intent}) observed but not executed by default."
 
         return InspectResult(
             ok=True,
             url=url,
             http_status=res.status_code,
             rails_detected=rails_detected,
+            surfaces_detected=surfaces_detected,
+            settlement_rails_detected=settlement_rails_detected,
+            surface_type=commerce_info.get("surface_type"),
+            detection_confidence=commerce_info.get("confidence"),
+            detection_reason=commerce_info.get("reason"),
+            unsupported_reason=unsupported_reason,
             recommended_action=action,
             reason=reason,
             will_execute_payment=False,
             diagnostic_class="commerce_surface_detected",
-            commerce_protocol=app_info.get("commerce_protocol"),
+            commerce_protocol=c_protocol,
             commerce_intent=c_intent,
-            commerce_transport=app_info.get("commerce_transport"),
-            authorization_artifact=None,
-            settlement_rail=s_rail,
-            settlement_method=app_info.get("settlement_method"),
-            network=app_info.get("network"),
-            broker_required=app_info.get("broker_required"),
-            classification_confidence=app_info.get("confidence"),
-            app_protocol=app_info.get("commerce_protocol"),
+            commerce_transport=commerce_info.get("commerce_transport", "http"),
+            authorization_artifact=commerce_info.get("authorization_artifact"),
+            settlement_rail=s_rail if s_rail != "unknown" else None,
+            settlement_method=commerce_info.get("settlement_method"),
+            network=commerce_info.get("network"),
+            broker_required=commerce_info.get("broker_required"),
+            classification_confidence=commerce_info.get("confidence"),
+            app_protocol=c_protocol,
             app_intent=c_intent,
-            app_transport=app_info.get("commerce_transport"),
-            error_stage=None,
-            failure_reason=None
+            app_transport=commerce_info.get("commerce_transport", "http")
         )
 
-    # 4. Commerce Surface が検出されなかった場合の既存ロジック
+    # --- Commerce Surface ではない既存ロジック ---
     if res.status_code < 400 and res.status_code != 402:
         return InspectResult(
             ok=True,
@@ -227,6 +265,7 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             url=url,
             http_status=res.status_code,
             rails_detected=rails,
+            settlement_rails_detected=rails, 
             challenge_source=source.value if source else None,
             payment_intent=intent,
             draft_shape=shape,
@@ -278,6 +317,7 @@ def main():
             print(f"  HTTP Status        : {result.http_status}")
             print(f"  Action             : {result.recommended_action}")
             print(f"  Rails Detected     : {', '.join(result.rails_detected) if result.rails_detected else 'None'}")
+            print(f"  Surfaces Detected  : {', '.join(result.surfaces_detected) if result.surfaces_detected else 'None'}")
             print(f"  Reason             : {result.reason}")
             if result.next_command:
                 print(f"  Next Command       : {result.next_command}")
@@ -305,6 +345,8 @@ def main():
         }
         if diag.reason:
             res["reason"] = diag.reason
+        if diag.fallback_action:
+            res["fallback_action"] = diag.fallback_action
         print(json.dumps(res, indent=2))
 
 if __name__ == "__main__":

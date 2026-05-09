@@ -7,7 +7,7 @@ Will it inspect, decide, pay, recover, verify, and continue — or freeze?
 `ln-church-agent` is a **buyer-side HTTP 402 runtime and agent-commerce surface inspector** for autonomous agents.  
 It helps agents inspect paid-action surfaces, distinguish executable payment rails from higher-order commerce protocols, and prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
 
-In v1.8+, the inspect layer can classify emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP)** without executing payment logic. Future protocols such as **Google AP2, ACP, and UCP** are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
+In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP), Google AP2, and ACP** without executing payment logic. These protocols are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
 
 ## Core Doctrine
 
@@ -94,29 +94,33 @@ Canonical first loop: `inspect → decide → pay → verify → trace`
 
 ## 🧭 Agent Commerce Surface Inspection
 
-`ln-church-agent` v1.8+ extends `inspect` from a payment-rail preflight tool into an **Agent Commerce Surface Inspector**.
+`ln-church-agent` v1.8+ extends `inspect` from a payment-rail preflight tool into an **Agent Commerce Surface Inspector**, with v1.9.0 adding explicit classification for **Google AP2 and ACP**.
 
-It can safely detect higher-order commerce metadata, starting with OKX Agent Payments Protocol (APP), while keeping settlement execution strictly disabled during inspection.
+It can safely detect higher-order commerce metadata, starting with OKX Agent Payments Protocol (APP), AP2 mandates, and ACP checkouts, while keeping settlement execution strictly disabled during inspection.
 
 Example output:
 
 ```json
 {
-  "rails_detected": ["APP", "x402"],
-  "commerce_protocol": "okx_app",
-  "commerce_intent": "charge",
-  "commerce_transport": "http",
+  "ok": true,
+  "url": "[https://api.example.com/checkout](https://api.example.com/checkout)",
+  "http_status": 402,
+  "surfaces_detected": ["ACP"],
+  "settlement_rails_detected": ["x402"],
+  "surface_type": "checkout",
+  "commerce_protocol": "acp",
+  "commerce_intent": "agentic_checkout",
   "settlement_rail": "x402",
-  "settlement_method": "evm_eip3009",
   "recommended_action": "observe_only",
   "will_execute_payment": false
 }
+
 ```
 
 This distinction is intentional:
 
 * **L402 / x402 / MPP** are treated as executable payment rails.
-* **OKX APP / AP2 / ACP / UCP / card-network agent payments** are treated as commerce, authorization, identity, or checkout surfaces unless they expose a concrete HTTP 402-compatible settlement path.
+* **Google AP2 / ACP / OKX APP / card-network agent payments** are treated as commerce, authorization, identity, or checkout surfaces. Even if they expose a concrete HTTP 402-compatible settlement path, their baseline recommendation defaults to observation.
 * `inspect` never executes payment, initializes wallets, signs payloads, or calls brokers.
 
 Use this mode when your agent needs to understand a paid-action surface before deciding whether payment execution is safe, unsupported, or observation-only.
@@ -227,8 +231,9 @@ The SDK supports multiple settlement rails through a unified interface.
 * *Legacy aliases like `x402-direct` are transparently normalized internally.*
 
 **Observable Commerce / Authorization Surfaces (Inspect-Only):**
-* **OKX APP**: Detected as an agent-commerce surface when explicit APP metadata, broker objects, or higher-order commerce intents are present. The SDK does not execute OKX APP payments.
-* **AP2 / ACP / UCP**: Reserved classification space for emerging agent-commerce, mandate, checkout, and authorization protocols. These are not treated as executable rails unless they expose a concrete HTTP 402-compatible settlement path.
+* **AP2 (Agent Payments Protocol)**: Detected via payment/checkout mandate metadata. Classified as an authorization surface. The SDK does not sign mandates.
+* **ACP (Agentic Commerce Protocol)**: Detected via checkout, cart, or delegated payment token metadata. The SDK does not execute ACP checkouts.
+* **OKX APP**: Detected when explicit APP metadata or broker objects are present.
 * **Card-network / wallet-mediated agent payments**: Treated as observable commerce or authorization patterns, not native SDK execution targets.
 
 ---

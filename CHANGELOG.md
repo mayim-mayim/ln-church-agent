@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.0] - 2026-05-09 (AP2 / ACP Inspect-Only Commerce Surface Detection)
+* **Added**: Expanded the Agent Commerce Surface Inspector to explicitly detect Google AP2 (Agent Payments Protocol) and ACP (Agentic Commerce Protocol) metadata.
+* **Added**: Introduced `surface_type`, `surfaces_detected`, `settlement_rails_detected`, `detection_confidence`, `detection_reason`, and `unsupported_reason` to `InspectResult` for granular classification.
+* **Changed**: Strictly decoupled Commerce Surfaces (AP2, ACP, OKX APP) from executable Settlement Rails (L402, x402, MPP). AP2/ACP metadata are treated strictly as authorization/commerce mandates, not settlement proofs.
+* **Behavior**: Default `recommended_action` for AP2 and ACP is `observe_only`. The SDK intentionally **does not** execute these mandates.
+* **Security**: Introduced a `stop_safely` guardrail if an AP2/ACP surface co-exists with a malformed or unsupported settlement hint.
+* **Maintained**: 100% backward compatibility for existing L402, x402, and MPP execution behaviors.
+
 ## [1.8.5] - 2026-05-08 (Sandbox Evidence Corpus Readiness)
 * **Added**: `SandboxCorpusCandidate` model to lightly transform sandbox execution evidence into a local candidate format.
 * **Added**: `build_sandbox_corpus_candidate` helper to perform eligibility checks (e.g. `non_sandbox_scope`, `candidate_pending_client_confirmation`).
