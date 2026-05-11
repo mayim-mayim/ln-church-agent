@@ -147,3 +147,66 @@ def detect_app_surface(response: httpx.Response) -> Optional[Dict[str, Any]]:
     if res and res.get("commerce_protocol") == "okx_app":
         return res
     return None
+
+def build_commerce_guidance(
+    commerce_protocol: Optional[str],
+    raw_fields: Dict[str, Any]
+) -> Dict[str, Any]:
+    if not commerce_protocol:
+        return {}
+        
+    guidance = {
+        "handoff_mode": "guided_handoff",
+        "approval_required": True,
+        "ask_site_for": [],
+        "do_not": [],
+        "required_evidence": [],
+        "missing_information": [],
+    }
+
+    if commerce_protocol == "ap2":
+        guidance["ask_site_for"] = [
+            "quote_details", "mandate_scope", "expiration", "revocation_method", "settlement_rail_options", "receipt_or_proof_model"
+        ]
+        guidance["do_not"] = [
+            "treat_mandate_as_settlement_proof", "execute_payment_without_operator_approval", "store_raw_mandate_payload"
+        ]
+        guidance["required_evidence"] = [
+            "explicit_price", "merchant_identity", "mandate_scope", "settlement_rail", "receipt_model"
+        ]
+        if "amount" not in raw_fields and "price" not in raw_fields:
+            guidance["missing_information"].append("explicit_price")
+        if "merchant" not in raw_fields and "payTo" not in raw_fields and "merchant_id" not in raw_fields:
+            guidance["missing_information"].append("merchant_identity")
+
+    elif commerce_protocol == "acp":
+        guidance["ask_site_for"] = [
+            "cart_details", "price_breakdown", "merchant_identity", "checkout_expiration", "payment_token_scope", "settlement_rail_options", "order_receipt_model"
+        ]
+        guidance["do_not"] = [
+            "treat_shared_payment_token_as_settlement_proof", "execute_checkout_without_operator_approval", "store_raw_shared_payment_token"
+        ]
+        guidance["required_evidence"] = [
+            "cart_total", "merchant_identity", "payment_token_scope", "order_receipt", "settlement_rail"
+        ]
+        if "cart_total" not in raw_fields and "amount" not in raw_fields and "price" not in raw_fields:
+            guidance["missing_information"].append("cart_total")
+        if "merchant" not in raw_fields and "payTo" not in raw_fields and "merchant_id" not in raw_fields:
+            guidance["missing_information"].append("merchant_identity")
+
+    elif commerce_protocol == "okx_app":
+        guidance["ask_site_for"] = [
+            "quote_details", "broker_identity", "escrow_terms", "settlement_method", "dispute_policy", "receipt_or_proof_model"
+        ]
+        guidance["do_not"] = [
+            "treat_broker_hint_as_settlement_proof", "enter_escrow_without_operator_approval", "store_raw_broker_or_session_token"
+        ]
+        guidance["required_evidence"] = [
+            "quote", "broker_identity", "settlement_method", "escrow_or_dispute_terms", "receipt_model"
+        ]
+        if "broker" not in raw_fields and "broker_id" not in raw_fields:
+            guidance["missing_information"].append("broker_identity")
+        if "amount" not in raw_fields and "quote" not in raw_fields:
+            guidance["missing_information"].append("quote")
+
+    return guidance

@@ -6,7 +6,7 @@ from typing import Optional, List
 from .models import InspectResult
 from .challenges import parse_challenge_from_response
 from .exceptions import PaymentChallengeError
-from .app_inspect import detect_commerce_surface, detect_app_surface
+from .app_inspect import detect_commerce_surface, detect_app_surface, build_commerce_guidance
 
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
     try:
@@ -102,20 +102,13 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         settlement_rails_detected = []
         rails_detected = [] 
 
-        # Surface classification
-        if c_protocol == "ap2":
-            surfaces_detected.append("AP2")
-            # rails_detected には入れない
-        elif c_protocol == "acp":
-            surfaces_detected.append("ACP")
-            # rails_detected には入れない
+        if c_protocol == "ap2": surfaces_detected.append("AP2")
+        elif c_protocol == "acp": surfaces_detected.append("ACP")
         elif c_protocol == "okx_app":
             surfaces_detected.append("OKX_APP")
-            rails_detected.append("APP") # v1.8.0 互換のため維持
+            rails_detected.append("APP")
 
-        # Settlement rail classification (実行可能なもののみ)
         if scheme == "Payment":
-            # rails_detected に Payment を残すのは互換性のため許容
             rails_detected.append("Payment") 
             if s_rail and s_rail not in ["Payment", "unknown"]:
                 settlement_rails_detected.append(s_rail)
@@ -126,30 +119,38 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
 
         action = "observe_only"
         unsupported_reason = None
+        operator_approval_reason = None
+        
+        has_payment_headers = any(h.lower() in ["www-authenticate", "payment-required", "x-payment-required", "x-402-payment-required"] for h in httpx_res.headers.keys())
+        is_malformed_hint = False
+        
+        if parse_error and has_payment_headers:
+            is_malformed_hint = True
+        elif scheme != "unknown" and s_rail not in ["x402", "L402", "MPP", "Payment"]:
+            is_malformed_hint = True
 
-        if c_protocol in ["ap2", "acp"]:
-            reason = commerce_info.get("reason", "Agent Commerce surface detected.")
-            has_payment_headers = any(h.lower() in ["www-authenticate", "payment-required", "x-payment-required", "x-402-payment-required"] for h in httpx_res.headers.keys())
-            is_malformed_hint = False
-            
-            if parse_error and has_payment_headers:
-                is_malformed_hint = True
-            elif scheme != "unknown" and s_rail not in ["x402", "L402", "MPP", "Payment"]:
-                is_malformed_hint = True
-
-            if is_malformed_hint:
-                action = "stop_safely"
-                unsupported_reason = "Malformed or unsupported settlement hint co-existing with commerce surface."
-            else:
+        if is_malformed_hint:
+            action = "stop_safely"
+            unsupported_reason = "Malformed or unsupported settlement hint co-existing with commerce surface."
+            operator_approval_reason = "malformed_or_unsupported_settlement_hint"
+            reason = "Agent Commerce surface detected, but co-existing settlement hint is malformed or unsupported."
+        else:
+            operator_approval_reason = "commerce_surface_with_settlement_rail" if settlement_rails_detected else "commerce_surface_detected"
+            if c_protocol in ["ap2", "acp"]:
                 action = "observe_only"
+                reason = commerce_info.get("reason", "Agent Commerce surface detected.")
                 if settlement_rails_detected:
                     reason += " (Concrete HTTP 402 settlement challenge also detected, but payment is not executed by default for AP2/ACP)."
-        else:
-            # 💡 修正: OKX APP のレガシー互換（既存テストがこの固定文字列を期待しているため元に戻す）
-            reason = "Agent Commerce surface detected."
-            if c_intent in ["session", "escrow", "upto"]:
-                action = "stop_safely"
-                reason = f"High-intent commerce flow ({c_intent}) observed but not executed by default."
+            else:
+                reason = "Agent Commerce surface detected."
+                if c_intent in ["session", "escrow", "upto"]:
+                    action = "stop_safely"
+                    reason = f"High-intent commerce flow ({c_intent}) observed but not executed by default."
+                else:
+                    action = "observe_only"
+
+        # 💡 Guided Handoff 構築
+        guidance = build_commerce_guidance(c_protocol, commerce_info.get("raw_detected_fields", {}))
 
         return InspectResult(
             ok=True,
@@ -177,7 +178,15 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             classification_confidence=commerce_info.get("confidence"),
             app_protocol=c_protocol,
             app_intent=c_intent,
-            app_transport=commerce_info.get("commerce_transport", "http")
+            app_transport=commerce_info.get("commerce_transport", "http"),
+            # --- v1.9.1: Guidance fields ---
+            handoff_mode=guidance.get("handoff_mode"),
+            approval_required=guidance.get("approval_required"),
+            ask_site_for=guidance.get("ask_site_for", []),
+            do_not=guidance.get("do_not", []),
+            required_evidence=guidance.get("required_evidence", []),
+            missing_information=guidance.get("missing_information", []),
+            operator_approval_reason=operator_approval_reason
         )
 
     # --- Commerce Surface ではない既存ロジック ---

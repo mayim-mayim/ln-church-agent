@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.1] - 2026-05-11 (Guided Handoff for Agent Commerce Surfaces)
+* **Added**: Introduced "Guided Handoff" to the `inspect` CLI command. When an Agent Commerce surface (AP2, ACP, OKX APP) is detected, the SDK now provides structured guidance (`ask_site_for`, `do_not`, `required_evidence`, `missing_information`) to help AI operators safely approve or investigate the transaction.
+* **Added**: The `InspectResult` model now includes `handoff_mode`, `approval_required`, and `operator_approval_reason` to explicitly signal when human/operator intervention is necessary.
+* **Security**: Implemented strict secret-stripping for `model_dump_json()`. Raw tokens (like `shared_payment_token`, `mandate_token`, or `broker` session keys) are safely redacted and never exposed in the inspection output.
+* **Maintained**: Unchanged behavior for standard `L402`, `x402`, and `MPP` paths. Valid settlement rails will not trigger Guided Handoff unless they co-exist with a higher-order commerce surface.
+* **Details**: [v1.9.1 Release Notes](docs/release_notes/v1.9.1.md)
+
 ## [1.9.0] - 2026-05-09 (AP2 / ACP Inspect-Only Commerce Surface Detection)
 * **Added**: Expanded the Agent Commerce Surface Inspector to explicitly detect Google AP2 (Agent Payments Protocol) and ACP (Agentic Commerce Protocol) metadata.
 * **Added**: Introduced `surface_type`, `surfaces_detected`, `settlement_rails_detected`, `detection_confidence`, `detection_reason`, and `unsupported_reason` to `InspectResult` for granular classification.

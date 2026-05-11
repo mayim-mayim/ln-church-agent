@@ -552,14 +552,23 @@ class InspectResult(BaseModel):
     http_status: Optional[int] = None
     rails_detected: List[str] = Field(default_factory=list)
     
-    # --- 💡 新規追加 (v1.9.0: Commerce Surface vs Settlement Rail) ---
+    # --- v1.9.0: Commerce Surface vs Settlement Rail ---
     surface_type: Optional[str] = None
     surfaces_detected: List[str] = Field(default_factory=list)
     settlement_rails_detected: List[str] = Field(default_factory=list)
     detection_confidence: Optional[str] = None
     detection_reason: Optional[str] = None
     unsupported_reason: Optional[str] = None
-    
+
+    # --- v1.9.1: Guided Handoff Fields ---
+    handoff_mode: Optional[str] = None
+    approval_required: Optional[bool] = None
+    ask_site_for: List[str] = Field(default_factory=list)
+    do_not: List[str] = Field(default_factory=list)
+    required_evidence: List[str] = Field(default_factory=list)
+    missing_information: List[str] = Field(default_factory=list)
+    operator_approval_reason: Optional[str] = None
+
     challenge_source: Optional[str] = None
     payment_intent: Optional[str] = None
     draft_shape: Optional[str] = None
