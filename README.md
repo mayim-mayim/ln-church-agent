@@ -53,6 +53,16 @@ It is designed for agents that must:
 * **Reference Sandbox Support**: Optionally integrates with the LN Church observation network for public benchmarking, trace reporting, and discovery workflows.
 * **Stable Interface**: An unchanging developer API surface that safely absorbs the constant fluctuations of upstream protocol drafts.
 
+## Managed Platform Boundary
+
+`ln-church-agent` is not a managed wallet, payment processor, or cloud payment orchestration service.
+
+Managed platforms such as AWS AgentCore Payments help agents execute payments inside a hosted wallet/session environment. `ln-church-agent` focuses on the open-web buyer side: inspecting HTTP 402 and agent-commerce surfaces, distinguishing executable settlement rails from commerce / authorization layers, enforcing local policy, verifying outcomes, and capturing evidence across protocols.
+
+Use managed platforms when you need hosted wallet custody, cloud-side payment sessions, and provider-managed payment execution.
+
+Use `ln-church-agent` when you need lightweight, local, cross-protocol inspection, decision support, evidence capture, sandbox validation, or non-AWS / open-web interoperability.
+
 ## Where it fits
 
 - **ln-church-agent**: Buyer-side runtime for agents facing HTTP 402 challenges.
@@ -98,12 +108,14 @@ Canonical first loop: `inspect → decide → pay → verify → trace`
 
 It can safely detect higher-order commerce metadata, starting with OKX Agent Payments Protocol (APP), AP2 mandates, and ACP checkouts, while keeping settlement execution strictly disabled during inspection.
 
+In v1.9.1+, inspect results can also include Guided Handoff metadata for AP2 / ACP / OKX APP-like surfaces. This tells the upstream agent what to ask the site for, what not to treat as settlement proof, which evidence is required, what information is missing, and why operator approval may be required.
+
 Example output:
 
 ```json
 {
   "ok": true,
-  "url": "[https://api.example.com/checkout](https://api.example.com/checkout)",
+  "url": "https://api.example.com/checkout",
   "http_status": 402,
   "surfaces_detected": ["ACP"],
   "settlement_rails_detected": ["x402"],
@@ -115,6 +127,16 @@ Example output:
   "will_execute_payment": false
 }
 
+```
+
+```json
+{
+  "handoff_mode": "guided_handoff",
+  "approval_required": true,
+  "ask_site_for": ["quote_details", "settlement_rail_options", "receipt_or_proof_model"],
+  "do_not": ["treat_authorization_artifact_as_settlement_proof"],
+  "required_evidence": ["explicit_price", "merchant_identity", "settlement_rail", "receipt_model"]
+}
 ```
 
 This distinction is intentional:
