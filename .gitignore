@@ -27,3 +27,6 @@ repomix-output.txt
 
 # テスト用スクリプト
 ai_agent_sdk.py
+
+# mcp登録用実行ファイル
+mcp-publisher.exe

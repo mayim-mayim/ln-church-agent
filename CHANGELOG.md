@@ -2,6 +2,9 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.3] - 2026-05-12 (MCP Registry Namespace Fix)
+* **Fixed**: Updated `mcp-name` metadata in README and `server.json` to use the `io.github.mayim-mayim` namespace, satisfying the Official MCP Registry ownership verification requirements.
+
 ## [1.9.2] - 2026-05-12 (Inspect-Only MCP Entrypoint)
 * **Added**: Introduced inspect-only MCP entrypoint `ln-church-agent-mcp`.
 * **Added**: Exposes safe MCP tools for paid surface inspection, action explanation, and MCP observation payload construction.

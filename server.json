@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.mayim364/ln-church-agent-mcp",
+  "name": "io.github.mayim-mayim/ln-church-agent-mcp",
   "title": "LN Church Agent MCP",
-  "description": "Inspect-only MCP server for HTTP 402 and agent-commerce surfaces. It classifies L402, MPP, x402, AP2, ACP, and APP-like surfaces without executing payment.",
-  "version": "1.9.2",
+  "description": "Inspect-only MCP server for HTTP 402 and agent-commerce surfaces without executing payment.",
+  "version": "1.9.3",
   "repository": {
     "url": "https://github.com/mayim-mayim/ln-church-agent",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "ln-church-agent",
-      "version": "1.9.2",
+      "version": "1.9.3",
       "transport": {
         "type": "stdio"
       }

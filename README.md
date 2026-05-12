@@ -151,7 +151,7 @@ Use this mode when your agent needs to understand a paid-action surface before d
 
 ## MCP: Inspect-only payment surface discovery
 
-<!-- mcp-name: io.github.mayim364/ln-church-agent-mcp -->
+<!-- mcp-name: io.github.mayim-mayim/ln-church-agent-mcp -->
 
 `ln-church-agent-mcp` is the inspect-only MCP entrypoint bundled with `ln-church-agent`.
 
