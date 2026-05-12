@@ -5,7 +5,7 @@
   "description": "Inspect-only MCP server for HTTP 402 and agent-commerce surfaces. It classifies L402, MPP, x402, AP2, ACP, and APP-like surfaces without executing payment.",
   "version": "1.9.2",
   "repository": {
-    "url": "https://github.com/mayim364/ln-church-agent",
+    "url": "https://github.com/mayim-mayim/ln-church-agent",
     "source": "github"
   },
   "packages": [
