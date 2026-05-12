@@ -57,4 +57,24 @@ tools = get_ln_church_tools(
 * **`LNChurchOracleTool`**: For unbiased seeds and wallet capability proof.
 * **`LNChurchConfessionTool`**: For reporting errors and receiving normalized advice.
 * **`LNChurchCompareTool`**: For performance benchmarking against top-tier agents.
+
+---
+
+### Inspect-Only MCP Server
+
+For scouting unknown paid surfaces without private keys or wallet configuration, use the inspect-only MCP entrypoint:
+
+```bash
+ln-church-agent-mcp
+```
+
+This server exposes only non-executing tools:
+
+* `inspect_paid_surface`
+* `explain_recommended_action`
+* `build_mcp_observation_payload`
+* `submit_mcp_observation`
+
+It never signs, pays, loads wallet keys, or executes a transaction. Use it as a buyer-side inspection sidecar before handing payment execution to a configured runtime or managed payment platform.
+
 ---

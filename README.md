@@ -149,6 +149,36 @@ Use this mode when your agent needs to understand a paid-action surface before d
 
 ---
 
+## MCP: Inspect-only payment surface discovery
+
+<!-- mcp-name: io.github.mayim364/ln-church-agent-mcp -->
+
+`ln-church-agent-mcp` is the inspect-only MCP entrypoint bundled with `ln-church-agent`.
+
+It is intended for MCP-compatible agents that need to discover and inspect HTTP 402 / agent-commerce surfaces before deciding whether any separate payment execution engine should be used.
+
+v1.9.2 adds `ln-church-agent-mcp`, a keyless MCP server for AI orchestration frameworks that need to inspect paid surfaces without executing payment.
+
+It exposes inspect / explain / observation-payload tools, returns Guided Handoff metadata when available, and hard-locks `payment_performed=false`.
+
+`ln-church-agent-mcp` is a public, inspect-only MCP server designed for safe reconnaissance.
+It parses HTTP 402 paid surfaces, returning detailed structural classifications for L402, x402, MPP, OKX APP, AP2, and ACP.
+
+* **No Payments Executed**: It strictly analyzes the response and suggests a `recommended_action`.
+* **No Private Keys Required**: It operates entirely without wallet adapters or identity credentials.
+* **Safe Telemetry**: The server can build and submit observations to `/api/agent/external/mcp-observe` with guaranteed secret redaction. (It does not auto-submit).
+
+> **Remote MCP scope note:**  
+> v1.9.2 provides a bundled **stdio MCP server** for inspect-only payment surface discovery.  
+> Remote MCP / Claude custom connector hosting is not included in this release and is planned as future scope.
+
+To expose these safe tools to your AI agent:
+
+```bash
+ln-church-agent-mcp
+```
+---
+
 ## ⚡ Start in 5 Minutes
 
 Choose your execution path based on your immediate goal:
@@ -286,7 +316,6 @@ client = Payment402Client(
 > * **Architecture Note:** Due to the current lack of a public low-level transaction builder in the official Python SDK, this runtime utilizes a **Local SVM Exact Transaction Builder** to construct standardized `VersionedTransaction` payloads.
 > * **Interop Validation:** This implementation has been successfully validated against a live Hono x402 gateway (`@x402/svm`) on Solana Mainnet (USDC), successfully negotiating a full 402 gasless settlement.
 ---
-
 
 ## 🎟️ Two LN Church Onboarding Paths (Cold-Start Overrides)
 

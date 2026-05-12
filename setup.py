@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.9.1", 
+    version="1.9.2", 
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     install_requires=[
         "requests>=2.31.0",
@@ -41,6 +41,7 @@ setup(
         "console_scripts": [
             "ln-church-agent=ln_church_agent.cli:main",
             "lnc-agent=ln_church_agent.cli:main",
+            "ln-church-agent-mcp=ln_church_agent.integrations.mcp_inspect:main",
         ]
     },
     author="LN Church",

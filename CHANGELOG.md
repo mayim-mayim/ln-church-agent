@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.2] - 2026-05-12 (Inspect-Only MCP Entrypoint)
+* **Added**: Introduced inspect-only MCP entrypoint `ln-church-agent-mcp`.
+* **Added**: Exposes safe MCP tools for paid surface inspection, action explanation, and MCP observation payload construction.
+* **Security**: Does not require private keys or wallet configuration. Does not execute payments.
+* **Maintained**: Existing L402/x402/MPP execution behavior and standard MCP execution server (`integrations.mcp`) remain strictly unchanged.
+
 ## [1.9.1] - 2026-05-11 (Guided Handoff for Agent Commerce Surfaces)
 * **Added**: Introduced "Guided Handoff" to the `inspect` CLI command. When an Agent Commerce surface (AP2, ACP, OKX APP) is detected, the SDK now provides structured guidance (`ask_site_for`, `do_not`, `required_evidence`, `missing_information`) to help AI operators safely approve or investigate the transaction.
 * **Added**: The `InspectResult` model now includes `handoff_mode`, `approval_required`, and `operator_approval_reason` to explicitly signal when human/operator intervention is necessary.
