@@ -37,7 +37,8 @@ from .models import (
     GrantDiagnostics,
     SponsoredAccessEvidence,
     SandboxEvidence,
-    SandboxCorpusCandidate
+    SandboxCorpusCandidate,
+    PaymentFailureRecord
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -47,6 +48,13 @@ from .evidence import (
     build_sandbox_evidence_from_response,
     build_sandbox_interop_report_payload,
     build_sandbox_corpus_candidate
+)
+
+from .failures import (
+    build_payment_failure_record,
+    build_payment_failure_observation_payload,
+    fingerprint_public_challenge_summary,
+    detect_public_challenge_changed_fields
 )
 
 # 汎用別名

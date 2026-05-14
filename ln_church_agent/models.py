@@ -645,3 +645,60 @@ class GrantDiagnostics(BaseModel):
 
     recommended_action: str = "use_grant"
     fallback_action: Optional[str] = None
+
+class PaymentFailureRecord(BaseModel):
+    schema_version: str = "ln_church_agent.payment_failure_record.v1"
+    
+    # identity / target
+    record_id: str
+    observed_at: int
+    endpoint: str
+    target_domain: str
+    method: str
+
+    # protocol context
+    rail: str
+    scheme: Optional[str] = None
+    network: str
+    asset: str
+    authorization_scheme: Optional[str] = None
+    draft_shape: Optional[str] = None
+    payment_intent: Optional[str] = None
+
+    # challenge summary
+    challenge_fingerprint_before: Optional[str] = None
+    challenge_fingerprint_after: Optional[str] = None
+    challenge_fingerprint_changed: bool = False
+    changed_fields: List[str] = []
+    selected_requirement_fingerprint: Optional[str] = None
+
+    # attempt context
+    attempted: bool = True
+    attempt_count: int = 1
+    retry_count: int = 0
+    client_used: str = "ln-church-agent"
+    secondary_client_used: Optional[str] = None
+
+    # outcome
+    final_http_status: Optional[int] = None
+    failure_class: str
+    failure_subclass: Optional[str] = None
+    error_stage: Optional[str] = None
+    server_message_excerpt: Optional[str] = None
+    client_error_excerpt: Optional[str] = None
+
+    # evidence / trust
+    reproducibility: str = "unknown"
+    evidence_strength: str = "low"
+    confidence: str = "low"
+    operator_verified: bool = False
+
+    # payment status
+    payment_performed: bool = False
+    settlement_confirmed: bool = False
+    payment_receipt_present: bool = False
+
+    # publication safety
+    safe_to_publish: bool = True
+    redaction_applied: bool = True
+    public_notes: Optional[str] = None

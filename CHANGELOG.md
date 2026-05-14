@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.4] - 2026-05-14 (Payment Failure Observation Layer)
+* **Added**: Introduced `PaymentFailureRecord` for structured local recording of 402 payment attempt failures.
+* **Added**: Standardized failure taxonomy (e.g., `retry_mismatch`, `no_matching_payment_requirements`) to stabilize agent reasoning.
+* **Added**: Public-safe challenge fingerprinting and changed-field detection to identify unstable server-side requirements (e.g., dynamic `feePayer`).
+* **Added**: Payload builder for `payment_failure_observation_report.v1` for future knowledge base ingestion.
+* **Security**: Guaranteed redaction of raw secrets (macaroons, preimages, private keys) from failure artifacts.
+* **Behavior**: Non-verdict design; failures are modeled as "observed friction" rather than definitive server faults.
+
 ## [1.9.3] - 2026-05-12 (MCP Registry Namespace Fix)
 * **Fixed**: Updated `mcp-name` metadata in README and `server.json` to use the `io.github.mayim-mayim` namespace, satisfying the Official MCP Registry ownership verification requirements.
 

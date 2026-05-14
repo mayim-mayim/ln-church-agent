@@ -179,6 +179,46 @@ ln-church-agent-mcp
 ```
 ---
 
+## Payment Failure Observation
+
+v1.9.4 introduces a structured layer for recording and analyzing 402 payment attempt failures.
+Rather than viewing failures as binary "broken" states, this layer treats them as **Observations**—structured evidence of friction encountered under specific conditions (e.g., dynamic `feePayer` fields causing retry mismatches).
+
+- **Structured Knowledge**: Converts execution crashes into reusable `PaymentFailureRecord` artifacts.
+- **Privacy by Design**: Automatically fingerprints and redacts raw secrets (preimages, private keys, macaroons) from challenge dicts and error messages.
+- **Interoperability Analysis**: Detects when server-side requirements drift between initial inspection and payment retry.
+
+### Code Example
+
+```python
+from ln_church_agent.failures import build_payment_failure_record, build_payment_failure_observation_payload
+
+# 1. Build a local record of the failure
+record = build_payment_failure_record(
+    endpoint="https://api.example.com/data",
+    rail="x402",
+    scheme="exact",
+    failure_subclass="no_matching_payment_requirements",
+    server_message="Your macaroon is invalid", # 'macaroon' will be [REDACTED]
+    challenge_before={"accepts": [{"feePayer": "NodeA"}]},
+    challenge_after={"accepts": [{"feePayer": "NodeB"}]},
+    secondary_client_used="x402-official-client"
+)
+
+print(record.changed_fields) 
+# Output: ['accepts[0].feePayer']
+
+# 2. Build a public-safe payload for future ingestion
+payload = build_payment_failure_observation_payload(record, agent_id="agent-007")
+print(payload["evidence"]["payment_performed"]) 
+# Output: False
+
+```
+
+*Note: The SDK currently builds these records locally. Automatic submission to the LN Church failure registry is disabled in this release pending server-side support.*
+
+---
+
 ## ⚡ Start in 5 Minutes
 
 Choose your execution path based on your immediate goal:
