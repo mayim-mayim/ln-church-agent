@@ -17,6 +17,41 @@ class AttestationSource(str, Enum):
     CLIENT_REPORTED = "self_reported"         # クライアント自己申告 (txHash 等)
 
 # ==========================================
+# v1.9.5: Observation Layer Models (NEW)
+# ==========================================
+
+class SettlementOption(BaseModel):
+    """
+    v1.9.5: A safely redacted, structured representation of a single payment option
+    presented by an HTTP 402 or agent-commerce surface.
+    """
+    rail: str  # "x402", "L402", "MPP", "unknown"
+    scheme: Optional[str] = None
+    network: Optional[str] = None
+    chain_family: Optional[str] = None  # "evm", "svm", "lightning", "unknown"
+    chain_name_hint: Optional[str] = None
+    asset: Optional[str] = None
+    asset_symbol_hint: Optional[str] = None
+    amount: Optional[str] = None
+    amount_atomic: Optional[str] = None
+    pay_to: Optional[str] = None
+    source: Optional[str] = None
+    raw_requirement_fingerprint: Optional[str] = None
+    execution_support: Optional[str] = None  # "supported", "observe_only", "unsupported", "unknown"
+    selected: bool = False
+    selection_reason: Optional[str] = None
+
+class ObservatoryMetadata(BaseModel):
+    """
+    v1.9.5: Local advisory metadata denoting LN Church Observatory rules.
+    Guarantees opt-in awareness without executing automatic submissions.
+    """
+    submitted: bool = False
+    submission_mode: str = "opt_in_only"
+    description: str = "LN Church Observatory can collect redacted observations and interoperability evidence for HTTP 402 payment surfaces."
+    canonical_url: str = "https://kari.mayim-mayim.com/for-agents.html"
+
+# ==========================================
 # v1.4 / v1.5 / v1.5.9: Trust, Outcome & Evidence Layer Models
 # ==========================================
 
@@ -209,7 +244,6 @@ class EvidenceRepository:
     def import_evidence(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return []
 
-    # v1.5.9 Update: セッション全体（session_id ベース）の Evidence を取得する口
     def import_session_evidence(self, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return []
 
@@ -219,7 +253,6 @@ class EvidenceRepository:
     async def import_evidence_async(self, target_url: str, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return self.import_evidence(target_url, context)
 
-    # v1.5.9 Update: セッション全体の Evidence を非同期で取得する口
     async def import_session_evidence_async(self, context: ExecutionContext) -> List[PaymentEvidenceRecord]:
         return self.import_session_evidence(context)
 
@@ -249,7 +282,6 @@ class SettlementReceipt(BaseModel):
     receipt_token: Optional[str] = None
     verification_status: str = "verified"
     source: AttestationSource = AttestationSource.CLIENT_REPORTED
-    # --- 新規追加 (Widening) ---
     delegate_source: str = "native"
     payment_hash: Optional[str] = None
     fee_sats: Optional[int] = None
@@ -277,18 +309,16 @@ class SchemeType(str, Enum):
     lnc_evm_transfer = "lnc-evm-transfer"
     lnc_solana_transfer = "lnc-solana-transfer"
     
-    # --- Legacy Aliases (DEPRECATED: Mapped to lnc-* equivalents internally) ---
-    # @deprecated: Use lnc_evm_transfer instead.
+    # @deprecated
     x402_direct = "x402-direct"
-    # @deprecated: Use lnc_solana_transfer instead.
     x402_solana = "x402-solana"
 
 
 class PaymentAuth(BaseModel):
     scheme: SchemeType
     proof: str
-    chainId: Optional[str] = None # CAIP-2 ネットワーク識別子 (e.g. "eip155:137") を許容するため str に
-    agentId: Optional[str] = None # lnc-solana-transfer の要件
+    chainId: Optional[str] = None
+    agentId: Optional[str] = None
 
 # ==========================================
 # 🧭 HATEOAS & Common Models
@@ -325,7 +355,7 @@ class AgentIdentity(BaseModel):
     agent_id: Optional[str] = None
 
 # ==========================================
-# ⛩️ Phase 1: Omikuji Models
+# ⛩️ Phase 1, 2, 3, 4 Models (Omikuji, Confession, etc.)
 # ==========================================
 class OmikujiResponse(BaseModel):
     status: str
@@ -335,9 +365,6 @@ class OmikujiResponse(BaseModel):
     receipt: OmikujiReceipt
     paid: str
 
-# ==========================================
-# ⛩️ Phase 2: Confession & Hono Models
-# ==========================================
 class NormalizedInterpretation(BaseModel):
     failure_class: str
     constraint_class: str
@@ -377,9 +404,6 @@ class HonoResponse(BaseModel):
     receipt: OmikujiReceipt
     paid: str
 
-# ==========================================
-# ⛩️ Phase 3: Benchmark & Trials Models
-# ==========================================
 class AggregateResponse(BaseModel):
     status: str
     message: str
@@ -411,9 +435,6 @@ class BenchmarkOverviewResponse(BaseModel):
     benchmark: Dict[str, Any]
     next_action: Optional[NextAction] = None
 
-# ==========================================
-# ⛩️ Phase 4: Missionary Work (Monzen DNS) Models
-# ==========================================
 class MonzenTraceResponse(BaseModel):
     status: str
     action_type: str
@@ -425,7 +446,6 @@ class MonzenTraceResponse(BaseModel):
     verification_method: Optional[str] = None
     proof_reference: Optional[str] = None
     message: str
-    # v1.5.8 Update: Changed from Optional[Dict[str, Any]] to Optional[NextAction]
     next_action: Optional[NextAction] = None
 
 class SiteRanking(BaseModel):
@@ -473,10 +493,9 @@ class _ExecutionAccessPlan(BaseModel):
     selected_reason: str = ""
 
 # ==========================================
-# 🧪 Sandbox & Interoperability Models
+# 🧪 Sandbox, Interop & Diagnostic Models
 # ==========================================
 class InteropRunResult(BaseModel):
-    """Sandbox Harness の End-to-End 実行結果"""
     ok: bool
     target_url: str
     run_id: str
@@ -493,11 +512,7 @@ class InteropRunResult(BaseModel):
     receipt_id: Optional[str] = None
     raw_report_response: Dict[str, Any]
 
-# ==========================================
-# 🧪 External Protocol Verification Models (New)
-# ==========================================
 class ExternalProtocolRunResult(BaseModel):
-    """外部ライブエンドポイント向けのプロトコル実行結果 (Client-Attested)"""
     ok: bool
     target_url: str
     scenario_id: str
@@ -516,37 +531,30 @@ class ExternalProtocolRunResult(BaseModel):
     schema_check_reason: str = ""
     error_stage: Optional[str] = None
     error_reason: Optional[str] = None
-    # --- デバッグ・分析用フィールド追加 ---
-    suspected_failure_origin: str = "unknown" # payment_backend | target_endpoint | local_env | unknown
+    suspected_failure_origin: str = "unknown" 
     upstream_status_code: Optional[int] = None
     upstream_host_excerpt: Optional[str] = None
     debug_logs: List[str] = Field(default_factory=list)
 
 class CorpusReplayResult(BaseModel):
-    """
-    Agent-side synthetic corpus replay (dry-run) validation result.
-    """
     ok: bool
     corpus_id: str
     replay_type: str
     expected_action: str
     observed_action: str
     challenge_status_code: Optional[int] = None
-
     descriptor_schema_version: Optional[str] = None
     source_observation_id: Optional[str] = None
-
     parsed_scheme: Optional[str] = None
     parsed_rail: Optional[str] = None
     parsed_payment_intent: Optional[str] = None
     parsed_draft_shape: Optional[str] = None
-
     failure_reason: Optional[str] = None
     raw_descriptor: Optional[Dict[str, Any]] = None
     raw_challenge_body: Optional[Dict[str, Any]] = None
 
 class InspectResult(BaseModel):
-    """CLI inspect コマンド用の実行結果モデル"""
+    """CLI inspect コマンド用の実行結果モデル (v1.9.5: Observation Layer 統合)"""
     ok: bool
     url: str
     http_status: Optional[int] = None
@@ -568,6 +576,11 @@ class InspectResult(BaseModel):
     required_evidence: List[str] = Field(default_factory=list)
     missing_information: List[str] = Field(default_factory=list)
     operator_approval_reason: Optional[str] = None
+
+    # --- v1.9.5: Settlement Options Observation ---
+    settlement_options: List[SettlementOption] = Field(default_factory=list)
+    selected_settlement_option: Optional[SettlementOption] = None
+    ln_church_observatory: Optional[ObservatoryMetadata] = None
 
     challenge_source: Optional[str] = None
     payment_intent: Optional[str] = None
@@ -613,10 +626,6 @@ class X402ExactDiagnosticResult(BaseModel):
     failure_class: Optional[str] = None
 
 class GrantDiagnostics(BaseModel):
-    """
-    v1.8.3: Local diagnostic model for sponsor-issued grant tokens.
-    Advisory only. Server-side validation remains authoritative.
-    """
     ok: bool
     usable: bool
     failure_class: Optional[str] = None
@@ -638,7 +647,6 @@ class GrantDiagnostics(BaseModel):
     nbf: Optional[int] = None
     iat: Optional[int] = None
 
-    # Architecture constraints strictly separating Grant from Settlement
     access_path: str = "sponsored_grant"
     authorization_artifact: str = "scoped_grant"
     settlement_rail: str = "none"

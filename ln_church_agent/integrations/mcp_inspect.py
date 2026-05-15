@@ -44,6 +44,43 @@ def inspect_paid_surface(url: str, method: str = "GET") -> Dict[str, Any]:
     """
     result = inspect_url(url, method=method)
     
+    # 💡 v1.9.5: Serialize Settlement Options safely for MCP output
+    settlement_opts = []
+    for opt in getattr(result, "settlement_options", []):
+        settlement_opts.append({
+            "rail": opt.rail,
+            "scheme": opt.scheme,
+            "network": opt.network,
+            "chain_family": opt.chain_family,
+            "chain_name_hint": opt.chain_name_hint,
+            "asset": opt.asset,
+            "amount": opt.amount,
+            "pay_to": opt.pay_to,
+            "source": opt.source,
+            "execution_support": opt.execution_support,
+            "selected": opt.selected,
+            "selection_reason": opt.selection_reason
+        })
+        
+    selected_opt = None
+    if getattr(result, "selected_settlement_option", None):
+        opt = result.selected_settlement_option
+        selected_opt = {
+            "rail": opt.rail,
+            "scheme": opt.scheme,
+            "network": opt.network,
+            "chain_family": opt.chain_family,
+            "asset": opt.asset,
+            "amount": opt.amount,
+            "execution_support": opt.execution_support,
+            "selected": opt.selected,
+            "selection_reason": opt.selection_reason
+        }
+
+    observatory_metadata = None
+    if getattr(result, "ln_church_observatory", None):
+        observatory_metadata = result.ln_church_observatory.model_dump()
+
     return {
         "schema_version": "ln_church_agent.mcp.inspect_result.v1",
         "url": url,
@@ -68,6 +105,10 @@ def inspect_paid_surface(url: str, method: str = "GET") -> Dict[str, Any]:
         "do_not": getattr(result, "do_not", []),
         "required_evidence": getattr(result, "required_evidence", []),
         "missing_information": getattr(result, "missing_information", []),
+        # --- v1.9.5 Settlement Options & Observatory Metadata ---
+        "settlement_options": settlement_opts,
+        "selected_settlement_option": selected_opt,
+        "ln_church_observatory": observatory_metadata,
         "safety": {
             "inspect_only": True,
             "payment_performed": False,
@@ -133,6 +174,33 @@ def build_mcp_observation_payload(inspect_result: Dict[str, Any], agent_id: str 
     rails = inspect_result.get("settlement_rails_detected", [])
     rail = rails[0] if rails else "unknown"
     
+    network = "unknown"
+    asset = "unknown"
+    
+    selected_opt = inspect_result.get("selected_settlement_option")
+    opts = inspect_result.get("settlement_options", [])
+    
+    if selected_opt:
+        network = selected_opt.get("network") or "unknown"
+        asset = selected_opt.get("asset") or "unknown"
+    elif opts:
+        network = opts[0].get("network") or "unknown"
+        asset = opts[0].get("asset") or "unknown"
+    else:
+        network = inspect_result.get("network") or "unknown"
+        
+    options_summary = []
+    for opt in opts:
+        options_summary.append({
+            "network": opt.get("network"),
+            "asset": opt.get("asset"),
+            "rail": opt.get("rail"),
+            "scheme": opt.get("scheme"),
+            "selected": opt.get("selected"),
+            "execution_support": opt.get("execution_support"),
+            "selection_reason": opt.get("selection_reason")
+        })
+    
     return {
         "schema_version": "mcp_observation_report.v1",
         "agentId": agent_id,
@@ -143,13 +211,21 @@ def build_mcp_observation_payload(inspect_result: Dict[str, Any], agent_id: str 
         "statusCode": inspect_result.get("status_code", 402),
         "protocol": {
             "rail": rail,
-            "network": "unknown",
-            "asset": "unknown",
+            "network": network,
+            "asset": asset,
             "payment_intent": inspect_result.get("commerce_intent", "unknown"),
             "payment_method": "unknown",
             "authorization_scheme": rail,
-            "draft_shape": "unknown"
+            "draft_shape": "unknown",
+            "selected_settlement_option": {
+                "network": network,
+                "asset": asset,
+                "rail": selected_opt.get("rail") if selected_opt else None,
+                "scheme": selected_opt.get("scheme") if selected_opt else None,
+            } if selected_opt else None
         },
+        # 💡 Nice to have: Payload Top-Level へ移動
+        "settlement_options_summary": options_summary,
         "evidence": {
             "evidence_class": "mcp_inspect_402",
             "verification_status": "unverified",
@@ -184,7 +260,6 @@ def submit_mcp_observation(payload: Dict[str, Any], endpoint: str = "https://kar
     proof_ref = evidence.get("proof_reference", "none")
     if proof_ref != "none" and len(str(proof_ref)) > 64: 
         return {"error": "Safety violation: proof_reference looks like a raw secret."}
-
     # Recursive check for exact secret key matches
     if _contains_secret_keys(payload):
         return {"error": "Safety violation: potential secret leaked in payload keys."}

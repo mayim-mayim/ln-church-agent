@@ -2,11 +2,12 @@ import argparse
 import requests
 import httpx
 import re
-from typing import Optional, List
-from .models import InspectResult
+from typing import Optional, List, Tuple
+from .models import InspectResult, SettlementOption, ObservatoryMetadata
 from .challenges import parse_challenge_from_response
 from .exceptions import PaymentChallengeError
 from .app_inspect import detect_commerce_surface, detect_app_surface, build_commerce_guidance
+from .failures import fingerprint_public_challenge_summary
 
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
     try:
@@ -49,6 +50,103 @@ def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
         return scheme
     return scheme
 
+CHAIN_HINTS = {
+    "1": "Ethereum",
+    "137": "Polygon",
+    "8453": "Base",
+    "196": "X Layer",
+    "11155111": "Ethereum Sepolia"
+}
+
+def _determine_chain_info(network: str) -> Tuple[str, Optional[str]]:
+    if not network or network.lower() == "unknown":
+        return "unknown", None
+    n_lower = network.lower()
+    if n_lower.startswith("eip155:"):
+        chain_id = n_lower.split(":")[1]
+        hint = CHAIN_HINTS.get(chain_id)
+        return "evm", hint
+    if n_lower.startswith("solana:"):
+        return "svm", "Solana"
+    if n_lower in ["lightning", "btc"]:
+        return "lightning", "Lightning Network"
+    return "unknown", None
+
+def _extract_settlement_options(parsed: Optional[any]) -> Tuple[List[SettlementOption], Optional[SettlementOption]]:
+    if not parsed:
+        return [], None
+
+    options = []
+    selected_option = None
+    raw_accepted = parsed.parameters.get("_raw_accepted")
+    all_accepted = parsed.parameters.get("_all_accepted", [])
+    reason_from_parser = parsed.parameters.get("_selection_reason", "unknown")
+
+    if not all_accepted and parsed.scheme in ["L402", "MPP", "Payment"]:
+        cf, ch = _determine_chain_info(parsed.network)
+        rail = _settlement_rail_from_scheme(parsed.scheme, parsed) or parsed.scheme
+        opt = SettlementOption(
+            rail=rail,
+            scheme=parsed.scheme,
+            network=parsed.network,
+            chain_family=cf,
+            chain_name_hint=ch,
+            asset=parsed.asset,
+            amount=str(parsed.amount) if parsed.amount else None,
+            pay_to=parsed.parameters.get("destination") or parsed.parameters.get("invoice"),
+            source="www_authenticate",
+            execution_support="supported_but_not_executed_in_inspect" if rail in ["L402", "MPP"] else "unknown",
+            selected=True,
+            selection_reason="single_option_provided"
+        )
+        return [opt], opt
+
+    for idx, req in enumerate(all_accepted):
+        net = req.get("network", "unknown")
+        cf, ch = _determine_chain_info(net)
+        sch = req.get("scheme", "exact")
+        
+        support = "unknown"
+        if sch == "exact": support = "observe_only"
+        elif cf in ["evm", "svm", "lightning"]: support = "supported_but_not_executed_in_inspect"
+        else: support = "unsupported"
+        
+        is_selected = False
+        reason = "not_selected"
+        
+        # 💡 選択されたものはその理由を、選択されなかったもので全体理由が mismatch ならそれを伝播
+        if raw_accepted and req == raw_accepted:
+            is_selected = True
+            reason = reason_from_parser
+        elif reason_from_parser == "no_allowed_network_match":
+            reason = "no_allowed_network_match"
+
+        raw_amt = str(req.get("amount") or req.get("maxAmountRequired", ""))
+        asset_val = req.get("symbol") or req.get("asset") or req.get("token") or req.get("mint")
+        
+        opt = SettlementOption(
+            rail="x402",
+            scheme=sch,
+            network=net,
+            chain_family=cf,
+            chain_name_hint=ch,
+            asset=asset_val,
+            amount=raw_amt,
+            amount_atomic=raw_amt,
+            pay_to=req.get("payTo"),
+            source=f"accepts[{idx}]",
+            raw_requirement_fingerprint=fingerprint_public_challenge_summary(req),
+            execution_support=support,
+            selected=is_selected,
+            selection_reason=reason
+        )
+        options.append(opt)
+        if is_selected:
+            selected_option = opt
+        
+    return options, selected_option
+
+
 def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResult:
     try:
         res = requests.request(method, url, timeout=timeout)
@@ -88,9 +186,16 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         except Exception as e:
             parse_error = str(e)
 
+    # 💡 v1.9.5: 実行パスに影響を与えず Settlement Options の全抽出を行う
+    settlement_opts = []
+    selected_opt = None
+    if parsed:
+        settlement_opts, selected_opt = _extract_settlement_options(parsed)
+
     # 💡 Commerce Surface の検出
     commerce_info = detect_commerce_surface(httpx_res)
 
+    # 💡 1. Commerce Surface Block
     if commerce_info:
         c_protocol = commerce_info.get("commerce_protocol")
         c_intent = commerce_info.get("commerce_intent")
@@ -134,6 +239,12 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             unsupported_reason = "Malformed or unsupported settlement hint co-existing with commerce surface."
             operator_approval_reason = "malformed_or_unsupported_settlement_hint"
             reason = "Agent Commerce surface detected, but co-existing settlement hint is malformed or unsupported."
+        # 💡 正しい位置への no_allowed_network_match の組み込み
+        elif not selected_opt and settlement_opts and parsed and parsed.parameters.get("_selection_reason") == "no_allowed_network_match":
+            action = "stop_safely"
+            unsupported_reason = "Settlement options are available, but none match the local allowed_networks policy."
+            operator_approval_reason = "allowed_network_mismatch"
+            reason = unsupported_reason
         else:
             operator_approval_reason = "commerce_surface_with_settlement_rail" if settlement_rails_detected else "commerce_surface_detected"
             if c_protocol in ["ap2", "acp"]:
@@ -149,8 +260,19 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
                 else:
                     action = "observe_only"
 
-        # 💡 Guided Handoff 構築
         guidance = build_commerce_guidance(c_protocol, commerce_info.get("raw_detected_fields", {}))
+
+        # 💡 v1.9.5: APP/AP2/ACP で明確な決済オプション(Settlement Options)がない場合、missing_information を補強する
+        if not settlement_opts:
+            if "missing_information" not in guidance:
+                guidance["missing_information"] = []
+            guidance["missing_information"].extend([
+                "settlement_rail_not_declared",
+                "network_not_declared",
+                "asset_not_declared",
+                "post_payment_artifact_unknown"
+            ])
+            guidance["missing_information"] = list(dict.fromkeys(guidance["missing_information"]))
 
         return InspectResult(
             ok=True,
@@ -179,14 +301,17 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             app_protocol=c_protocol,
             app_intent=c_intent,
             app_transport=commerce_info.get("commerce_transport", "http"),
-            # --- v1.9.1: Guidance fields ---
             handoff_mode=guidance.get("handoff_mode"),
             approval_required=guidance.get("approval_required"),
             ask_site_for=guidance.get("ask_site_for", []),
             do_not=guidance.get("do_not", []),
             required_evidence=guidance.get("required_evidence", []),
             missing_information=guidance.get("missing_information", []),
-            operator_approval_reason=operator_approval_reason
+            operator_approval_reason=operator_approval_reason,
+            # --- v1.9.5 New Fields ---
+            settlement_options=settlement_opts,
+            selected_settlement_option=selected_opt,
+            ln_church_observatory=ObservatoryMetadata()
         )
 
     # --- Commerce Surface ではない既存ロジック ---
@@ -197,9 +322,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             http_status=res.status_code,
             recommended_action="no_payment_required",
             reason="No HTTP 402 payment challenge detected.",
-            will_execute_payment=False
+            will_execute_payment=False,
+            ln_church_observatory=ObservatoryMetadata()
         )
 
+    # 💡 2. Standard Block
     if res.status_code in (402, 401, 403):
         if parse_error:
             is_invalid_challenge = "No valid 402" in parse_error or "Failed to parse" in parse_error
@@ -224,7 +351,8 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
                 failure_class=fail_cls,
                 recommended_action="reject_invalid" if is_invalid_challenge else "stop_safely",
                 reason=f"Failed to parse challenge: {parse_error}" if is_invalid_challenge else f"Unexpected error parsing challenge: {parse_error}",
-                will_execute_payment=False
+                will_execute_payment=False,
+                ln_church_observatory=ObservatoryMetadata()
             )
 
         scheme = getattr(parsed, "scheme", "unknown")
@@ -250,7 +378,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         next_cmd = None  
         diagnostic_class = None
 
-        if intent == "session":
+        if not selected_opt and settlement_opts and parsed and parsed.parameters.get("_selection_reason") == "no_allowed_network_match":
+            action = "stop_safely"
+            diagnostic_class = "allowed_network_mismatch"
+            reason = "Settlement options are available, but none match the local allowed_networks policy."
+        elif intent == "session":
             action = "stop_safely"
             reason = "MPP session execution is observed but not executed by default."
             next_cmd = None
@@ -282,7 +414,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             reason=reason,
             next_command=next_cmd,
             will_execute_payment=False,
-            diagnostic_class=diagnostic_class
+            diagnostic_class=diagnostic_class,
+            # --- v1.9.5 New Fields ---
+            settlement_options=settlement_opts,
+            selected_settlement_option=selected_opt,
+            ln_church_observatory=ObservatoryMetadata()
         )
 
     return InspectResult(
@@ -328,12 +464,27 @@ def main():
             print(f"  Rails Detected     : {', '.join(result.rails_detected) if result.rails_detected else 'None'}")
             print(f"  Surfaces Detected  : {', '.join(result.surfaces_detected) if result.surfaces_detected else 'None'}")
             print(f"  Reason             : {result.reason}")
+            
+            # 💡 v1.9.5: settlement_options が複数ある場合の表示を追加
+            if result.settlement_options:
+                print(f"  Settlement Options : {len(result.settlement_options)} available")
+                for i, opt in enumerate(result.settlement_options):
+                    sel_mark = "*" if opt.selected else "-"
+                    print(f"    {sel_mark} [{opt.chain_family}] {opt.network} - {opt.asset} (Scheme: {opt.scheme})")
+                    
             if result.next_command:
                 print(f"  Next Command       : {result.next_command}")
             if getattr(result, "diagnostic_class", None):
                 print(f"  Diagnostic Class   : {result.diagnostic_class}")
             if not result.ok and result.failure_reason:
                 print(f"  Failure            : {result.error_stage} -> {result.failure_reason}")
+
+            # 💡 v1.9.5: 人間向けの軽い導線を末尾に追加
+            print("\n---------------------------------------------------------")
+            print("💡 Observation generated locally. This result was not submitted.")
+            print("To contribute a redacted observation to the public corpus, use an explicit opt-in submission flow.")
+            print("LN Church Observatory collects agent-readable evidence for HTTP 402 / x402 / L402 / MPP payment surfaces.")
+            print("---------------------------------------------------------")
 
     if args.command == "grant" and args.grant_command == "inspect":
         from .grants import diagnose_grant_token

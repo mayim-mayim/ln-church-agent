@@ -164,6 +164,9 @@ def build_commerce_guidance(
         "missing_information": [],
     }
 
+    # 💡 v1.9.5: Check for explicit settlement hints in the raw payload
+    has_settlement_hint = any(k in raw_fields for k in ["network", "chainId", "asset", "currency", "scheme", "paymentMethod", "accepts", "payment"])
+
     if commerce_protocol == "ap2":
         guidance["ask_site_for"] = [
             "quote_details", "mandate_scope", "expiration", "revocation_method", "settlement_rail_options", "receipt_or_proof_model"
@@ -208,5 +211,17 @@ def build_commerce_guidance(
             guidance["missing_information"].append("broker_identity")
         if "amount" not in raw_fields and "quote" not in raw_fields:
             guidance["missing_information"].append("quote")
+
+    # 💡 v1.9.5: Native injection of missing settlement boundaries if no hints exist
+    if not has_settlement_hint:
+        guidance["missing_information"].extend([
+            "settlement_rail_not_declared",
+            "network_not_declared",
+            "asset_not_declared",
+            "post_payment_artifact_unknown"
+        ])
+
+    # 重複排除
+    guidance["missing_information"] = list(dict.fromkeys(guidance["missing_information"]))
 
     return guidance

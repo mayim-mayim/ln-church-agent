@@ -191,23 +191,36 @@ def parse_challenge_from_response(
     if payload:
         accepted_params = {}
         selected_accept = None
+        all_accepted = [] 
         
         if "accepts" in payload and isinstance(payload["accepts"], list):
             valid_accepts = payload["accepts"]
-            if allowed_networks:
+            all_accepted = valid_accepts 
+            
+            selection_reason = "not_selected"
+
+            if allowed_networks is not None:
                 valid_accepts = [opt for opt in valid_accepts if opt.get("network") in allowed_networks]
+                if not valid_accepts:
+                    selection_reason = "no_allowed_network_match"
+                    selected_accept = None
 
-            if expected_chain_id:
-                target_network = f"eip155:{expected_chain_id}"
-                selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
+            if selection_reason != "no_allowed_network_match":
+                if expected_chain_id:
+                    target_network = f"eip155:{expected_chain_id}"
+                    selected_accept = next((opt for opt in valid_accepts if opt.get("network") == target_network), None)
+                    if selected_accept: selection_reason = "expected_chain_id"
 
-            if not selected_accept and prefer_svm:
-                selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
+                if not selected_accept and prefer_svm:
+                    selected_accept = next((opt for opt in valid_accepts if str(opt.get("network", "")).startswith("solana:")), None)
+                    if selected_accept: selection_reason = "prefer_svm"
 
-            if not selected_accept and len(valid_accepts) > 0:
-                selected_accept = valid_accepts[0]
-            elif not selected_accept and len(payload["accepts"]) > 0:
-                selected_accept = payload["accepts"][0]
+                if not selected_accept and len(valid_accepts) > 0:
+                    selected_accept = valid_accepts[0]
+                    selection_reason = "first_acceptable"
+                elif not selected_accept and allowed_networks is None and len(payload["accepts"]) > 0:
+                    selected_accept = payload["accepts"][0]
+                    selection_reason = "fallback_first_presented"
 
             if selected_accept:
                 raw_asset = selected_accept.get("asset", expected_asset)
@@ -241,8 +254,15 @@ def parse_challenge_from_response(
                     "payTo": selected_accept.get("payTo", ""),
                     "token_address": extracted_token,
                     "_raw_accepted": selected_accept,
+                    "_all_accepted": all_accepted,
                     "_raw_resource": payload.get("resource", {}),
-                    "_raw_extensions": payload.get("extensions")
+                    "_raw_extensions": payload.get("extensions"),
+                    "_selection_reason": selection_reason # 💡 追加: 選択理由を保持
+                }
+            elif selection_reason == "no_allowed_network_match":
+                accepted_params = {
+                    "_all_accepted": all_accepted,
+                    "_selection_reason": selection_reason
                 }
 
         params = {
@@ -256,8 +276,10 @@ def parse_challenge_from_response(
             "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None),
             "challenge": payload.get("challenge", ""),
             "_raw_accepted": accepted_params.get("_raw_accepted"),
+            "_all_accepted": accepted_params.get("_all_accepted", []),
             "_raw_resource": accepted_params.get("_raw_resource"),
-            "_raw_extensions": accepted_params.get("_raw_extensions")
+            "_raw_extensions": accepted_params.get("_raw_extensions"),
+            "_selection_reason": accepted_params.get("_selection_reason", "unknown") # 💡 paramsにも伝播
         }
         params["amount"] = accepted_params.get("amount", params["amount"])
 
@@ -270,7 +292,7 @@ def parse_challenge_from_response(
             source=source_type,
             raw_header=raw_header_val
         )
-
+        
     if "x-402-payment-required" in h:
         return parse_legacy_header(h["x-402-payment-required"])
 

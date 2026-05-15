@@ -2,6 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.5] - 2026-05-15 (Settlement Options Observation Layer)
+* **Added**: Introduced `SettlementOption` model for granular tracking of all payment requirements presented by an endpoint.
+* **Added**: `settlement_options` and `selected_settlement_option` fields to `InspectResult` for high-fidelity surface observation.
+* **Added**: `ln_church_observatory` metadata to `InspectResult` and CLI output to clarify local observation boundaries and opt-in submission paths.
+* **Improved**: The `inspect` tool now enumerates the full `accepts[]` array from x402 challenges without altering execution logic.
+* **Improved**: MCP observation payloads now dynamically inherit network and asset details from selected options, reducing "unknown" fallbacks.
+* **Improved**: Enhanced `missing_information` guidance for commerce surfaces (AP2/ACP/APP) when settlement rails are undeclared.
+* **Documentation**: Clarified the role of the SDK as a non-executing paid surface observer and its relationship with the LN Church Observatory.
+
 ## [1.9.4] - 2026-05-14 (Payment Failure Observation Layer)
 * **Added**: Introduced `PaymentFailureRecord` for structured local recording of 402 payment attempt failures.
 * **Added**: Standardized failure taxonomy (e.g., `retry_mismatch`, `no_matching_payment_requirements`) to stabilize agent reasoning.

@@ -53,6 +53,20 @@ It is designed for agents that must:
 * **Reference Sandbox Support**: Optionally integrates with the LN Church observation network for public benchmarking, trace reporting, and discovery workflows.
 * **Stable Interface**: An unchanging developer API surface that safely absorbs the constant fluctuations of upstream protocol drafts.
 
+## Paid Surface Observer
+
+`ln-church-agent` is not only a payment executor but also a powerful **paid surface observer**. 
+The `inspect` command enumerates all presented `settlement_options` alongside the `selected_settlement_option` (the one the SDK *would* choose if executing). It cleanly separates capabilities: what can be *observed* versus what is natively *supported* for execution (`execution_support`).
+
+Agent Commerce surfaces like **APP, AP2, and ACP** are treated strictly as commerce/authorization layers. They are processed as inspect-only, meaning the SDK will intentionally avoid automatic execution and explicitly highlight missing settlement parameters (`missing_information`) if clear rails are undeclared.
+
+**LN Church Observatory Opt-in:**
+`ln-church-agent` can inspect payment surfaces locally.
+LN Church Observatory is the public observation layer where redacted observations, execution evidence, and interoperability traces can be collected and compared across HTTP 402 / x402 / L402 / MPP surfaces.
+
+*The SDK never submits observations automatically.*
+Publishing observations to LN Church must be explicit and opt-in.
+
 ## Managed Platform Boundary
 
 `ln-church-agent` is not a managed wallet, payment processor, or cloud payment orchestration service.
