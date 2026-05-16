@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.6] - 2026-05-16 (Normalized Unmapped Observation Submission)
+* **Added**: Introduced `submit_unmapped_observation()` and `submit_unmapped_observation_async()` for safely reporting unmapped or unknown payment surfaces to the observatory.
+* **Added**: Automatically normalizes `payment_scheme_unmapped`, `unsupported_challenge_shape`, and `unknown_rail` into formal, public-safe External Observation payloads.
+* **Security**: Enforces strict secret stripping (`_strip_secrets_from_evidence`) on any `extra_protocol` parameters passed to unmapped observations.
+* **Behavior**: Unmapped observations are treated strictly as discovery signals (`payment_performed=False`, `verification_status="unverified"`), not payment proofs.
+* **Behavior**: Default telemetry auto-submit remains conservative; explicit opt-in (e.g., `--include-unmapped`) is required to submit unmapped observation signals.
+* **Maintained**: The `execute_request()` unsafe HATEOAS and cross-origin navigation guardrails (`NavigationGuardrailError`) remain fully intact.
+
 ## [1.9.5] - 2026-05-15 (Settlement Options Observation Layer)
 * **Added**: Introduced `SettlementOption` model for granular tracking of all payment requirements presented by an endpoint.
 * **Added**: `settlement_options` and `selected_settlement_option` fields to `InspectResult` for high-fidelity surface observation.

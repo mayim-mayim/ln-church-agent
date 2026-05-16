@@ -50,7 +50,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.9.5" 
+        return "1.9.6" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -2538,18 +2538,32 @@ class LnChurchClient(Payment402Client):
     # ==========================================
     # Phase 3: External Observation API (M2M)
     # ==========================================
-    def _strip_secrets_from_evidence(self, d: Optional[dict]) -> dict:
-        if not d:
-            return {}
-        safe_dict = d.copy()
-        secret_keywords = ["preimage", "macaroon", "private_key", "signature", "authorization", "secret"]
-        keys_to_remove = [
-            k for k in safe_dict.keys() 
-            if any(keyword in k.lower() for keyword in secret_keywords)
+    def _strip_secrets_from_evidence(self, value: Any) -> Any:
+        secret_keywords = [
+            "preimage", "macaroon", "private_key", "signature", "authorization",
+            "secret", "token", "api_key", "apikey", "access_token", "refresh_token",
+            "grant_token", "mandate_token", "payment_response", "payment-response",
+            "payment_signature", "payment-signature", "cookie", "password", "credential",
         ]
-        for k in keys_to_remove:
-            safe_dict.pop(k, None)
-        return safe_dict
+        
+        if value is None:
+            return {}
+            
+        if isinstance(value, dict):
+            clean = {}
+            for k, v in value.items():
+                if any(s in str(k).lower() for s in secret_keywords):
+                    continue
+                clean[k] = self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list)) else v
+            return clean
+            
+        if isinstance(value, list):
+            return [
+                self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list)) else v
+                for v in value
+            ]
+            
+        return value
 
     def submit_external_observation(
         self,
@@ -2620,6 +2634,118 @@ class LnChurchClient(Payment402Client):
         if quality: params["quality"] = quality
         if source: params["source"] = source
         return await self.execute_request_async("GET", "/api/agent/external/observations", payload=params)
+
+    def submit_unmapped_observation(
+        self,
+        target_url: str,
+        detection_note: str,
+        method: str = "GET",
+        status_code: int = 402,
+        rails_detected: Optional[List[str]] = None,
+        source_scope: str = "external_agent_report",
+        challenge_shape: Optional[str] = None,
+        evidence_class: str = "crawler_detected_402",
+        extra_protocol: Optional[dict] = None,
+        missing_information: Optional[List[str]] = None,
+        sdk_version: Optional[str] = None,
+    ) -> dict:
+        rail = "unknown"
+        if rails_detected and len(rails_detected) == 1 and rails_detected[0] in ["x402", "L402", "MPP"]:
+            rail = rails_detected[0]
+
+        protocol = {
+            "rail": rail,
+            "network": "unknown",
+            "asset": "unknown",
+            "authorization_scheme": "unknown",
+            "draft_shape": challenge_shape or detection_note,
+            "payment_intent": "unknown",
+            "payment_method": "unknown"
+        }
+        if extra_protocol:
+            protocol.update(self._strip_secrets_from_evidence(extra_protocol))
+
+        evidence = {
+            "evidence_class": evidence_class,
+            "verification_status": "unverified",
+            "verification_method": "none",
+            "payment_performed": False,
+            "payment_receipt_present": False
+        }
+
+        miss_info = missing_information.copy() if missing_information else []
+        for m in [detection_note, "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"]:
+            if m not in miss_info:
+                miss_info.append(m)
+
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": target_url,
+            "method": method.upper(),
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "protocol": protocol,
+            "evidence": evidence,
+            "missing_information": miss_info,
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+        return self.execute_request("POST", "/api/agent/external/observe", payload=payload)
+
+    async def submit_unmapped_observation_async(
+        self,
+        target_url: str,
+        detection_note: str,
+        method: str = "GET",
+        status_code: int = 402,
+        rails_detected: Optional[List[str]] = None,
+        source_scope: str = "external_agent_report",
+        challenge_shape: Optional[str] = None,
+        evidence_class: str = "crawler_detected_402",
+        extra_protocol: Optional[dict] = None,
+        missing_information: Optional[List[str]] = None,
+        sdk_version: Optional[str] = None,
+    ) -> dict:
+        rail = "unknown"
+        if rails_detected and len(rails_detected) == 1 and rails_detected[0] in ["x402", "L402", "MPP"]:
+            rail = rails_detected[0]
+
+        protocol = {
+            "rail": rail,
+            "network": "unknown",
+            "asset": "unknown",
+            "authorization_scheme": "unknown",
+            "draft_shape": challenge_shape or detection_note,
+            "payment_intent": "unknown",
+            "payment_method": "unknown"
+        }
+        if extra_protocol:
+            protocol.update(self._strip_secrets_from_evidence(extra_protocol))
+
+        evidence = {
+            "evidence_class": evidence_class,
+            "verification_status": "unverified",
+            "verification_method": "none",
+            "payment_performed": False,
+            "payment_receipt_present": False
+        }
+
+        miss_info = missing_information.copy() if missing_information else []
+        for m in [detection_note, "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"]:
+            if m not in miss_info:
+                miss_info.append(m)
+
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": target_url,
+            "method": method.upper(),
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "protocol": protocol,
+            "evidence": evidence,
+            "missing_information": miss_info,
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+        return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

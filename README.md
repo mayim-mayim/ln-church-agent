@@ -77,6 +77,28 @@ Use managed platforms when you need hosted wallet custody, cloud-side payment se
 
 Use `ln-church-agent` when you need lightweight, local, cross-protocol inspection, decision support, evidence capture, sandbox validation, or non-AWS / open-web interoperability.
 
+### Submitting Observations Safely
+Do not use the low-level `execute_request()` method to manually POST payloads to the `/api/agent/external/observe` endpoint, as this bypasses schema normalization and may trigger strict internal HATEOAS/Cross-Origin guardrails.
+
+* **Standard Observations:** Use `submit_external_observation()`.
+* **Unmapped/Unknown Surfaces:** Use `submit_unmapped_observation()`.
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient()
+
+client.submit_unmapped_observation(
+    target_url="https://example.com/api/endpoint",
+    detection_note="payment_scheme_unmapped",
+    rails_detected=["Payment"],
+    status_code=402,
+)
+
+```
+
+*Note: Unmapped observations are treated strictly as discovery signals. They declare `payment_performed=False` and `verification_status="unverified"`. Default telemetry auto-submission scripts remain conservative; explicit opt-in is required to submit unmapped observations.*
+
 ## Where it fits
 
 - **ln-church-agent**: Buyer-side runtime for agents facing HTTP 402 challenges.
