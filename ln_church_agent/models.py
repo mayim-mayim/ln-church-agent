@@ -40,6 +40,12 @@ class SettlementOption(BaseModel):
     execution_support: Optional[str] = None  # "supported", "observe_only", "unsupported", "unknown"
     selected: bool = False
     selection_reason: Optional[str] = None
+    # --- v1.9.7: Deferred Settlement Fields ---
+    settlement_model: Optional[str] = None
+    authorization_artifact: Optional[str] = None
+    finality_model: Optional[str] = None
+    requires_channel_state: Optional[bool] = None
+    deferred_settlement: Optional[bool] = None
 
 class ObservatoryMetadata(BaseModel):
     """

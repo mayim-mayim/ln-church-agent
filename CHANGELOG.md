@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.9.7] - 2026-05-19 (x402 Batch Settlement Inspect-Only Support)
+* **Added**: Inspect-only awareness for x402 `batch-settlement` (a deferred settlement model separating request-time voucher authorization from batched onchain settlement).
+* **Added**: Deferred settlement metadata (`settlement_model="deferred_batch"`, `authorization_artifact="voucher"`, etc.) to `SettlementOption` and propagates them into MCP observation payloads.
+* **Security**: Explicitly blocks execution of `batch-settlement` in `_process_payment()`. The SDK safely stops without signing vouchers, depositing funds, or persisting channels.
+* **Behavior**: Classifies batch settlement as `rail="x402"` with `execution_support="observe_only"`. Voucher artifacts are not treated as settlement proofs, maintaining `payment_performed=False` and `verification_status="unverified"` in observation payloads.
+* **Maintained**: Existing L402, x402 exact, SVM exact, and MPP behaviors remain unchanged. `batch-settlement` is intentionally excluded from `SchemeType` and default `PaymentPolicy.allowed_schemes`.
+
 ## [1.9.6] - 2026-05-16 (Normalized Unmapped Observation Submission)
 * **Added**: Introduced `submit_unmapped_observation()` and `submit_unmapped_observation_async()` for safely reporting unmapped or unknown payment surfaces to the observatory.
 * **Added**: Automatically normalizes `payment_scheme_unmapped`, `unsupported_challenge_shape`, and `unknown_rail` into formal, public-safe External Observation payloads.

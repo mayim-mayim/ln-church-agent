@@ -37,13 +37,13 @@ def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET")
 def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
     if not scheme or scheme.lower() == "unknown":
         return "unknown"
-    if scheme == "exact":
+    if scheme == "exact" or scheme == "batch-settlement":
         return "x402"
     if scheme == "Payment" and parsed:
         method = getattr(parsed, "payment_method", "").lower()
         if method == "lightning" or parsed.parameters.get("invoice"):
             return "MPP"
-        if method in ["eip3009", "exact", "evm", "x402"]:
+        if method in ["eip3009", "exact", "evm", "x402", "batch-settlement"]:
             return "x402"
         return "unknown"
     if scheme in ["L402", "MPP", "Payment", "x402"]:
@@ -107,14 +107,29 @@ def _extract_settlement_options(parsed: Optional[any]) -> Tuple[List[SettlementO
         sch = req.get("scheme", "exact")
         
         support = "unknown"
-        if sch == "exact": support = "observe_only"
-        elif cf in ["evm", "svm", "lightning"]: support = "supported_but_not_executed_in_inspect"
-        else: support = "unsupported"
-        
+        settlement_model = None
+        authorization_artifact = None
+        finality_model = None
+        requires_channel_state = None
+        deferred_settlement = None
+
+        if sch == "exact": 
+            support = "observe_only"
+        elif sch == "batch-settlement":
+            support = "observe_only"
+            settlement_model = "deferred_batch"
+            authorization_artifact = "voucher"
+            finality_model = "deferred_onchain"
+            requires_channel_state = True
+            deferred_settlement = True
+        elif cf in ["evm", "svm", "lightning"]: 
+            support = "supported_but_not_executed_in_inspect"
+        else: 
+            support = "unsupported"
+            
         is_selected = False
         reason = "not_selected"
         
-        # 💡 選択されたものはその理由を、選択されなかったもので全体理由が mismatch ならそれを伝播
         if raw_accepted and req == raw_accepted:
             is_selected = True
             reason = reason_from_parser
@@ -138,14 +153,18 @@ def _extract_settlement_options(parsed: Optional[any]) -> Tuple[List[SettlementO
             raw_requirement_fingerprint=fingerprint_public_challenge_summary(req),
             execution_support=support,
             selected=is_selected,
-            selection_reason=reason
+            selection_reason=reason,
+            settlement_model=settlement_model,
+            authorization_artifact=authorization_artifact,
+            finality_model=finality_model,
+            requires_channel_state=requires_channel_state,
+            deferred_settlement=deferred_settlement
         )
         options.append(opt)
         if is_selected:
             selected_option = opt
         
     return options, selected_option
-
 
 def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResult:
     try:
@@ -390,6 +409,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             action = "observe_only"
             diagnostic_class = "post_settlement_proof_required"
             reason = "This endpoint exposes an x402 exact challenge but validates only post-settlement evidence. The SDK-generated unbroadcasted exact payload will be rejected unless a submitted tx hash/signature is provided."
+            next_cmd = None
+        elif scheme == "batch-settlement":
+            action = "observe_only"
+            diagnostic_class = "deferred_batch_settlement_observed"
+            reason = "x402 batch-settlement challenge detected. Request-time voucher / authorization artifact is not final settlement proof. Native execution is not implemented. Inspect-only mode will not sign vouchers or deposit funds."
             next_cmd = None
         elif shape in ["payment-auth-draft-partial", "payment-auth-draft-invalid-request"]:
             action = "reject_invalid"

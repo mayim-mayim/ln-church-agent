@@ -59,7 +59,12 @@ def inspect_paid_surface(url: str, method: str = "GET") -> Dict[str, Any]:
             "source": opt.source,
             "execution_support": opt.execution_support,
             "selected": opt.selected,
-            "selection_reason": opt.selection_reason
+            "selection_reason": opt.selection_reason,
+            "settlement_model": getattr(opt, "settlement_model", None),
+            "authorization_artifact": getattr(opt, "authorization_artifact", None),
+            "finality_model": getattr(opt, "finality_model", None),
+            "requires_channel_state": getattr(opt, "requires_channel_state", None),
+            "deferred_settlement": getattr(opt, "deferred_settlement", None)
         })
         
     selected_opt = None
@@ -74,7 +79,12 @@ def inspect_paid_surface(url: str, method: str = "GET") -> Dict[str, Any]:
             "amount": opt.amount,
             "execution_support": opt.execution_support,
             "selected": opt.selected,
-            "selection_reason": opt.selection_reason
+            "selection_reason": opt.selection_reason,
+            "settlement_model": getattr(opt, "settlement_model", None),
+            "authorization_artifact": getattr(opt, "authorization_artifact", None),
+            "finality_model": getattr(opt, "finality_model", None),
+            "requires_channel_state": getattr(opt, "requires_channel_state", None),
+            "deferred_settlement": getattr(opt, "deferred_settlement", None)
         }
 
     observatory_metadata = None
@@ -198,7 +208,12 @@ def build_mcp_observation_payload(inspect_result: Dict[str, Any], agent_id: str 
             "scheme": opt.get("scheme"),
             "selected": opt.get("selected"),
             "execution_support": opt.get("execution_support"),
-            "selection_reason": opt.get("selection_reason")
+            "selection_reason": opt.get("selection_reason"),
+            "settlement_model": opt.get("settlement_model"),
+            "authorization_artifact": opt.get("authorization_artifact"),
+            "finality_model": opt.get("finality_model"),
+            "deferred_settlement": opt.get("deferred_settlement"),
+            "requires_channel_state": opt.get("requires_channel_state")
         })
     
     return {
