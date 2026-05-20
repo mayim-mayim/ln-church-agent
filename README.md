@@ -44,6 +44,7 @@ It is designed for agents that must:
 - **Recover** through HATEOAS-style next actions if a flow is interrupted.
 - **Verify** receipts and semantic outcomes after payment.
 - **Report** trace evidence to a public sandbox or local observer.
+- **Record** goal-conditioned attempts and their outcomes for future optimization.
 
 ## 🧠 What this runtime is
 
@@ -106,6 +107,7 @@ client.submit_unmapped_observation(
 - **LN Church Sandbox**: Public proving ground for benchmark, receipt, trace, and interop evidence.
 - **Evidence Tracking (v1.8.4+)**: `ln-church-agent` can now capture sponsored-access and sandbox execution metadata as local evidence (`SponsoredAccessEvidence` / `SandboxEvidence`). Sandbox evidence is strictly scoped to LN Church's controlled sandbox environment (`evidence_scope: "sandbox_internal"`) and intentionally does not auto-submit external observations. Raw secrets are securely redacted.
 - **Corpus Readiness (v1.8.5+)**: `SandboxEvidence` can be converted into a local `SandboxCorpusCandidate`. This does not submit to `ExternalObserve`. Final corpus acceptance remains server-side.
+- **Goal Attempt Memory (v1.10.0+)**: Captures free, paid, and mixed steps toward a declared goal, serving as a foundational data lake for agentic behavior before recipes are applied.
 
 ---
 
@@ -119,6 +121,7 @@ Choose this SDK when the agent needs:
 - **Verifiable evidence**: Receipts, evidence records, and traces for auditing.
 - **Safe stopping**: Graceful handling of unsupported or unstable payment sessions.
 - **Commerce surface inspection**: Detect OKX APP-style agent-commerce metadata while keeping execution disabled unless a supported 402 rail is present.
+- **Goal-conditioned attempt tracking**: Explicitly record multi-step attempts (free, paid, mixed) and their optional outcomes.
 
 *Use a lightweight 402 proxy when the task is only a one-off, low-risk `pay-and-fetch`.*
 
@@ -252,6 +255,102 @@ print(payload["evidence"]["payment_performed"])
 ```
 
 *Note: The SDK currently builds these records locally. Automatic submission to the LN Church failure registry is disabled in this release pending server-side support.*
+
+---
+
+## Goal Attempt Observation (v1.10.0)
+
+`ln-church-agent` can now explicitly submit Day 1 Goal Attempt observations.
+
+A Goal Attempt records what an agent tried to accomplish for a declared goal, which surfaces it used, whether those steps were free, paid, mixed, observe-only, or simulated, and optionally whether the attempt satisfied the goal.
+
+This is not automatic telemetry.
+
+It does not:
+- execute a payment,
+- recommend a recipe,
+- auto-submit from `execute_detailed()`,
+- change L402/x402/MPP execution behavior.
+
+If `outcome` is omitted, the attempt is recorded as `unassessed`. This is intentional: unassessed attempts may still become useful when the Goal Attempt Graph is reinterpreted with newer goal taxonomies and outcome rubrics.
+
+```python
+client.submit_goal_attempt_observation(
+    goal={
+        "goal_text": "Explain this Solana transaction and identify missing confidence signals",
+        "declared_goal_type": "tx_investigation",
+        "domain_hint": "crypto"
+    },
+    attempt={
+        "attempt_mode": "free",
+        "completion_status": "partial_success",
+        "total_monetary_cost": 0,
+        "total_reasoning_cost_estimate": "medium"
+    },
+    steps=[
+        {
+            "step_index": 1,
+            "step_role": "fetch",
+            "surface_key": "web:solscan:tx_page",
+            "surface_type": "web_page",
+            "payment_performed": False,
+            "status": "success",
+            "output_semantic_type": "tx_summary"
+        }
+    ],
+    evidence={
+        "evidence_class": "agent_report",
+        "verification_status": "self_reported",
+        "payment_performed": False
+    }
+)
+```
+
+## 🧭 Goal Attempt Memory Read Models (v1.10.0)
+
+While full behavioral mapping is achieved via the premium graph, analyzing the complete `monzen-graph.json` during an active reasoning loop can cause context-window bloat. `ln-church-agent` v1.10.0 introduces two lightweight, static S3 snapshot endpoints to read historical attempt context efficiently.
+
+### Rational Read Order for Autonomous Agents
+To minimize data ingestion and allocation overhead, autonomous agents SHOULD query information using the following hierarchy:
+1. **Goal Attempt Summary (Free):** Query overall volume counters and unassessed ratios to determine base-layer viability.
+2. **Goal Surface Candidates (Paid - 1 SAT):** Fetch up to 20 historically observed surfaces previously harnessed by the network for a specific objective.
+3. **Full Resonance Graph (Premium - 10 SATS):** Download the full multi-chain dataset only when deep analytical structural mapping is required.
+
+### Code Example: Fetching Summary and Candidates
+
+```python
+from ln_church_agent import LnChurchClient, AssetType
+
+client = LnChurchClient(private_key="0x...")
+
+# 1. Fetch Lightweight Summary (Completely Free)
+summary = client.get_goal_attempt_summary(
+    goal_type="tx_investigation",
+    domain_hint="crypto"
+)
+print(f"Total Attempts Recorded: {summary['goals'][0]['attempt_count']}")
+
+# 2. Fetch Observed Candidate Surfaces (Paid: 1 SAT / 0.001 USDC / 1 JPYC)
+# Warning: If unpaid, this triggers a standard HTTP 402 challenge loop.
+candidates = client.get_goal_surface_candidates(
+    goal_type="tx_investigation",
+    domain_hint="crypto",
+    prefer_free_first=True,
+    asset=AssetType.SATS,
+    scheme="L402"
+)
+
+# Candidates are observed records, NOT recommendations or verdicts
+for surface in candidates["candidate_groups"][0]["candidate_surfaces"]:
+    print(f"Observed Surface: {surface['surface_key']} (Used: {surface['used_count']} times)")
+
+```
+
+**Strict Architectural Guardrails:**
+
+* **Not a Recommendation:** Candidate surfaces are historical memory markers, not recipe predictions or active verdicts (`not_a_recommendation: true`).
+* **Unassessed Integrity:** Traces with missing outcomes indicate an unassessed state, never an execution error.
+* **Fixed Cost Isolation:** Candidate lookups utilize an isolated pricing table, completely decoupled from full graph pricing.
 
 ---
 

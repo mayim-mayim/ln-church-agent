@@ -50,7 +50,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.9.7" 
+        return "1.10.0" 
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -2541,31 +2541,54 @@ class LnChurchClient(Payment402Client):
     # ==========================================
     # Phase 3: External Observation API (M2M)
     # ==========================================
-    def _strip_secrets_from_evidence(self, value: Any) -> Any:
-        secret_keywords = [
-            "preimage", "macaroon", "private_key", "signature", "authorization",
-            "secret", "token", "api_key", "apikey", "access_token", "refresh_token",
-            "grant_token", "mandate_token", "payment_response", "payment-response",
-            "payment_signature", "payment-signature", "cookie", "password", "credential",
+    _SAFE_PUBLIC_KEYS = {
+        "authorization_scheme", "payment_required", "payment_performed", "payment_receipt_present", 
+        "payment_response_present", "payment_intent", "payment_method", "verification_status", 
+        "evidence_class", "proof_reference", "provider_controlled", "selected_requirement_fingerprint",
+        "raw_requirement_fingerprint", "challenge_fingerprint", "challenge_fingerprint_before", 
+        "challenge_fingerprint_after", "target_url_hash", "surface_key", "surface_type", "rail", 
+        "scheme", "network", "asset", "amount", "currency", "draft_shape", "status", "status_code", 
+        "completion_status", "satisfaction_level", "failure_reason", "upgrade_signal", 
+        "rubric_version", "taxonomy_version"
+    }
+
+    _SECRET_EXACT_KEYS = {
+        "authorization", "www-authenticate", "payment-signature", "payment_signature",
+        "payment-response", "payment_response", "x-payment", "macaroon", "preimage",
+        "private_key", "privatekey", "secret", "token", "api_key", "apikey",
+        "access_token", "refresh_token", "grant_token", "mandate_token",
+        "shared_payment_token", "cookie", "password", "credential", "credentials", "bearer", "proof"
+    }
+
+    _SECRET_CONTAINER_KEYS = {
+        "headers", "raw_headers", "cookies", "raw_cookie",
+        "paymentauth", "payment_auth", "auth_header", "authorization_header"
+    }
+
+    def _is_secret_key(self, key: str) -> bool:
+        lower = str(key or "").strip().lower()
+        if lower in self._SAFE_PUBLIC_KEYS: return False
+        if lower in self._SECRET_EXACT_KEYS or lower in self._SECRET_CONTAINER_KEYS: return True
+        patterns = [
+            r"^(raw_)?authorization(_header)?$", r"^(raw_)?payment[_-]signature$",
+            r"^(raw_)?payment[_-]response$", r"^(.*_)?private[_-]?key$",
+            r"^(.*_)?access[_-]?token$", r"^(.*_)?refresh[_-]?token$",
+            r"^(.*_)?grant[_-]?token$", r"^(.*_)?mandate[_-]?token$"
         ]
-        
+        return any(re.match(p, lower) for p in patterns)
+
+    def _strip_secrets_from_evidence(self, value: Any) -> Any:
         if value is None:
             return {}
-            
         if isinstance(value, dict):
             clean = {}
             for k, v in value.items():
-                if any(s in str(k).lower() for s in secret_keywords):
+                if self._is_secret_key(k):
                     continue
                 clean[k] = self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list)) else v
             return clean
-            
         if isinstance(value, list):
-            return [
-                self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list)) else v
-                for v in value
-            ]
-            
+            return [self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list)) else v for v in value]
         return value
 
     def submit_external_observation(
@@ -2749,6 +2772,179 @@ class LnChurchClient(Payment402Client):
             "sdk_version": sdk_version or SDK_VERSION
         }
         return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
+
+    def submit_goal_attempt_observation(
+        self,
+        goal: dict,
+        attempt: dict,
+        steps: Optional[list] = None,
+        outcome: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        schema_version: str = "goal_attempt.v1"
+    ) -> dict:
+        """
+        Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
+
+        This records what an agent attempted to accomplish for a declared goal,
+        including free, paid, mixed, observe-only, or simulated steps.
+
+        This method is explicit-only:
+        - it does not execute payments,
+        - it does not recommend recipes,
+        - it does not auto-submit telemetry from execute_detailed(),
+        - it strips local secrets before submission.
+
+        If outcome is omitted, the attempt is recorded as unassessed.
+        """
+        payload = {
+            "schema_version": schema_version,
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "goal": self._strip_secrets_from_evidence(goal),
+            "attempt": self._strip_secrets_from_evidence(attempt),
+            "steps": self._strip_secrets_from_evidence(steps or []),
+            "evidence": self._strip_secrets_from_evidence(evidence or {})
+        }
+        if outcome is not None:
+            payload["outcome"] = self._strip_secrets_from_evidence(outcome)
+
+        return self.execute_request("POST", "/api/agent/external/attempt/observe", payload=payload)
+
+    async def submit_goal_attempt_observation_async(
+        self,
+        goal: dict,
+        attempt: dict,
+        steps: Optional[list] = None,
+        outcome: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        schema_version: str = "goal_attempt.v1"
+    ) -> dict:
+        """
+        Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
+
+        This records what an agent attempted to accomplish for a declared goal,
+        including free, paid, mixed, observe-only, or simulated steps.
+
+        This method is explicit-only:
+        - it does not execute payments,
+        - it does not recommend recipes,
+        - it does not auto-submit telemetry from execute_detailed(),
+        - it strips local secrets before submission.
+
+        If outcome is omitted, the attempt is recorded as unassessed.
+        """
+        payload = {
+            "schema_version": schema_version,
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "goal": self._strip_secrets_from_evidence(goal),
+            "attempt": self._strip_secrets_from_evidence(attempt),
+            "steps": self._strip_secrets_from_evidence(steps or []),
+            "evidence": self._strip_secrets_from_evidence(evidence or {})
+        }
+        if outcome is not None:
+            payload["outcome"] = self._strip_secrets_from_evidence(outcome)
+
+        return await self.execute_request_async("POST", "/api/agent/external/attempt/observe", payload=payload)
+
+    def get_goal_attempt_summary(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        include_unassessed: bool = True,
+        limit: int = 20
+    ) -> dict:
+        """
+        Retrieve a lightweight observational summary of goal attempts from the LN Church Observatory.
+
+        This endpoint is strictly free and does not invoke payment logic or 402 negotiation blocks.
+        Use this to understand block ratios and upgrade signals prior to querying raw surfaces.
+        """
+        params = {
+            "include_unassessed": "true" if include_unassessed else "false",
+            "limit": limit
+        }
+        if goal_type: params["goal_type"] = goal_type
+        if domain_hint: params["domain_hint"] = domain_hint
+        if getattr(self, "agent_id", None): params["agentId"] = self.agent_id
+
+        return self.execute_request("GET", "/api/agent/monzen/goal-attempts/summary", payload=params)
+
+    async def get_goal_attempt_summary_async(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        include_unassessed: bool = True,
+        limit: int = 20
+    ) -> dict:
+        """Async version of get_goal_attempt_summary"""
+        params = {
+            "include_unassessed": "true" if include_unassessed else "false",
+            "limit": limit
+        }
+        if goal_type: params["goal_type"] = goal_type
+        if domain_hint: params["domain_hint"] = domain_hint
+        if getattr(self, "agent_id", None): params["agentId"] = self.agent_id
+
+        return await self.execute_request_async("GET", "/api/agent/monzen/goal-attempts/summary", payload=params)
+
+    def get_goal_surface_candidates(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        prefer_free_first: bool = True,
+        include_unassessed: bool = True,
+        limit: int = 10,
+        asset: AssetType = AssetType.SATS,
+        scheme: Optional[str] = "L402"
+    ) -> dict:
+        """
+        Retrieve a paid compact list of observed surfaces used in prior attempts matching the goal type.
+
+        Cost: 1 SAT / 0.001 USDC / 1 JPYC (Bypasses full monzen-graph download overhead).
+        
+        Strict Safety Boundaries:
+        - This is a historical read model, NOT a recommendation or workflow recipe.
+        - Missing outcomes or unassessed steps do not imply execution failure.
+        """
+        params = {
+            "prefer_free_first": "true" if prefer_free_first else "false",
+            "include_unassessed": "true" if include_unassessed else "false",
+            "limit": limit,
+            "asset": asset.value if hasattr(asset, "value") else str(asset),
+            "scheme": scheme,
+            "agentId": getattr(self, "agent_id", "unknown")
+        }
+        if goal_type: params["goal_type"] = goal_type
+        if domain_hint: params["domain_hint"] = domain_hint
+
+        # GET 402 negotiation loop via execute_detailed internally
+        result = self.execute_detailed("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
+        return result.response
+
+    async def get_goal_surface_candidates_async(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        prefer_free_first: bool = True,
+        include_unassessed: bool = True,
+        limit: int = 10,
+        asset: AssetType = AssetType.SATS,
+        scheme: Optional[str] = "L402"
+    ) -> dict:
+        """Async version of get_goal_surface_candidates"""
+        params = {
+            "prefer_free_first": "true" if prefer_free_first else "false",
+            "include_unassessed": "true" if include_unassessed else "false",
+            "limit": limit,
+            "asset": asset.value if hasattr(asset, "value") else str(asset),
+            "scheme": scheme,
+            "agentId": getattr(self, "agent_id", "unknown")
+        }
+        if goal_type: params["goal_type"] = goal_type
+        if domain_hint: params["domain_hint"] = domain_hint
+
+        result = await self.execute_detailed_async("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
+        return result.response
+
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

@@ -3,7 +3,7 @@
   "name": "io.github.mayim-mayim/ln-church-agent-mcp",
   "title": "LN Church Agent MCP",
   "description": "Inspect-only MCP server for HTTP 402 and agent-commerce surfaces without executing payment.",
-  "version": "1.9.7",
+  "version": "1.10.0",
   "repository": {
     "url": "https://github.com/mayim-mayim/ln-church-agent",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "ln-church-agent",
-      "version": "1.9.7",
+      "version": "1.10.0",
       "transport": {
         "type": "stdio"
       }

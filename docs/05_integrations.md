@@ -77,4 +77,133 @@ This server exposes only non-executing tools:
 
 It never signs, pays, loads wallet keys, or executes a transaction. Use it as a buyer-side inspection sidecar before handing payment execution to a configured runtime or managed payment platform.
 
+## Goal Attempt Observation
+
+The SDK provides an explicit observation path for goal-conditioned agent attempts. Unlike the low-level HTTP authentication telemetry, Goal Attempt Observation is entirely explicit-only and serves as the foundational data lake for behavioral memory before reasoning graphs apply optimization recipes.
+
+* **Explicit Submission Only**: It does not automatically hook into `execute_request()` or `execute_detailed()`.
+* **Flexible Assessments**: The `outcome` payload block is completely optional. If omitted, the attempt is recorded as `unassessed`, ensuring traces are saved even before strict rubrics evaluate them.
+* **Mixed Step Visibility**: Supports tracking across `free`, `paid`, `mixed`, `observe_only`, or `simulated` steps inside a single execution context.
+
+### Example: Unassessed Attempt
+```python
+client.submit_goal_attempt_observation(
+    goal={
+        "goal_text": "Explain this Solana transaction and identify missing confidence signals",
+        "declared_goal_type": "tx_investigation",
+        "domain_hint": "crypto"
+    },
+    attempt={
+        "attempt_mode": "free",
+        "completion_status": "partial_success",
+        "total_monetary_cost": 0,
+        "total_reasoning_cost_estimate": "medium"
+    },
+    steps=[
+        {
+            "step_index": 1,
+            "step_role": "fetch",
+            "surface_key": "web:solscan:tx_page",
+            "surface_type": "web_page",
+            "payment_performed": False,
+            "status": "success",
+            "output_semantic_type": "tx_summary"
+        }
+    ],
+    evidence={
+        "evidence_class": "agent_report",
+        "verification_status": "self_reported",
+        "payment_performed": False
+    }
+)
+
+```
+
+### Example: Fully Assessed Attempt with Outcome Rubric
+
+```python
+client.submit_goal_attempt_observation(
+    goal={
+        "goal_text": "Explain this transaction and assess risk",
+        "declared_goal_type": "tx_investigation",
+        "domain_hint": "crypto"
+    },
+    attempt={
+        "attempt_mode": "mixed",
+        "completion_status": "success",
+        "total_monetary_cost": 0.05,
+        "total_reasoning_cost_estimate": "low"
+    },
+    steps=[
+        {
+            "step_index": 1,
+            "step_role": "fetch",
+            "surface_key": "web:explorer:tx",
+            "surface_type": "web_page",
+            "payment_performed": False,
+            "status": "success"
+        },
+        {
+            "step_index": 2,
+            "step_role": "score",
+            "surface_key": "paid:risk_api:v1",
+            "surface_type": "paid_surface",
+            "payment_performed": True,
+            "amount": 0.05,
+            "currency": "USDC",
+            "rail": "x402",
+            "status": "success"
+        }
+    ],
+    outcome={
+        "goal_achieved": True,
+        "satisfaction_level": "full",
+        "confidence": 0.91,
+        "upgrade_signal": "none",
+        "rubric_version": "outcome_rubric.v1"
+    },
+    evidence={
+        "evidence_class": "execution_trace",
+        "verification_status": "self_reported",
+        "payment_performed": True,
+        "payment_receipt_present": True
+    }
+)
+
+```
+
+## Goal Attempt Memory Read Models
+
+The SDK provides explicit read model endpoints for goal-conditioned attempt analytics. These endpoints query compact, pre-compiled S3 snapshots rather than issuing direct heavy queries to the Graph database core, keeping the buyer-side runtime lightweight and high-performing.
+
+### 1. Goal Attempt Summary (Free)
+Allows agents to query total attempt counters, execution mode distributions, and validation ratios without incurring payment overhead.
+
+```python
+summary = client.get_goal_attempt_summary(
+    goal_type="security_audit",
+    include_unassessed=True
+)
+
+```
+
+### 2. Goal Surface Candidates (Paid - 1 SAT)
+
+Retrieves a ranked listing of up to 20 historically observed surfaces utilized by other agents for a declared goal context.
+
+```python
+# Fetches observed candidates. Bypasses premium graph download overhead.
+candidates = client.get_goal_surface_candidates(
+    goal_type="security_audit",
+    prefer_free_first=True,
+    limit=10
+)
+
+```
+
+### Boundary Safeguards
+
+* **No Recipe Inference:** The returned `candidate_surfaces` block represents purely observed behavioral histories. It does not contain structural workflow composition rules or active recommendations.
+* **Unassessed Attempts are Not Failures:** Elements inside the read models that lack completed rubrics are strictly categorized as `unassessed` and do not count against success metrics.
+
 ---

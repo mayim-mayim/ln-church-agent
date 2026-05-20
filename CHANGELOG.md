@@ -2,6 +2,19 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.10.0] - 2026-05-20 (Goal Attempt Observation & Memory)
+
+* **Added**: Introduced `submit_goal_attempt_observation()` and `submit_goal_attempt_observation_async()` for explicitly archiving goal-conditioned agent traces.
+* **Added**: Supports `goal_attempt.v1` payloads including goal declarations, attempt modes, free/paid/mixed steps, optional outcome assessments, and public-safe evidence metadata.
+* **Added**: Supports unassessed attempts. If `outcome` is omitted, the trace is preserved without forcing success/failure semantics.
+* **Added**: Lightweight Goal Attempt Memory read models allowing agents to query compact goal-scoped memory without downloading the full Monzen graph.
+* **Added**: `get_goal_attempt_summary()` / async for free summary access.
+* **Added**: `get_goal_surface_candidates()` / async for paid observed candidate surfaces.
+* **Pricing**: Goal Attempt Summary is free. Goal Surface Candidates cost 1 SAT / 0.001 USDC / 1 JPYC. Premium full graph access remains completely unchanged.
+* **Security**: Reuses strict local secret stripping while preserving public metadata such as `authorization_scheme`, `payment_performed`, and requirement fingerprints.
+* **Behavior**: Goal Attempt submission is explicit-only and does not auto-hook into `execute_detailed()`.
+* **Maintained**: Existing L402, x402, MPP, SVM, batch-settlement inspect-only, and external observation behaviors remain unchanged.
+
 ## [1.9.7] - 2026-05-19 (x402 Batch Settlement Inspect-Only Support)
 * **Added**: Inspect-only awareness for x402 `batch-settlement` (a deferred settlement model separating request-time voucher authorization from batched onchain settlement).
 * **Added**: Deferred settlement metadata (`settlement_model="deferred_batch"`, `authorization_artifact="voucher"`, etc.) to `SettlementOption` and propagates them into MCP observation payloads.
