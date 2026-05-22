@@ -122,6 +122,29 @@ def parse_www_authenticate(auth_header: str, source: ChallengeSource = Challenge
 
 SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
+KNOWN_EVM_TOKENS = {
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": {"asset": "USDC", "decimals": 6}, # Base USDC
+    "0x2791bca1f2de4661ed88a30c99a7a9449aa84174": {"asset": "USDC", "decimals": 6}, # Polygon USDC
+}
+
+KNOWN_SVM_TOKENS = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {"asset": "USDC", "decimals": 6}, # Solana USDC
+}
+
+def _resolve_known_token_metadata(network: str, asset_or_token_address: str):
+    token_str = str(asset_or_token_address)
+    net_str = str(network).lower()
+    
+    if net_str.startswith("solana:"):
+        if token_str in KNOWN_SVM_TOKENS:
+            return KNOWN_SVM_TOKENS[token_str]["asset"], KNOWN_SVM_TOKENS[token_str]["decimals"]
+    else:
+        addr_lower = token_str.lower()
+        if addr_lower in KNOWN_EVM_TOKENS:
+            return KNOWN_EVM_TOKENS[addr_lower]["asset"], KNOWN_EVM_TOKENS[addr_lower]["decimals"]
+            
+    return None, None
+
 def _safe_float(val) -> float:
     try:
         return float(val)
@@ -137,14 +160,18 @@ def parse_challenge_from_response(
 ) -> ParsedChallenge:
     h = response.headers
     
-    # 1. WWW-Authenticateのチェックを広げ、X402も含める
     auth_h = h.get("WWW-Authenticate", "")
-    if auth_h.upper().startswith(("L402", "PAYMENT", "MPP", "X402")):
+    pay_req = h.get("payment-required") or h.get("x-payment-required") or h.get("PAYMENT-REQUIRED")
+
+    # 1. WWW-Authenticate の L402, PAYMENT, MPP は最優先
+    if auth_h.upper().startswith(("L402", "PAYMENT", "MPP")):
         return parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
 
-    # 2. 多様なヘッダーケースを安全にキャプチャする
-    pay_req = h.get("payment-required") or h.get("x-payment-required") or h.get("PAYMENT-REQUIRED")
-    
+    # 2. PAYMENT-REQUIRED がなく、WWW-Authenticate が X402 ならそれを使う
+    if not pay_req and auth_h.upper().startswith("X402"):
+        return parse_www_authenticate(auth_h, source=ChallengeSource.STANDARD_WWW)
+
+    # 3. 多様なヘッダーケースを安全にキャプチャする
     payload = None
     source_type = ChallengeSource.STANDARD_X402
     raw_header_val = pay_req
@@ -165,7 +192,7 @@ def parse_challenge_from_response(
                     raw_header=pay_req
                 )
 
-    # 3. ヘッダーにペイロードがない場合、JSONボディをチェック（Alchemyやカスタムシェイプ）
+    # 4. ヘッダーにペイロードがない場合、JSONボディをチェック（Alchemyやカスタムシェイプ）
     if not payload:
         try:
             body = response.json()
@@ -187,7 +214,7 @@ def parse_challenge_from_response(
         except Exception:
             pass
 
-    # 4. 抽出したペイロード（ヘッダーまたはボディ）を処理する
+    # 5. 抽出したペイロード（ヘッダーまたはボディ）を処理する
     if payload:
         accepted_params = {}
         selected_accept = None
@@ -224,19 +251,23 @@ def parse_challenge_from_response(
 
             if selected_accept:
                 raw_asset = selected_accept.get("asset", expected_asset)
-                logical_asset = selected_accept.get("symbol") or payload.get("asset") or expected_asset
+                logical_asset = selected_accept.get("symbol") or payload.get("asset")
                 raw_amount = selected_accept.get("amount", 0)
-                extracted_token = raw_asset
-
+                
+                extracted_token = None
                 if isinstance(raw_asset, str) and (raw_asset.startswith("0x") or len(raw_asset) > 30):
                     extracted_token = raw_asset
                     
-                if not selected_accept.get("symbol"):
-                    if raw_asset == SOLANA_USDC_MINT:
-                        logical_asset = "USDC"
+                known_asset, known_decimals = _resolve_known_token_metadata(selected_accept.get("network", ""), raw_asset)
+                if known_asset:
+                    if not logical_asset:
+                        logical_asset = known_asset
+
+                if not logical_asset:
+                    logical_asset = expected_asset
 
                 human_amount = _safe_float(raw_amount)
-                decimals = payload.get("decimals") or selected_accept.get("decimals")
+                decimals = payload.get("decimals") or selected_accept.get("decimals") or known_decimals
                 
                 if decimals is not None:
                     human_amount = human_amount / (10 ** int(decimals))
@@ -252,13 +283,23 @@ def parse_challenge_from_response(
                     "amount": human_amount,
                     "asset": logical_asset,
                     "payTo": selected_accept.get("payTo", ""),
-                    "token_address": extracted_token,
+                    "token_address": extracted_token or "", 
+                    "decimals": decimals,
                     "_raw_accepted": selected_accept,
                     "_all_accepted": all_accepted,
                     "_raw_resource": payload.get("resource", {}),
                     "_raw_extensions": payload.get("extensions"),
-                    "_selection_reason": selection_reason # 💡 追加: 選択理由を保持
+                    "_selection_reason": selection_reason,
+                    "_raw_amount": raw_amount
                 }
+
+                for k, v in payload.get("parameters", {}).items():
+                    if k not in accepted_params: accepted_params[k] = v
+                for k, v in selected_accept.get("parameters", {}).items():
+                    if k not in accepted_params: accepted_params[k] = v
+                for k, v in selected_accept.get("extra", {}).items():
+                    if k not in accepted_params: accepted_params[k] = v
+                    
             elif selection_reason == "no_allowed_network_match":
                 accepted_params = {
                     "_all_accepted": all_accepted,
@@ -268,23 +309,29 @@ def parse_challenge_from_response(
         params = {
             "network": payload.get("network") or accepted_params.get("network", "unknown"),
             "amount": payload.get("amount") or accepted_params.get("amount", 0),
-            "asset": payload.get("asset") or accepted_params.get("asset", expected_asset),
+            "asset": accepted_params.get("asset") or payload.get("asset") or expected_asset,
             "destination": payload.get("destination") or accepted_params.get("payTo", ""),
             "payTo": payload.get("payTo") or accepted_params.get("payTo", ""),
-            "token_address": payload.get("token_address") or accepted_params.get("token_address", ""),
-            "decimals": payload.get("decimals") or (selected_accept.get("decimals") if selected_accept else None),
-            "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None),
+            "token_address": accepted_params.get("token_address") or payload.get("token_address") or "",
+            "decimals": payload.get("decimals") or (selected_accept.get("decimals") if selected_accept else None) or accepted_params.get("decimals"),
+            "reference": payload.get("reference") or (selected_accept.get("extra", {}).get("reference") if selected_accept else None) or accepted_params.get("reference"),
             "challenge": payload.get("challenge", ""),
             "_raw_accepted": accepted_params.get("_raw_accepted"),
             "_all_accepted": accepted_params.get("_all_accepted", []),
             "_raw_resource": accepted_params.get("_raw_resource"),
             "_raw_extensions": accepted_params.get("_raw_extensions"),
-            "_selection_reason": accepted_params.get("_selection_reason", "unknown") # 💡 paramsにも伝播
+            "_selection_reason": accepted_params.get("_selection_reason", "unknown"),
+            "_raw_amount": accepted_params.get("_raw_amount")
         }
+        
+        for k, v in accepted_params.items():
+            if k not in params:
+                params[k] = v
+
         params["amount"] = accepted_params.get("amount", params["amount"])
 
         return ParsedChallenge(
-            scheme=payload.get("scheme") or accepted_params.get("scheme") or "x402",
+            scheme=accepted_params.get("scheme") or payload.get("scheme") or "x402",
             network=params["network"],
             amount=_safe_float(params["amount"]),
             asset=params["asset"],

@@ -2,6 +2,16 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.10.1] - 2026-05-22 (x402 Exact EVM Hotfix)
+* **Fixed**: Prefer structured `PAYMENT-REQUIRED` over `WWW-Authenticate: x402` when both are present.
+* **Fixed**: Resolve known token-address-only x402 exact assets (Base/Polygon USDC via case-insensitive matching, Solana USDC via strict case-sensitive Base58 matching).
+* **Fixed**: Preserve raw `accepts[].amount` while exposing human-readable amount for policy checks.
+* **Fixed**: Prevent raw/human amount double conversion in EIP-3009 exact payload generation.
+* **Fixed**: Preserve structured challenge parameters such as `relayer_endpoint`.
+* **Maintained**: L402 / MPP / Payment draft priority remains unchanged.
+* **Maintained**: SVM exact raw transaction behavior remains unchanged.
+* **Maintained**: `batch-settlement` remains observe-only.
+
 ## [1.10.0] - 2026-05-20 (Goal Attempt Observation & Memory)
 
 * **Added**: Introduced `submit_goal_attempt_observation()` and `submit_goal_attempt_observation_async()` for explicitly archiving goal-conditioned agent traces.
