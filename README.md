@@ -4,7 +4,10 @@ Your agent will hit a 402 paywall in the wild.
 
 Will it inspect, decide, pay, recover, verify, and continue — or freeze?
 
-`ln-church-agent` is a **buyer-side HTTP 402 runtime and agent-commerce surface inspector** for autonomous agents.  
+`ln-church-agent` is a **buyer-side HTTP 402 runtime and agent-commerce surface inspector** for autonomous agents. 
+
+In the broader agentic commerce stack, `ln-church-agent` acts as the buyer-side component of an observability and trust-evidence layer for HTTP 402-compatible paid actions.
+
 It helps agents inspect paid-action surfaces, distinguish executable payment rails from higher-order commerce protocols, and prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
 
 In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP), Google AP2, and ACP** without executing payment logic. These protocols are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
