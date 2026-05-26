@@ -111,6 +111,22 @@ client.submit_unmapped_observation(
 
 ---
 
+## Relationship to official protocol SDKs
+
+`ln-church-agent` is a complement, not a replacement, for official protocol SDKs.
+
+* **Use official x402 / MPP / L402 SDKs** when you only need protocol-native settlement.
+* **Use `ln-church-agent`** when an autonomous agent needs a deterministic buyer-side runtime around settlement to:
+    * inspect before paying
+    * select or reject rails according to local policy
+    * recover via HATEOAS
+    * verify receipts
+    * capture evidence
+    * report redacted observations explicitly
+    * record goal-conditioned attempts
+
+---
+
 ## 🧠 AI Decision Card
 
 Use `ln-church-agent` when an AI agent must do more than simply pay for one API call.
