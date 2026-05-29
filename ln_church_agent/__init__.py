@@ -57,6 +57,8 @@ from .failures import (
     detect_public_challenge_changed_fields
 )
 
+from .capabilities import get_capability_matrix
+
 # 汎用別名
 Http402Client = Payment402Client 
 
@@ -106,5 +108,6 @@ __all__ = [
     "build_sandbox_evidence_from_response",
     "build_sandbox_interop_report_payload",
     "SandboxCorpusCandidate",
-    "build_sandbox_corpus_candidate"
+    "build_sandbox_corpus_candidate",
+    "get_capability_matrix"
 ]

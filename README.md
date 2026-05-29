@@ -158,6 +158,9 @@ This command does not execute payment. It detects the HTTP 402 challenge, identi
 
 Canonical first loop: `inspect → decide → pay → verify → trace`
 
+* For exact capability and execution boundaries, see the [Capability Matrix](docs/07_capability_matrix.md).
+* For future standards tracking and deferred items, see [Standards Watch Alignment](docs/08_standards_watch_alignment.md).
+
 ---
 
 ## 🧭 Agent Commerce Surface Inspection

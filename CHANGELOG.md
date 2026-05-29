@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.10.2] - 2026-05-29 (Capability Matrix & Standards Watchlist Alignment)
+* **Added**: Capability matrix documentation (`docs/07_capability_matrix.md`) mapping support boundaries and semantics.
+* **Added**: Standards watch alignment documentation (`docs/08_standards_watch_alignment.md`) clarifying upstream drift monitoring.
+* **Added**: `get_capability_matrix()` helper exposed safely in `ln_church_agent.capabilities` for tooling inspection.
+* **Maintained**: No payment execution behavior changed. L402 / x402 / MPP / SVM exact behavior remains unchanged.
+* **Maintained**: `batch-settlement` remains observe-only. AP2 / ACP / OKX APP remain inspect-only / guided-handoff surfaces. Goal Attempt telemetry remains explicit-only.
+
 ## [1.10.1] - 2026-05-22 (x402 Exact EVM Hotfix)
 * **Fixed**: Prefer structured `PAYMENT-REQUIRED` over `WWW-Authenticate: x402` when both are present.
 * **Fixed**: Resolve known token-address-only x402 exact assets (Base/Polygon USDC via case-insensitive matching, Solana USDC via strict case-sensitive Base58 matching).
