@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.11.1] - 2026-05-31 (Auth-Capture Inspect-Only Standards Alignment)
+* **Added**: Inspect-only classification for x402 `auth-capture` mapping it strictly to the x402 settlement rail.
+* **Safety**: Absolute execution guard for `auth-capture` in `_process_payment()` ensuring no EIP-3009/Permit2 signatures are generated or executed.
+* **Docs**: Capability matrix alignment and semantic glossary updates detailing that authorization signatures are not settlement proofs.
+* **Maintained**: No payment execution behavior changed. Does not implement capture, void, refund, or reclaim lifecycles.
+
 ## [1.11.0] - 2026-05-31 (Surface Preflight Read Model Client)
 * **Added**: `LnChurchClient.get_surface_preflight()` and `get_surface_preflight_async()` for safely reading historical observational memory of a surface before interacting with it.
 * **Added**: Example script (`examples/surface_preflight_read_model.py`) and unit tests to ensure strict enforcement of safety boundaries.

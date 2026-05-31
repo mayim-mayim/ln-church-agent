@@ -108,6 +108,17 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "watchlist_status": "implemented"
         },
         {
+            "id": "x402_auth_capture",
+            "name": "x402 auth-capture",
+            "layer": "settlement_rail",
+            "current_sdk_support": "observe_only",
+            "inspect_behavior": "observe_only",
+            "execution_behavior": "halt",
+            "proof_semantics": "authorization_signature_not_settlement_proof",
+            "default_recommended_action": "observe_only",
+            "watchlist_status": "watch_only"
+        },
+        {
             "id": "grant_sponsored_access",
             "name": "Grant / Sponsored Access",
             "layer": "authorization_artifact",

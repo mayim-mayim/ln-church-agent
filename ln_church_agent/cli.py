@@ -37,13 +37,13 @@ def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET")
 def _settlement_rail_from_scheme(scheme: str, parsed=None) -> Optional[str]:
     if not scheme or scheme.lower() == "unknown":
         return "unknown"
-    if scheme == "exact" or scheme == "batch-settlement":
+    if scheme in ["exact", "batch-settlement", "auth-capture"]:
         return "x402"
     if scheme == "Payment" and parsed:
         method = getattr(parsed, "payment_method", "").lower()
         if method == "lightning" or parsed.parameters.get("invoice"):
             return "MPP"
-        if method in ["eip3009", "exact", "evm", "x402", "batch-settlement"]:
+        if method in ["eip3009", "exact", "evm", "x402", "batch-settlement", "auth-capture"]:
             return "x402"
         return "unknown"
     if scheme in ["L402", "MPP", "Payment", "x402"]:
@@ -121,6 +121,13 @@ def _extract_settlement_options(parsed: Optional[any]) -> Tuple[List[SettlementO
             authorization_artifact = "voucher"
             finality_model = "deferred_onchain"
             requires_channel_state = True
+            deferred_settlement = True
+        elif sch == "auth-capture":
+            support = "observe_only"
+            settlement_model = "auth_capture_deferred_refundable"
+            authorization_artifact = "authorization_signature"
+            finality_model = "capture_void_refund_reclaim_lifecycle"
+            requires_channel_state = False
             deferred_settlement = True
         elif cf in ["evm", "svm", "lightning"]: 
             support = "supported_but_not_executed_in_inspect"
@@ -414,6 +421,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             action = "observe_only"
             diagnostic_class = "deferred_batch_settlement_observed"
             reason = "x402 batch-settlement challenge detected. Request-time voucher / authorization artifact is not final settlement proof. Native execution is not implemented. Inspect-only mode will not sign vouchers or deposit funds."
+            next_cmd = None
+        elif scheme == "auth-capture":
+            action = "observe_only"
+            diagnostic_class = "deferred_auth_capture_observed"
+            reason = "x402 auth-capture challenge detected. Authorization signature is not final settlement proof. Native execution is not implemented. Inspect-only mode will not sign, capture, void, refund, or reclaim."
             next_cmd = None
         elif shape in ["payment-auth-draft-partial", "payment-auth-draft-invalid-request"]:
             action = "reject_invalid"

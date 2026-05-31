@@ -53,7 +53,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.11.0"
+        return "1.11.1"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -314,6 +314,9 @@ class Payment402Client:
     def _process_payment(self, parsed: ParsedChallenge, headers: dict, payload: dict, method: str = "POST", url: str = "") -> tuple[str, str, Optional[Any]]:
         if parsed.scheme == "batch-settlement":
             raise PaymentExecutionError("batch_settlement_execution_not_supported: SDK will not execute deferred batch settlement, sign vouchers, or deposit funds.")
+            
+        if parsed.scheme == "auth-capture":
+            raise PaymentExecutionError("auth_capture_execution_not_supported: SDK will not execute auth-capture, sign EIP-3009/Permit2 authorizations, capture, void, refund, or reclaim.")
             
         proof_ref = ""
         network_name = parsed.network or "UNKNOWN"

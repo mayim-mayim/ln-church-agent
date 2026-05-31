@@ -15,9 +15,14 @@ This document provides rules on how to interpret `STANDARDS_WATCHLIST.md` and es
 To maintain the safety and focus of the `ln-church-agent` SDK, **DO NOT** implement the following features under any circumstances until they are removed from the "Deferred" list:
 
 * **AP2 / ACP / APP Payment Execution**: Do not implement mandate signing, broker negotiation calls, or ACP checkout completions. They remain strictly `observe_only`.
+* **auth-capture Execution**: Do not implement EIP-3009 / Permit2 signing, capture, void, refund, reclaim, contract simulation, or fee-policy enforcement until the scheme is stable across official SDKs and production facilitators. Keep it strictly inspect-only.
 * **Payment Auth Credential Execution**: Do not construct the `Authorization: Payment <base64url-json>` header until schemas are globally stable.
 * **batch-settlement Execution**: Do not implement deposit calls, voucher signing, channel state persistence, refund handling, or claim execution.
 * **MPP Session Execution**: Do not implement `intent="session"` continuous state-channel logic.
 * **AWS AgentCore Direct Integration**: Do not integrate directly with managed AWS SDK logic.
 * **Bazaar / MCP Paid Connectivity**: Do not implement as a stable public abstraction until the x402 Bazaar API is completely stable.
 * **Token-2022 / ATA Auto-Creation**: Do not inject SPL Token-2022 extensions or ATA creation instructions into the transaction builder unless universally accepted by all facilitators.
+
+### 1. Payment-Receipt Semantics & Cache Rules
+* **Observation:** The IETF payment draft is expanding beyond prefix negotiation and is clarifying `Payment-Receipt` semantics, retry expectations, and cache behavior around `402`, `401`, and `403` flows. Payment-Receipt presence is not final settlement by itself. Future receipt states may include SETTLED, PENDING_FINALITY, REVERSED, CANCELLED-like categories.
+* **SDK Stance:** The SDK already extracts receipt artifacts when provided, but cache-control behavior and receipt-driven retry semantics are still monitored rather than hard-coded into the stable public contract. Receipt class, settlement state, attestor, canonical reference, and reversal state are evaluated separately. Currently, verification API implementations are not enforced.
