@@ -11,8 +11,8 @@ def make_valid_response(known=True):
         "surface": {"known": known},
         "guardrails": {
             "final_authority": "local_runtime",
-            "this_read_model_does_not_execute_payments": True,  # ←追加
-            "this_read_model_does_not_prove_settlement": True   # ←追加
+            "this_read_model_does_not_execute_payments": True,  
+            "this_read_model_does_not_prove_settlement": True   
         }
     }
 
