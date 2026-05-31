@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.11.0] - 2026-05-31 (Surface Preflight Read Model Client)
+* **Added**: `LnChurchClient.get_surface_preflight()` and `get_surface_preflight_async()` for safely reading historical observational memory of a surface before interacting with it.
+* **Added**: Example script (`examples/surface_preflight_read_model.py`) and unit tests to ensure strict enforcement of safety boundaries.
+* **Safety Boundaries**: No payment execution behavior was changed. The client explicitly uses isolated HTTP GET requests without engaging the `execute_detailed` HATEOAS or payment loop. Unknown surfaces safely return `known: false` without triggering HTTP 404s. The preflight result enforces `not_a_recommendation` and maintains the local runtime policy as the final authority.
+
 ## [1.10.2] - 2026-05-29 (Capability Matrix & Standards Watchlist Alignment)
 * **Added**: Capability matrix documentation (`docs/07_capability_matrix.md`) mapping support boundaries and semantics.
 * **Added**: Standards watch alignment documentation (`docs/08_standards_watch_alignment.md`) clarifying upstream drift monitoring.

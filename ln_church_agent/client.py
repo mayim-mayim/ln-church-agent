@@ -5,11 +5,12 @@ import asyncio
 import importlib.metadata
 import uuid
 import inspect
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qsl, urlencode
 from typing import Optional, Dict, Any, Callable, List
 import warnings
 import base64
 import json
+import hashlib
 
 from eth_account import Account
 from .models import (
@@ -46,11 +47,13 @@ from .evidence import (
     build_sandbox_interop_report_payload
 )
 
+SURFACE_PREFLIGHT_SCHEMA_VERSION = "ln_church.surface_preflight_read_model.v1"
+
 def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.10.2" 
+        return "1.11.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -74,6 +77,41 @@ def _b64url_encode(data_dict: dict) -> str:
 
 def _normalize_scheme(raw_scheme: str) -> str:
     return normalize_scheme(raw_scheme)
+
+def _derive_surface_key(
+    target_url: str,
+    method: str = "GET",
+    rail: str = "unknown",
+    network: str = "unknown",
+    asset: str = "unknown",
+    authorization_scheme: str = "unknown",
+    draft_shape: str = "unknown"
+) -> str:
+    """
+    Internal experimental helper: Deterministically calculate the surfaceKey 
+    using the same logic as the Hon-den backend.
+    """
+    try:
+        parsed = urlparse(target_url)
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+        path = parsed.path
+        if path != "/" and path.endswith("/"):
+            path = path[:-1]
+        
+        volatile_params = {"ts", "timestamp", "time", "nonce", "session", "sid", "token", "signature", "sig", "expires", "exp", "cache", "cache_bust", "cb", "rand", "random"}
+        query_params = parse_qsl(parsed.query, keep_blank_values=True)
+        filtered_params = sorted([(k, v) for k, v in query_params if k.lower() not in volatile_params])
+        query = urlencode(filtered_params)
+        
+        canonical_url = f"{scheme}://{netloc}{path}"
+        if query:
+            canonical_url += f"?{query}"
+    except Exception:
+        canonical_url = target_url
+
+    seed = f"{method.upper()}|{canonical_url}|{rail}|{network}|{asset}|{authorization_scheme}|{draft_shape}"
+    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]
 
 class Payment402Client:
     def __init__(
@@ -2773,6 +2811,153 @@ class LnChurchClient(Payment402Client):
         }
         return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
 
+    def get_surface_preflight(
+        self,
+        *,
+        surface_key: Optional[str] = None,
+        target_url: Optional[str] = None,
+        method: str = "GET",
+        rail: str = "unknown",
+        network: str = "unknown",
+        asset: str = "unknown",
+        authorization_scheme: str = "unknown",
+        draft_shape: str = "unknown",
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch public-safe observational memory for a surface before interacting.
+        This endpoint is strictly read-only and does NOT execute payments.
+        """
+        if surface_key and target_url:
+            raise ValueError("Provide either surface_key or target_url, not both.")
+        if not surface_key and not target_url:
+            raise ValueError("Either surface_key or target_url must be provided.")
+            
+        if surface_key:
+            if surface_key.startswith("surface_"):
+                surface_key = surface_key[8:]
+            if not re.match(r"^[a-fA-F0-9]{24}$", surface_key):
+                raise ValueError("Invalid surface_key format. Must be 24-character hex.")
+                
+        if target_url and not target_url.strip():
+            raise ValueError("target_url cannot be empty.")
+
+        params = {}
+        if surface_key:
+            params["surface_key"] = surface_key
+        else:
+            params.update({
+                "target_url": target_url,
+                "method": method.upper(),
+                "rail": rail,
+                "network": network,
+                "asset": asset,
+                "authorization_scheme": authorization_scheme,
+                "draft_shape": draft_shape
+            })
+
+        headers = {"User-Agent": CUSTOM_USER_AGENT}
+        url = self.base_url.rstrip("/") + "/api/agent/monzen/surface-preflight"
+        
+        try:
+            # Explicitly NOT using execute_request() to guarantee no payment loops
+            res = requests.get(url, params=params, headers=headers, timeout=timeout or 10.0)
+            res.raise_for_status()
+            data = res.json()
+        except Exception as e:
+            raise ValueError(f"Failed to fetch surface preflight read model: {e}")
+
+        if data.get("schema_version") != SURFACE_PREFLIGHT_SCHEMA_VERSION:
+            raise ValueError(f"Invalid schema_version. Expected {SURFACE_PREFLIGHT_SCHEMA_VERSION}")
+        if data.get("not_a_recommendation") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_recommendation' must be true")
+        if data.get("not_a_verdict") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_verdict' must be true")
+
+        guardrails = data.get("guardrails") or {}
+        if guardrails.get("final_authority") != "local_runtime":
+            raise ValueError("Safety boundary missing: guardrails.final_authority must be local_runtime")
+        if guardrails.get("this_read_model_does_not_execute_payments") is not True:
+            raise ValueError("Safety boundary missing: read model must not execute payments")
+        if guardrails.get("this_read_model_does_not_prove_settlement") is not True:
+            raise ValueError("Safety boundary missing: read model must not prove settlement")
+
+        return data
+
+    async def get_surface_preflight_async(
+        self,
+        *,
+        surface_key: Optional[str] = None,
+        target_url: Optional[str] = None,
+        method: str = "GET",
+        rail: str = "unknown",
+        network: str = "unknown",
+        asset: str = "unknown",
+        authorization_scheme: str = "unknown",
+        draft_shape: str = "unknown",
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Async: Fetch public-safe observational memory for a surface before interacting.
+        This endpoint is strictly read-only and does NOT execute payments.
+        """
+        if surface_key and target_url:
+            raise ValueError("Provide either surface_key or target_url, not both.")
+        if not surface_key and not target_url:
+            raise ValueError("Either surface_key or target_url must be provided.")
+            
+        if surface_key:
+            if surface_key.startswith("surface_"):
+                surface_key = surface_key[8:]
+            if not re.match(r"^[a-fA-F0-9]{24}$", surface_key):
+                raise ValueError("Invalid surface_key format. Must be 24-character hex.")
+                
+        if target_url and not target_url.strip():
+            raise ValueError("target_url cannot be empty.")
+
+        params = {}
+        if surface_key:
+            params["surface_key"] = surface_key
+        else:
+            params.update({
+                "target_url": target_url,
+                "method": method.upper(),
+                "rail": rail,
+                "network": network,
+                "asset": asset,
+                "authorization_scheme": authorization_scheme,
+                "draft_shape": draft_shape
+            })
+
+        headers = {"User-Agent": CUSTOM_USER_AGENT}
+        url = self.base_url.rstrip("/") + "/api/agent/monzen/surface-preflight"
+        
+        try:
+            # Explicitly NOT using execute_request_async() to guarantee no payment loops
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                res = await client.get(url, params=params, headers=headers, timeout=timeout or 10.0)
+                res.raise_for_status()
+                data = res.json()
+        except Exception as e:
+            raise ValueError(f"Failed to fetch surface preflight read model: {e}")
+
+        if data.get("schema_version") != SURFACE_PREFLIGHT_SCHEMA_VERSION:
+            raise ValueError(f"Invalid schema_version. Expected {SURFACE_PREFLIGHT_SCHEMA_VERSION}")
+        if data.get("not_a_recommendation") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_recommendation' must be true")
+        if data.get("not_a_verdict") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_verdict' must be true")
+
+        guardrails = data.get("guardrails") or {}
+        if guardrails.get("final_authority") != "local_runtime":
+            raise ValueError("Safety boundary missing: guardrails.final_authority must be local_runtime")
+        if guardrails.get("this_read_model_does_not_execute_payments") is not True:
+            raise ValueError("Safety boundary missing: read model must not execute payments")
+        if guardrails.get("this_read_model_does_not_prove_settlement") is not True:
+            raise ValueError("Safety boundary missing: read model must not prove settlement")
+
+        return data
+
     def submit_goal_attempt_observation(
         self,
         goal: dict,
@@ -2944,7 +3129,6 @@ class LnChurchClient(Payment402Client):
 
         result = await self.execute_detailed_async("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
         return result.response
-
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

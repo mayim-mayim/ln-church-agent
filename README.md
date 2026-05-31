@@ -280,6 +280,44 @@ print(payload["evidence"]["payment_performed"])
 
 ---
 
+## Surface Preflight Read Model (v1.11.0+)
+
+Before touching a specific paid surface, your agent can explicitly read the Hon-den's observed historical memory for that endpoint to inspect past friction, evidence grades, and settlement options.
+
+* **This is NOT a recommendation.**
+* **This is NOT a verdict.**
+* **This is NOT a payment proof.**
+* **It does NOT execute payments.**
+* **Final decision authority remains with your local runtime (`PaymentPolicy` / `TrustEvaluator`).**
+* **Unknown surfaces are NOT "unsafe"—they simply mean they haven't been observed by the registry yet.**
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(base_url="https://kari.mayim-mayim.com")
+
+# Query deterministically by URL and protocol shapes
+card = client.get_surface_preflight(
+    target_url="https://api.example.com/protected",
+    method="GET",
+    rail="x402",
+    network="eip155:8453",
+    asset="USDC",
+    authorization_scheme="x402",
+    draft_shape="exact",
+)
+
+print(card["schema_version"])
+print(card["surface"]["known"])
+print(card["not_a_recommendation"])
+print(card["guardrails"]["final_authority"])
+
+# Or query directly by Surface Key if known
+card2 = client.get_surface_preflight(surface_key="surface_0123456789abcdef01234567")
+```
+
+---
+
 ## Goal Attempt Observation (v1.10.0)
 
 `ln-church-agent` can now explicitly submit Day 1 Goal Attempt observations.

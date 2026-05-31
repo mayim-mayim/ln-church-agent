@@ -1,4 +1,4 @@
-from .client import Payment402Client, LnChurchClient
+from .client import Payment402Client, LnChurchClient, SURFACE_PREFLIGHT_SCHEMA_VERSION
 from .exceptions import (
     PaymentChallengeError,
     PaymentExecutionError,
@@ -109,5 +109,6 @@ __all__ = [
     "build_sandbox_interop_report_payload",
     "SandboxCorpusCandidate",
     "build_sandbox_corpus_candidate",
-    "get_capability_matrix"
+    "get_capability_matrix",
+    "SURFACE_PREFLIGHT_SCHEMA_VERSION"
 ]
