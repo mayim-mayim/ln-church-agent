@@ -171,6 +171,13 @@ It can safely detect higher-order commerce metadata, starting with OKX Agent Pay
 
 In v1.9.1+, inspect results can also include Guided Handoff metadata for AP2 / ACP / OKX APP-like surfaces. This tells the upstream agent what to ask the site for, what not to treat as settlement proof, which evidence is required, what information is missing, and why operator approval may be required.
 
+**Grant-like Signal Detection Sidecar (v1.11.2+):**
+The `inspect` tool may also detect unverified incentive signals (e.g., faucets, trial credits) as a local sidecar observation. 
+* This is **not** a guarantee of grant availability.
+* It does **not** verify signed grant tokens or redeemability.
+* It is **not** automatically submitted to the Hon-den observation network.
+* The SDK maintains strict `not_a_recommendation`, `not_a_verdict`, and `unassessed_is_not_failed` principles.
+
 Example output:
 
 ```json

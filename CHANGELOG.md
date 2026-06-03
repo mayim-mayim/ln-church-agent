@@ -2,6 +2,11 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.11.2] - 2026-06-03 (Grant-like Signal Detection Sidecar)
+* **Added**: Inspect-only Grant-like signal detection appended as a sidecar to `InspectResult`.
+* **Added**: Exposes `grant_signals` locally in the MCP `inspect_paid_surface` output.
+* **Safety**: No payment execution behavior changed. No grant redemption, no marketplace, no auto-submission to Hon-den.
+
 ## [1.11.1] - 2026-05-31 (Auth-Capture Inspect-Only Standards Alignment)
 * **Added**: Inspect-only classification for x402 `auth-capture` mapping it strictly to the x402 settlement rail.
 * **Safety**: Absolute execution guard for `auth-capture` in `_process_payment()` ensuring no EIP-3009/Permit2 signatures are generated or executed.

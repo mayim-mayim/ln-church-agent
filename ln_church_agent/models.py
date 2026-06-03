@@ -214,7 +214,7 @@ class ParsedChallenge(BaseModel):
     parameters: Dict[str, Any]
     source: ChallengeSource                    
     raw_header: Optional[str] = None
-    # 💡 新規追加: MPP / Payment draft telemetry
+    # MPP / Payment draft telemetry
     draft_shape: Optional[str] = None
     payment_method: Optional[str] = None
     payment_intent: Optional[str] = None
@@ -559,6 +559,41 @@ class CorpusReplayResult(BaseModel):
     raw_descriptor: Optional[Dict[str, Any]] = None
     raw_challenge_body: Optional[Dict[str, Any]] = None
 
+class GrantSignalObservation(BaseModel):
+    """
+    v1.11.2: A sidecar observation model for detecting grant-like incentive signals 
+    (faucet, trial credit, promotional credit) on external sites.
+    Strictly unverified: does not guarantee redeemability or availability.
+    """
+    detected: bool = False
+    confidence: str = "none"  # none | low | medium | high
+
+    signal_types: List[str] = Field(default_factory=list)
+    source_kinds: List[str] = Field(default_factory=list)
+    detected_terms: List[str] = Field(default_factory=list)
+    detected_fields: List[str] = Field(default_factory=list)
+
+    machine_readable: bool = False
+    redeemability_verified: bool = False
+    availability_verified: bool = False
+
+    redemption_endpoint_present: bool = False
+    verification_endpoint_present: bool = False
+    eligibility_declared: bool = False
+    scope_declared: bool = False
+    expiration_declared: bool = False
+    transferability_declared: Optional[bool] = None
+    requires_identity: Optional[bool] = None
+
+    recommended_action: str = "observe_only"
+    diagnostic_class: str = "grant_like_signal_observed"
+
+    not_a_recommendation: bool = True
+    not_a_verdict: bool = True
+    unassessed_is_not_failed: bool = True
+
+    reason: str = "Grant-like signals are observed only. Redeemability and availability are not verified."
+
 class InspectResult(BaseModel):
     """CLI inspect コマンド用の実行結果モデル (v1.9.5: Observation Layer 統合)"""
     ok: bool
@@ -614,6 +649,10 @@ class InspectResult(BaseModel):
     app_protocol: Optional[str] = None
     app_intent: Optional[str] = None
     app_transport: Optional[str] = None
+
+    # --- v1.11.2: Grant-like Signal Detection Sidecar ---
+    grant_signal_detected: bool = False
+    grant_signals: GrantSignalObservation = Field(default_factory=GrantSignalObservation)
 
 class X402ExactDiagnosticResult(BaseModel):
     ok: bool

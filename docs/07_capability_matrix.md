@@ -15,6 +15,7 @@ This matrix defines the strict boundaries of what the `ln-church-agent` SDK can 
 | **x402 batch-settlement** | settlement_rail | `observe_only` | `observe_only` | `halt` | `deferred_voucher_not_settlement_proof` | `observe_only` | `implemented` |
 | **x402 auth-capture** | settlement_rail | `observe_only` | `observe_only` | `halt` | `authorization_signature_not_settlement_proof` | `observe_only` | `watch_only` |
 | **Grant / Sponsored Access** | authorization_artifact | `executable_now` | `inspect_supported` | `execute` | `verified` | `use_grant` | `implemented` |
+| **Grant-like Signal Detection** | incentive_signal | `observe_only` | `sidecar_detection` | `none` | `unverified_signal_not_grant_proof` | `observe_only` | `experimental` |
 | **External Observation** | observation | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |
 | **Sandbox Evidence** | observation | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |
 | **Goal Attempt Observation** | memory | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |

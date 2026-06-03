@@ -115,6 +115,9 @@ def inspect_paid_surface(url: str, method: str = "GET") -> Dict[str, Any]:
         "do_not": getattr(result, "do_not", []),
         "required_evidence": getattr(result, "required_evidence", []),
         "missing_information": getattr(result, "missing_information", []),
+        # --- v1.11.2: Grant-like Signal Sidecar) ---
+        "grant_signal_detected": getattr(result, "grant_signal_detected", False),
+        "grant_signals": result.grant_signals.model_dump() if getattr(result, "grant_signals", None) else None,
         # --- v1.9.5 Settlement Options & Observatory Metadata ---
         "settlement_options": settlement_opts,
         "selected_settlement_option": selected_opt,
@@ -216,6 +219,9 @@ def build_mcp_observation_payload(inspect_result: Dict[str, Any], agent_id: str 
             "requires_channel_state": opt.get("requires_channel_state")
         })
     
+    # (v1.11.2)
+    # Grant-like signals are intentionally excluded from external observation payloads for now.
+    # They are local inspect-only sidecar signals, not Hon-den observation facts.
     return {
         "schema_version": "mcp_observation_report.v1",
         "agentId": agent_id,

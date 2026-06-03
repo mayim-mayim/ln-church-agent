@@ -130,6 +130,17 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "watchlist_status": "implemented"
         },
         {
+            "id": "grant_like_signal_detection",
+            "name": "Grant-like Signal Detection",
+            "layer": "incentive_signal",
+            "current_sdk_support": "observe_only",
+            "inspect_behavior": "sidecar_detection",
+            "execution_behavior": "none",
+            "proof_semantics": "unverified_signal_not_grant_proof",
+            "default_recommended_action": "observe_only",
+            "watchlist_status": "experimental"
+        },
+        {
             "id": "external_observation",
             "name": "External Observation",
             "layer": "observation",

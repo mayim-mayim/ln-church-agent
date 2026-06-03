@@ -8,6 +8,8 @@ from .challenges import parse_challenge_from_response
 from .exceptions import PaymentChallengeError
 from .app_inspect import detect_commerce_surface, detect_app_surface, build_commerce_guidance
 from .failures import fingerprint_public_challenge_summary
+from .grant_signals import detect_grant_signals
+from .models import GrantSignalObservation
 
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
     try:
@@ -221,6 +223,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
     # 💡 Commerce Surface の検出
     commerce_info = detect_commerce_surface(httpx_res)
 
+    try:
+        grant_signals = detect_grant_signals(httpx_res)
+    except Exception:
+        grant_signals = GrantSignalObservation()
+
     # 💡 1. Commerce Surface Block
     if commerce_info:
         c_protocol = commerce_info.get("commerce_protocol")
@@ -337,7 +344,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             # --- v1.9.5 New Fields ---
             settlement_options=settlement_opts,
             selected_settlement_option=selected_opt,
-            ln_church_observatory=ObservatoryMetadata()
+            ln_church_observatory=ObservatoryMetadata(),
+            # --- v1.11.2 New Fields ---
+            grant_signal_detected=grant_signals.detected,
+            grant_signals=grant_signals
         )
 
     # --- Commerce Surface ではない既存ロジック ---
@@ -349,7 +359,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             recommended_action="no_payment_required",
             reason="No HTTP 402 payment challenge detected.",
             will_execute_payment=False,
-            ln_church_observatory=ObservatoryMetadata()
+            ln_church_observatory=ObservatoryMetadata(),
+            # --- v1.11.2 New Fields ---
+            grant_signal_detected=grant_signals.detected,
+            grant_signals=grant_signals
         )
 
     # 💡 2. Standard Block
@@ -378,7 +391,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
                 recommended_action="reject_invalid" if is_invalid_challenge else "stop_safely",
                 reason=f"Failed to parse challenge: {parse_error}" if is_invalid_challenge else f"Unexpected error parsing challenge: {parse_error}",
                 will_execute_payment=False,
-                ln_church_observatory=ObservatoryMetadata()
+                ln_church_observatory=ObservatoryMetadata(),
+                # --- v1.11.2 New Fields ---
+                grant_signal_detected=grant_signals.detected,
+                grant_signals=grant_signals
             )
 
         scheme = getattr(parsed, "scheme", "unknown")
@@ -454,7 +470,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             # --- v1.9.5 New Fields ---
             settlement_options=settlement_opts,
             selected_settlement_option=selected_opt,
-            ln_church_observatory=ObservatoryMetadata()
+            ln_church_observatory=ObservatoryMetadata(),
+            # --- v1.11.2 New Fields ---
+            grant_signal_detected=grant_signals.detected,
+            grant_signals=grant_signals
         )
 
     return InspectResult(
@@ -463,7 +482,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         http_status=res.status_code,
         recommended_action="unknown",
         reason=f"Unexpected HTTP status {res.status_code}.",
-        will_execute_payment=False
+        will_execute_payment=False,
+        # --- v1.11.2 New Fields ---
+        grant_signal_detected=grant_signals.detected,
+        grant_signals=grant_signals
     )
 
 def main():
@@ -514,6 +536,11 @@ def main():
                 print(f"  Diagnostic Class   : {result.diagnostic_class}")
             if not result.ok and result.failure_reason:
                 print(f"  Failure            : {result.error_stage} -> {result.failure_reason}")
+
+            if getattr(result, "grant_signal_detected", False):
+                print(f"  Grant Signal       : detected (confidence: {result.grant_signals.confidence})")
+                if result.grant_signals.signal_types:
+                    print(f"  Grant Signal Type  : {', '.join(result.grant_signals.signal_types)}")
 
             # 💡 v1.9.5: 人間向けの軽い導線を末尾に追加
             print("\n---------------------------------------------------------")
