@@ -33,6 +33,12 @@ The LLM remains responsible for the higher-level economic decisions:
 - whether the expected outcome was delivered,
 - and whether the endpoint should be reused.
 
+**Don't Trust, Verify. But Don't Re-Verify Everything.**
+
+The SDK is designed for verification reuse:
+agents can inspect and verify live payment flows when necessary,
+but they should reuse observed memory, receipts, and read models when repeated full verification would waste context, liquidity, or reasoning budget.
+
 ## What it does
 
 Most payment SDKs help agents *pay*.  

@@ -53,7 +53,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.11.2"
+        return "1.11.3"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -2968,7 +2968,8 @@ class LnChurchClient(Payment402Client):
         steps: Optional[list] = None,
         outcome: Optional[dict] = None,
         evidence: Optional[dict] = None,
-        schema_version: str = "goal_attempt.v1"
+        schema_version: str = "goal_attempt.v1",
+        intent_sidecar_metadata: Optional[dict] = None
     ) -> dict:
         """
         Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
@@ -2994,6 +2995,9 @@ class LnChurchClient(Payment402Client):
         }
         if outcome is not None:
             payload["outcome"] = self._strip_secrets_from_evidence(outcome)
+
+        if intent_sidecar_metadata is not None:
+            payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
 
         return self.execute_request("POST", "/api/agent/external/attempt/observe", payload=payload)
 
@@ -3004,7 +3008,8 @@ class LnChurchClient(Payment402Client):
         steps: Optional[list] = None,
         outcome: Optional[dict] = None,
         evidence: Optional[dict] = None,
-        schema_version: str = "goal_attempt.v1"
+        schema_version: str = "goal_attempt.v1",
+        intent_sidecar_metadata: Optional[dict] = None 
     ) -> dict:
         """
         Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
@@ -3030,6 +3035,9 @@ class LnChurchClient(Payment402Client):
         }
         if outcome is not None:
             payload["outcome"] = self._strip_secrets_from_evidence(outcome)
+
+        if intent_sidecar_metadata is not None:
+            payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
 
         return await self.execute_request_async("POST", "/api/agent/external/attempt/observe", payload=payload)
 
