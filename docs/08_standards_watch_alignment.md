@@ -22,6 +22,13 @@ To maintain the safety and focus of the `ln-church-agent` SDK, **DO NOT** implem
 * **AWS AgentCore Direct Integration**: Do not integrate directly with managed AWS SDK logic.
 * **Bazaar / MCP Paid Connectivity**: Do not implement as a stable public abstraction until the x402 Bazaar API is completely stable.
 * **Token-2022 / ATA Auto-Creation**: Do not inject SPL Token-2022 extensions or ATA creation instructions into the transaction builder unless universally accepted by all facilitators.
+* **Grant-like Signal Detection**: 
+  * Do not implement grant marketplace / resale / broker / exchange.
+  * Do not verify redeemability by calling redemption endpoints.
+  * Do not auto-submit grant-like signals to Hon-den.
+  * Do not treat grant-like signals as proof of availability.
+  * Do not rank or recommend surfaces based on grant-like signals.
+  * Grant-like signal detection is inspect-only and sidecar-only.
 
 ### 1. Payment-Receipt Semantics & Cache Rules
 * **Observation:** The IETF payment draft is expanding beyond prefix negotiation and is clarifying `Payment-Receipt` semantics, retry expectations, and cache behavior around `402`, `401`, and `403` flows. Payment-Receipt presence is not final settlement by itself. Future receipt states may include SETTLED, PENDING_FINALITY, REVERSED, CANCELLED-like categories.
