@@ -41,7 +41,7 @@ client.submit_monzen_trace(
 )
 ```
 
-### 📜 Trace Record Semantics (v1.11+ Standard)
+### 📜 Trace Record Semantics (v1.12+ Standard)
 
 When a trace is successfully ingested, the server returns a standardized observation record. The meanings of these fields are strictly defined to ensure long-term stability across the network:
 
@@ -76,6 +76,11 @@ When a trace is successfully ingested, the server returns a standardized observa
 While `trace` handles discovery and grants Virtue, `observe` (`submit_external_observation`) is used to catalog the exact protocol shape, network, draft shapes, and verification evidence of third-party endpoints.
 * **Strictly Observational**: External Observations are protocol-level reports, not official LN Church sandbox success runs.
 * **Secret Stripping**: The SDK enforces strict local stripping of raw secrets (e.g., `preimage`, `macaroon`, `private_key`) before transmitting evidence to the server.
+
+### 6.3 Reporter Verification Metadata Propagation
+Traces and observations captured on the Monzen network seamlessly inherit the reporter's cryptographic verification state if present in `AgentProfiles`:
+* **Propagated Fields**: `ReporterVerificationStatus` (`self_reported` | `key_control_verified`), `ReporterVerificationMethod`, `ReporterPublicKeyType`, and `ReporterProofId`.
+* **Graph DB Core Projections**: If verified, the Graph Ingestion engine (`AgentGraphSync`) projects an `IdentityProof` node linked to the base `Agent` node via a `HAS_IDENTITY_PROOF` edge. This does not alter ranking metrics, virtue weightings, or recommendation priority.
 
 ---
 
@@ -124,7 +129,7 @@ print(f"Graph Data retrieved. Links found: {len(graph_data.data['links'])}")
 ---
 ## ⚖️ Remote Evaluation & Advisory Layer
 
-As of v1.11+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
+As of v1.12+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
 
 ### 1. Pre-Payment Trust Advisory (`RemoteTrustEvaluator`)
 Before committing funds, the agent asks the network for a risk assessment. The backend returns an `evidence_bundle` containing:

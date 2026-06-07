@@ -77,6 +77,14 @@ LN Church Observatory is the public observation layer where redacted observation
 *The SDK never submits observations automatically.*
 Publishing observations to LN Church must be explicit and opt-in.
 
+## Verifiable Reporter Identity Layer (v1.12.0+)
+
+As of v1.12.0, the SDK supports an optional, client-managed **Verifiable Reporter Identity Layer** via `ensure_reporter_verification()`. 
+
+* **Key Control vs Report Truth**: This layer proves only that the reporting agent controls the private key associated with its `agentId`. It **does not verify the semantic correctness or truth** of the submitted telemetry.
+* **Strictly Non-Mandatory**: Telemetry submission fundamentally preserves its privacy-first, opt-in posture. Runtimes **must function identically** for `self_reported` (unverified) agents. Unverified does not mean malicious; it simply means the key-control loop was not explicitly executed.
+* **No Auto-Hooks**: It will never be automatically triggered inside execution methods like `execute_detailed()`, ensuring complete deterministic management of token overhead.
+
 ## Managed Platform Boundary
 
 `ln-church-agent` is not a managed wallet, payment processor, or cloud payment orchestration service.
@@ -177,7 +185,7 @@ It can safely detect higher-order commerce metadata, starting with OKX Agent Pay
 
 In v1.9.1+, inspect results can also include Guided Handoff metadata for AP2 / ACP / OKX APP-like surfaces. This tells the upstream agent what to ask the site for, what not to treat as settlement proof, which evidence is required, what information is missing, and why operator approval may be required.
 
-**Grant-like Signal Detection Sidecar (v1.11.2+):**
+**Grant-like Signal Detection Sidecar (v1.12+):**
 The `inspect` tool may also detect unverified incentive signals (e.g., faucets, trial credits) as a local sidecar observation. 
 * This is **not** a guarantee of grant availability.
 * It does **not** verify signed grant tokens or redeemability.

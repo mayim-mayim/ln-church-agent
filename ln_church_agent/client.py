@@ -53,7 +53,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.11.3"
+        return "1.12.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -3140,6 +3140,102 @@ class LnChurchClient(Payment402Client):
 
         result = await self.execute_detailed_async("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
         return result.response
+
+    def ensure_reporter_verification(self, public_key_type: str = "evm", force_refresh: bool = False) -> dict:
+        """
+        Verifies key control with the LN Church to attach a 'key_control_verified' status to your reports.
+        Note: This verifies key control, not report truth.
+        """
+        import time
+        from eth_account.messages import encode_defunct
+        from eth_account import Account
+
+        if public_key_type != "evm":
+            raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
+        if not self.private_key:
+            raise ValueError("EVM private_key is strictly required for EVM reporter verification in v1.12.0. Custom signers are future scope.")
+
+        now = int(time.time() * 1000)
+        cached_until = getattr(self, "_reporter_verified_until", 0)
+        
+        if not force_refresh and cached_until > now:
+            return {
+                "status": "cached",
+                "reporter_verification_status": "key_control_verified",
+                "verified_until": cached_until,
+                "proof_id": getattr(self, "_reporter_proof_id", None)
+            }
+
+        # 1. Challenge
+        chal_res = self.execute_request("GET", f"/api/agent/identity/challenge?agentId={self.agent_id}&public_key_type=evm")
+        challenge_id = chal_res["challenge_id"]
+        message = chal_res["message"]
+
+        # 2. Sign
+        signable_msg = encode_defunct(text=message)
+        signed = Account.from_key(self.private_key).sign_message(signable_msg)
+        signature = signed.signature.hex()
+
+        # 3. Verify
+        payload = {
+            "schema_version": "agent_identity_verify.v1",
+            "agentId": self.agent_id,
+            "challenge_id": challenge_id,
+            "public_key_type": "evm",
+            "signature": signature if signature.startswith("0x") else f"0x{signature}"
+        }
+        
+        verify_res = self.execute_request("POST", "/api/agent/identity/verify", payload=payload)
+        
+        self._reporter_verified_until = verify_res["verified_until"]
+        self._reporter_proof_id = verify_res["proof_id"]
+        
+        return verify_res
+
+    async def ensure_reporter_verification_async(self, public_key_type: str = "evm", force_refresh: bool = False) -> dict:
+        """Async version of ensure_reporter_verification. This verifies key control, not report truth."""
+        import time
+        from eth_account.messages import encode_defunct
+        from eth_account import Account
+
+        if public_key_type != "evm":
+            raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
+        if not self.private_key:
+            raise ValueError("EVM private_key is strictly required for EVM reporter verification in v1.12.0. Custom signers are future scope.")
+
+        now = int(time.time() * 1000)
+        cached_until = getattr(self, "_reporter_verified_until", 0)
+        
+        if not force_refresh and cached_until > now:
+            return {
+                "status": "cached",
+                "reporter_verification_status": "key_control_verified",
+                "verified_until": cached_until,
+                "proof_id": getattr(self, "_reporter_proof_id", None)
+            }
+
+        chal_res = await self.execute_request_async("GET", f"/api/agent/identity/challenge?agentId={self.agent_id}&public_key_type=evm")
+        challenge_id = chal_res["challenge_id"]
+        message = chal_res["message"]
+
+        signable_msg = encode_defunct(text=message)
+        signed = Account.from_key(self.private_key).sign_message(signable_msg)
+        signature = signed.signature.hex()
+
+        payload = {
+            "schema_version": "agent_identity_verify.v1",
+            "agentId": self.agent_id,
+            "challenge_id": challenge_id,
+            "public_key_type": "evm",
+            "signature": signature if signature.startswith("0x") else f"0x{signature}"
+        }
+        
+        verify_res = await self.execute_request_async("POST", "/api/agent/identity/verify", payload=payload)
+        
+        self._reporter_verified_until = verify_res["verified_until"]
+        self._reporter_proof_id = verify_res["proof_id"]
+        
+        return verify_res
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

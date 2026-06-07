@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.12.0] - 2026-06-07 (Reporter Identity Verification Layer)
+* **Added**: Introduced an optional, client-managed **Verifiable Reporter Identity Layer** to explicitly prove private key control behind an `agentId`.
+* **Added**: Added `LnChurchClient.ensure_reporter_verification()` and `ensure_reporter_verification_async()` to automatically handle the full identity challenge-signature-verification lifecycle with in-memory caching.
+* **Added**: Embedded reporter verification metadata inside all core telemetry frameworks (`GoalAttemptIngest`, `ExternalObserve`, and `FailureObserve`) to allow downstream registries to distinguish between anonymous and cryptographically verified claims.
+* **Added**: Upgraded the Graph Ingestion engine (`AgentGraphSync`) to dynamically project `IdentityProof` nodes linked to the target agent via `HAS_IDENTITY_PROOF` edges.
+* **Added**: Enriched S3 compact read models with `reporter_verification_mix` (inside `goal-attempt-summary.json`) and `verified_reporter_attempt_count` (inside `goal-surface-candidates.json`).
+* **Safety**: Enforced strict non-mandatory boundaries; `self_reported` telemetry remains 100% functional and accepted. The layer proves key-control only, **never report truth or correctness**, and explicitly bypasses automated execution loops to prevent token drainage.
+
 ## [1.11.3] - 2026-06-03 (Experimental Intent Signature Observation Sidecar)
 * **Added**: Experimental `intent_signature` and `classification_claims` sidecars for explicit Goal Attempt observations.
 * **Safety**: No payment execution behavior changed. No automatic telemetry hooks added. Not a recommendation or stable taxonomy.
