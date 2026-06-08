@@ -3153,7 +3153,7 @@ class LnChurchClient(Payment402Client):
         if public_key_type != "evm":
             raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
         if not self.private_key:
-            raise ValueError("EVM private_key is strictly required for EVM reporter verification in v1.12.0. Custom signers are future scope.")
+            raise ValueError("EVM private_key is strictly required for EVM reporter verification. Custom signers are future scope.")
 
         now = int(time.time() * 1000)
         cached_until = getattr(self, "_reporter_verified_until", 0)
@@ -3201,7 +3201,8 @@ class LnChurchClient(Payment402Client):
         if public_key_type != "evm":
             raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
         if not self.private_key:
-            raise ValueError("EVM private_key is strictly required for EVM reporter verification in v1.12.0. Custom signers are future scope.")
+            raise ValueError("EVM private_key is strictly required for EVM reporter verification. Custom signers are future scope.")
+            
 
         now = int(time.time() * 1000)
         cached_until = getattr(self, "_reporter_verified_until", 0)

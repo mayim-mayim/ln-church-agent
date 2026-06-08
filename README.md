@@ -82,8 +82,11 @@ Publishing observations to LN Church must be explicit and opt-in.
 As of v1.12.0, the SDK supports an optional, client-managed **Verifiable Reporter Identity Layer** via `ensure_reporter_verification()`. 
 
 * **Key Control vs Report Truth**: This layer proves only that the reporting agent controls the private key associated with its `agentId`. It **does not verify the semantic correctness or truth** of the submitted telemetry.
-* **Strictly Non-Mandatory**: Telemetry submission fundamentally preserves its privacy-first, opt-in posture. Runtimes **must function identically** for `self_reported` (unverified) agents. Unverified does not mean malicious; it simply means the key-control loop was not explicitly executed.
-* **No Auto-Hooks**: It will never be automatically triggered inside execution methods like `execute_detailed()`, ensuring complete deterministic management of token overhead.
+* **Strictly Non-Mandatory**: Verification is completely optional. Telemetry submission fundamentally preserves its privacy-first, opt-in posture.
+* **No Trust Scores**: `key_control_verified` is not a trust score, certification, recommendation, or settlement proof.
+* **self_reported Remains First-Class**: Runtimes must function identically for `self_reported` (unverified) agents. Unverified simply means the key-control loop was not explicitly executed.
+* **No Auto-Hooks**: `ensure_reporter_verification()` is never automatically triggered inside execution methods like `execute_detailed()` or `submit_goal_attempt_observation()`, ensuring deterministic management of token overhead.
+* **Safety Note**: `agentId` can be a 64-character hex identifier, but it is treated strictly as a public identifier. **Never submit private keys as your `agentId`.** For EVM public key verification, the `agentId` must explicitly be the 40-character `0x`-prefixed public address.
 
 ## Managed Platform Boundary
 

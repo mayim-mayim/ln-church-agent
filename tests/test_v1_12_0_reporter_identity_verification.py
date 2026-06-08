@@ -33,6 +33,5 @@ def test_ensure_reporter_verification_no_key():
     client = LnChurchClient()
     client.private_key = None
     client.evm_signer = None
-    # match の文字列を新しいエラーメッセージに適合するように修正
     with pytest.raises(ValueError, match="EVM private_key is strictly required"):
         client.ensure_reporter_verification()

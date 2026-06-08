@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [Backend Compatibility Note] - 2026-06-08 (Reporter Identity Boundary Hardening)
+* **Backend Update**: The SDK package remains `v1.12.0`. This update adds tests and documentation to verify compatibility with the latest Hon-den backend hardening.
+* **Backend Hardening**: Explicitly persists `ReporterAgentId` across all telemetry metadata. Distinguishes `self_reported` from `unknown` when AgentProfiles lookups fail.
+* **Backend Hardening**: Adds machine-readable safety boundaries (`verification_semantics="key_control_only"`, `not_a_trust_score=true`) to identity verify responses.
+* **Docs/Tests**: Added regression tests ensuring `ensure_reporter_verification()` safely handles the new response flags without requiring a new SDK release.
+
 ## [1.12.0] - 2026-06-07 (Reporter Identity Verification Layer)
 * **Added**: Introduced an optional, client-managed **Verifiable Reporter Identity Layer** to explicitly prove private key control behind an `agentId`.
 * **Added**: Added `LnChurchClient.ensure_reporter_verification()` and `ensure_reporter_verification_async()` to automatically handle the full identity challenge-signature-verification lifecycle with in-memory caching.
