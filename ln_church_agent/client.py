@@ -53,7 +53,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.12.0"
+        return "1.13.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -2598,7 +2598,9 @@ class LnChurchClient(Payment402Client):
         "payment-response", "payment_response", "x-payment", "macaroon", "preimage",
         "private_key", "privatekey", "secret", "token", "api_key", "apikey",
         "access_token", "refresh_token", "grant_token", "mandate_token",
-        "shared_payment_token", "cookie", "password", "credential", "credentials", "bearer", "proof"
+        "shared_payment_token", "cookie", "password", "credential", "credentials", "bearer", "proof",
+        # --- v1.13.0 Added ---
+        "proof_id", "reporterproofid", "reporter_proof_id", "nonce", "challenge_id", "signature", "raw_signature"
     }
 
     _SECRET_CONTAINER_KEYS = {
@@ -2643,6 +2645,8 @@ class LnChurchClient(Payment402Client):
         evidence: Optional[dict] = None,
         challenge: Optional[dict] = None,
         sdk_version: Optional[str] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None,
     ) -> dict:
         payload = {
             "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
@@ -2651,11 +2655,17 @@ class LnChurchClient(Payment402Client):
             "statusCode": status_code,
             "source_scope": source_scope,
             "evidence_class": evidence_class,
-            "protocol": protocol or {},
+            "protocol": self._strip_secrets_from_evidence(protocol or {}),
             "evidence": self._strip_secrets_from_evidence(evidence),
             "challenge": self._strip_secrets_from_evidence(challenge),
             "sdk_version": sdk_version or SDK_VERSION
         }
+        
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
+            
         return self.execute_request("POST", "/api/agent/external/observe", payload=payload)
 
     async def submit_external_observation_async(
@@ -2669,6 +2679,8 @@ class LnChurchClient(Payment402Client):
         evidence: Optional[dict] = None,
         challenge: Optional[dict] = None,
         sdk_version: Optional[str] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None,
     ) -> dict:
         payload = {
             "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
@@ -2677,11 +2689,17 @@ class LnChurchClient(Payment402Client):
             "statusCode": status_code,
             "source_scope": source_scope,
             "evidence_class": evidence_class,
-            "protocol": protocol or {},
+            "protocol": self._strip_secrets_from_evidence(protocol or {}),
             "evidence": self._strip_secrets_from_evidence(evidence),
             "challenge": self._strip_secrets_from_evidence(challenge),
             "sdk_version": sdk_version or SDK_VERSION
         }
+        
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
+            
         return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
 
     def get_external_observations(
@@ -2969,7 +2987,9 @@ class LnChurchClient(Payment402Client):
         outcome: Optional[dict] = None,
         evidence: Optional[dict] = None,
         schema_version: str = "goal_attempt.v1",
-        intent_sidecar_metadata: Optional[dict] = None
+        intent_sidecar_metadata: Optional[dict] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None
     ) -> dict:
         """
         Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
@@ -2995,9 +3015,12 @@ class LnChurchClient(Payment402Client):
         }
         if outcome is not None:
             payload["outcome"] = self._strip_secrets_from_evidence(outcome)
-
         if intent_sidecar_metadata is not None:
             payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
 
         return self.execute_request("POST", "/api/agent/external/attempt/observe", payload=payload)
 
@@ -3009,7 +3032,9 @@ class LnChurchClient(Payment402Client):
         outcome: Optional[dict] = None,
         evidence: Optional[dict] = None,
         schema_version: str = "goal_attempt.v1",
-        intent_sidecar_metadata: Optional[dict] = None 
+        intent_sidecar_metadata: Optional[dict] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None
     ) -> dict:
         """
         Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
@@ -3035,9 +3060,12 @@ class LnChurchClient(Payment402Client):
         }
         if outcome is not None:
             payload["outcome"] = self._strip_secrets_from_evidence(outcome)
-
         if intent_sidecar_metadata is not None:
             payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
 
         return await self.execute_request_async("POST", "/api/agent/external/attempt/observe", payload=payload)
 

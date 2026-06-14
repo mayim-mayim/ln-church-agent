@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.13.0] - 2026-06-14 (Observation Provenance / Protocol Roles / Verification Cost Vector)
+* Added public-safe `observation_provenance` metadata helpers.
+* Added `protocol_roles` shape for role → protocol → capability observations.
+* Added optional `verification_cost_vector` helper for sdk-reported, externally checkable cost counters.
+* Added optional `protocol_roles` and `verification_cost_vector` fields to explicit observation submissions.
+* Maintained v1.12.0 Reporter Identity Verification boundaries: no mandatory verification, no automatic hooks, no trust scoring, no recommendation/ranking.
+
 ## [Backend Compatibility Note] - 2026-06-08 (Reporter Identity Boundary Hardening)
 * **Backend Update**: The SDK package remains `v1.12.0`. This update adds tests and documentation to verify compatibility with the latest Hon-den backend hardening.
 * **Backend Hardening**: Explicitly persists `ReporterAgentId` across all telemetry metadata. Distinguishes `self_reported` from `unknown` when AgentProfiles lookups fail.

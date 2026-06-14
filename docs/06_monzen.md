@@ -41,7 +41,7 @@ client.submit_monzen_trace(
 )
 ```
 
-### 📜 Trace Record Semantics (v1.12+ Standard)
+### 📜 Trace Record Semantics (v1.13+ Standard)
 
 When a trace is successfully ingested, the server returns a standardized observation record. The meanings of these fields are strictly defined to ensure long-term stability across the network:
 
@@ -129,7 +129,7 @@ print(f"Graph Data retrieved. Links found: {len(graph_data.data['links'])}")
 ---
 ## ⚖️ Remote Evaluation & Advisory Layer
 
-As of v1.12+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
+As of v1.13+, agents can consult the Monzen network as an **evidence-rich advisor** before and after interacting with unknown 402 endpoints. The LN Church does not enforce decisions; it provides objective facts and recommendations, leaving the final judgment to the agent's local SDK.
 
 ### 1. Pre-Payment Trust Advisory (`RemoteTrustEvaluator`)
 Before committing funds, the agent asks the network for a risk assessment. The backend returns an `evidence_bundle` containing:

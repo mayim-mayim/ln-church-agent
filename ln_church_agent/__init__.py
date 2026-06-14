@@ -38,7 +38,15 @@ from .models import (
     SponsoredAccessEvidence,
     SandboxEvidence,
     SandboxCorpusCandidate,
-    PaymentFailureRecord
+    PaymentFailureRecord,
+    build_observation_provenance,
+    build_protocol_role_observation,
+    build_verification_cost_vector,
+    OBSERVATION_PROVENANCE_SCHEMA_VERSION,
+    PROTOCOL_ROLES_SCHEMA_VERSION,
+    VERIFICATION_COST_VECTOR_SCHEMA_VERSION,
+    VERIFICATION_COST_FORMULA_VERSION,
+    READ_MODEL_REVISION
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -110,5 +118,13 @@ __all__ = [
     "SandboxCorpusCandidate",
     "build_sandbox_corpus_candidate",
     "get_capability_matrix",
-    "SURFACE_PREFLIGHT_SCHEMA_VERSION"
+    "SURFACE_PREFLIGHT_SCHEMA_VERSION",
+    "build_observation_provenance",
+    "build_protocol_role_observation",
+    "build_verification_cost_vector",
+    "OBSERVATION_PROVENANCE_SCHEMA_VERSION",
+    "PROTOCOL_ROLES_SCHEMA_VERSION",
+    "VERIFICATION_COST_VECTOR_SCHEMA_VERSION",
+    "VERIFICATION_COST_FORMULA_VERSION",
+    "READ_MODEL_REVISION"
 ]

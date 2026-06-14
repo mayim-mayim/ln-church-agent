@@ -755,3 +755,130 @@ class PaymentFailureRecord(BaseModel):
     safe_to_publish: bool = True
     redaction_applied: bool = True
     public_notes: Optional[str] = None
+
+# ==========================================
+# v1.13.0: Observation Provenance & Explicit Metadata Models
+# ==========================================
+
+OBSERVATION_PROVENANCE_SCHEMA_VERSION = "ln_church.observation_provenance.v1"
+PROTOCOL_ROLES_SCHEMA_VERSION = "ln_church.protocol_roles.v1"
+VERIFICATION_COST_VECTOR_SCHEMA_VERSION = "ln_church.verification_cost_vector.v1"
+VERIFICATION_COST_FORMULA_VERSION = "ln_church.verification_cost_formula.v1"
+READ_MODEL_REVISION = "v1.13.0"
+
+def build_observation_provenance(reporter_verification_mix: dict) -> dict:
+    """Builds a public-safe observation provenance block."""
+    normalized = {
+        "self_reported": 0,
+        "key_control_verified": 0,
+        "expired": 0,
+        "unknown": 0,
+    }
+    normalized.update(reporter_verification_mix or {})
+    
+    return {
+        "schema_version": OBSERVATION_PROVENANCE_SCHEMA_VERSION,
+        "reporter_verification_mix": dict(normalized),
+        "attempt_count_by_reporter_verification_status": dict(normalized),
+        "not_a_trust_score": True,
+        "not_a_recommendation": True,
+        "not_a_verdict": True,
+        "not_a_truth_proof": True
+    }
+
+def build_protocol_role_observation(
+    role: str, 
+    protocol: str, 
+    capability_observations: dict, 
+    highest_observed_stage: str = "unknown",
+    last_observed_at: Optional[str] = None
+) -> dict:
+    """Builds a protocol role capability observation."""
+    valid_roles = {
+        "data_access", "commerce_interaction", "payment_authorization", 
+        "payment_settlement", "agent_interop", "fallback_operation"
+    }
+    if role not in valid_roles:
+        raise ValueError(f"Invalid role: {role}. Must be one of {valid_roles}")
+        
+    DEFAULT_CAPABILITY_OBSERVATIONS = {
+        "claimed": False, "detected": False, "challenge_observed": False,
+        "handshake_succeeded": False, "capability_listed": False,
+        "dry_run_succeeded": False, "payment_authorized": False,
+        "payment_accepted": False, "execution_succeeded": False,
+        "resource_delivered": False, "receipt_observed": False,
+        "failed": False, "unknown": False,
+    }
+    flags = dict(DEFAULT_CAPABILITY_OBSERVATIONS)
+    flags.update(capability_observations or {})
+
+    if highest_observed_stage == "unknown":
+        progression = [
+            "detected", "challenge_observed", "handshake_succeeded", 
+            "capability_listed", "dry_run_succeeded", "payment_authorized", 
+            "payment_accepted", "execution_succeeded", "resource_delivered", 
+            "receipt_observed"
+        ]
+        for stage in reversed(progression):
+            if flags.get(stage):
+                highest_observed_stage = stage
+                break
+        
+    import datetime
+    obs_time = last_observed_at or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    
+    return {
+        "schema_version": PROTOCOL_ROLES_SCHEMA_VERSION,
+        "role": role,
+        "protocol": protocol,
+        "capability_observations": flags,
+        "highest_observed_stage": highest_observed_stage,
+        "last_observed_at": obs_time,
+        "evidence_refs": []
+    }
+
+
+def build_verification_cost_vector(
+    surface_verification: Optional[dict] = None,
+    reporter_identity_verification: Optional[dict] = None,
+    risk: Optional[dict] = None,
+    label: str = "unknown"
+) -> dict:
+    """Builds an SDK-reported verification cost vector."""
+    
+    def_surface = {
+        "input_tokens": None, "output_tokens": None, "vision_frames": 0, "vision_pixels_total": None,
+        "tool_calls": 0, "http_requests": 0, "browser_steps": 0, "payment_attempts": 0, "retries": 0, "wall_clock_ms": 0
+    }
+    def_surface.update(surface_verification or {})
+    
+    def_identity = {
+        "performed": False, "method": None, "public_key_type": None, "http_requests": 0,
+        "signature_operations": 0, "llm_tokens": 0, "cached": None
+    }
+    def_identity.update(reporter_identity_verification or {})
+    
+    def_risk = {
+        "personal_data_required": False, "human_confirmation_required": False, "irreversible_action_attempted": False
+    }
+    def_risk.update(risk or {})
+
+    valid_labels = {"low", "medium", "high", "unknown"}
+    if label not in valid_labels:
+        label = "unknown"
+
+    return {
+        "schema_version": VERIFICATION_COST_VECTOR_SCHEMA_VERSION,
+        "source": "sdk_reported",
+        "not_server_metered": True,
+        "not_a_billing_record": True,
+        "not_a_truth_proof": True,
+        "surface_verification": def_surface,
+        "reporter_identity_verification": def_identity,
+        "risk": def_risk,
+        "derived": {
+            "formula_version": VERIFICATION_COST_FORMULA_VERSION,
+            "label": label,
+            "score": None
+        }
+    }
