@@ -2,6 +2,8 @@ import argparse
 import requests
 import httpx
 import re
+import os
+import json
 from typing import Optional, List, Tuple
 from .models import InspectResult, SettlementOption, ObservatoryMetadata
 from .challenges import parse_challenge_from_response
@@ -214,13 +216,11 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         except Exception as e:
             parse_error = str(e)
 
-    # 💡 v1.9.5: 実行パスに影響を与えず Settlement Options の全抽出を行う
     settlement_opts = []
     selected_opt = None
     if parsed:
         settlement_opts, selected_opt = _extract_settlement_options(parsed)
 
-    # 💡 Commerce Surface の検出
     commerce_info = detect_commerce_surface(httpx_res)
 
     try:
@@ -228,7 +228,6 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
     except Exception:
         grant_signals = GrantSignalObservation()
 
-    # 💡 1. Commerce Surface Block
     if commerce_info:
         c_protocol = commerce_info.get("commerce_protocol")
         c_intent = commerce_info.get("commerce_intent")
@@ -272,7 +271,6 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             unsupported_reason = "Malformed or unsupported settlement hint co-existing with commerce surface."
             operator_approval_reason = "malformed_or_unsupported_settlement_hint"
             reason = "Agent Commerce surface detected, but co-existing settlement hint is malformed or unsupported."
-        # 💡 正しい位置への no_allowed_network_match の組み込み
         elif not selected_opt and settlement_opts and parsed and parsed.parameters.get("_selection_reason") == "no_allowed_network_match":
             action = "stop_safely"
             unsupported_reason = "Settlement options are available, but none match the local allowed_networks policy."
@@ -295,7 +293,6 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
 
         guidance = build_commerce_guidance(c_protocol, commerce_info.get("raw_detected_fields", {}))
 
-        # 💡 v1.9.5: APP/AP2/ACP で明確な決済オプション(Settlement Options)がない場合、missing_information を補強する
         if not settlement_opts:
             if "missing_information" not in guidance:
                 guidance["missing_information"] = []
@@ -341,16 +338,13 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             required_evidence=guidance.get("required_evidence", []),
             missing_information=guidance.get("missing_information", []),
             operator_approval_reason=operator_approval_reason,
-            # --- v1.9.5 New Fields ---
             settlement_options=settlement_opts,
             selected_settlement_option=selected_opt,
             ln_church_observatory=ObservatoryMetadata(),
-            # --- v1.11.2 New Fields ---
             grant_signal_detected=grant_signals.detected,
             grant_signals=grant_signals
         )
 
-    # --- Commerce Surface ではない既存ロジック ---
     if res.status_code < 400 and res.status_code != 402:
         return InspectResult(
             ok=True,
@@ -360,12 +354,10 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             reason="No HTTP 402 payment challenge detected.",
             will_execute_payment=False,
             ln_church_observatory=ObservatoryMetadata(),
-            # --- v1.11.2 New Fields ---
             grant_signal_detected=grant_signals.detected,
             grant_signals=grant_signals
         )
 
-    # 💡 2. Standard Block
     if res.status_code in (402, 401, 403):
         if parse_error:
             is_invalid_challenge = "No valid 402" in parse_error or "Failed to parse" in parse_error
@@ -392,7 +384,6 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
                 reason=f"Failed to parse challenge: {parse_error}" if is_invalid_challenge else f"Unexpected error parsing challenge: {parse_error}",
                 will_execute_payment=False,
                 ln_church_observatory=ObservatoryMetadata(),
-                # --- v1.11.2 New Fields ---
                 grant_signal_detected=grant_signals.detected,
                 grant_signals=grant_signals
             )
@@ -467,11 +458,9 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             next_command=next_cmd,
             will_execute_payment=False,
             diagnostic_class=diagnostic_class,
-            # --- v1.9.5 New Fields ---
             settlement_options=settlement_opts,
             selected_settlement_option=selected_opt,
             ln_church_observatory=ObservatoryMetadata(),
-            # --- v1.11.2 New Fields ---
             grant_signal_detected=grant_signals.detected,
             grant_signals=grant_signals
         )
@@ -483,7 +472,6 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         recommended_action="unknown",
         reason=f"Unexpected HTTP status {res.status_code}.",
         will_execute_payment=False,
-        # --- v1.11.2 New Fields ---
         grant_signal_detected=grant_signals.detected,
         grant_signals=grant_signals
     )
@@ -492,12 +480,14 @@ def main():
     parser = argparse.ArgumentParser(description="ln-church-agent CLI - Agentic Payment Runtime")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # 1. Existing `inspect`
     inspect_parser = subparsers.add_parser("inspect", help="Inspect an HTTP 402 endpoint without paying")
     inspect_parser.add_argument("url", type=str, help="Target URL")
     inspect_parser.add_argument("--method", type=str, default="GET", help="HTTP method (default: GET)")
     inspect_parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds")
     inspect_parser.add_argument("--json", action="store_true", help="Output result as JSON")
     
+    # 2. Existing `grant`
     grant_parser = subparsers.add_parser("grant", help="Manage and inspect grant tokens")
     grant_subparsers = grant_parser.add_subparsers(dest="grant_command", required=True)
     
@@ -508,7 +498,53 @@ def main():
     grant_inspect_parser.add_argument("--method", type=str, default="POST", help="Target HTTP method")
     grant_inspect_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="Target base URL")
 
+    # 💡 3. [NEW] Paid Registration & Read Models (`observe-domain`)
+    obs_domain_parser = subparsers.add_parser("observe-domain", help="Manage paid domain observation slots")
+    obs_domain_sub = obs_domain_parser.add_subparsers(dest="obs_cmd", required=True)
+    
+    register_parser = obs_domain_sub.add_parser("register", help="Register a domain (Paid Action)")
+    register_parser.add_argument("domain", type=str, help="Public domain to observe")
+    register_parser.add_argument("--pay", action="store_true", help="Acknowledge this is a paid action (approx 1 USDC)")
+    register_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="API Base URL")
+    register_parser.add_argument("--private-key", type=str, help="Agent EVM Private Key (or set via ENV)")
+    register_parser.add_argument("--idempotency-key", type=str, help="Optional idempotency key to prevent double charges")
+    register_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    status_parser = obs_domain_sub.add_parser("status", help="Get request status")
+    status_parser.add_argument("request_id", type=str, help="The Observation Request ID")
+    status_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="API Base URL")
+    status_parser.add_argument("--json", action="store_true")
+
+    rm_parser = obs_domain_sub.add_parser("read-model", help="Get domain read model")
+    rm_parser.add_argument("domain", type=str, help="The target domain")
+    rm_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="API Base URL")
+    rm_parser.add_argument("--json", action="store_true")
+
+    # 💡 4. [NEW] Internal Observatory (default_worker) (`observatory`)
+    observatory_parser = subparsers.add_parser("observatory", help="Internal Observer API")
+    obs_sub = observatory_parser.add_subparsers(dest="observatory_cmd", required=True)
+    
+    targets_parser = obs_sub.add_parser("targets")
+    targets_sub = targets_parser.add_subparsers(dest="targets_cmd", required=True)
+    claim_parser = targets_sub.add_parser("claim", help="Claim targets for observation")
+    claim_parser.add_argument("--observer", type=str, default="default_worker")
+    claim_parser.add_argument("--limit", type=int, default=5)
+    claim_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="API Base URL")
+    claim_parser.add_argument("--internal-secret", type=str, help="Or use LN_CHURCH_INTERNAL_SECRET env")
+    claim_parser.add_argument("--json", action="store_true")
+
+    results_parser = obs_sub.add_parser("results")
+    results_sub = results_parser.add_subparsers(dest="results_cmd", required=True)
+    submit_parser = results_sub.add_parser("submit", help="Submit observation result")
+    submit_parser.add_argument("file", type=str, help="Path to result JSON file")
+    submit_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="API Base URL")
+    submit_parser.add_argument("--internal-secret", type=str, help="Or use LN_CHURCH_INTERNAL_SECRET env")
+    submit_parser.add_argument("--json", action="store_true")
+
+
     args = parser.parse_args()
+
+    # --- CLI Execution Handlers ---
 
     if args.command == "inspect":
         result = inspect_url(args.url, args.method, args.timeout)
@@ -523,7 +559,6 @@ def main():
             print(f"  Surfaces Detected  : {', '.join(result.surfaces_detected) if result.surfaces_detected else 'None'}")
             print(f"  Reason             : {result.reason}")
             
-            # 💡 v1.9.5: settlement_options が複数ある場合の表示を追加
             if result.settlement_options:
                 print(f"  Settlement Options : {len(result.settlement_options)} available")
                 for i, opt in enumerate(result.settlement_options):
@@ -542,14 +577,13 @@ def main():
                 if result.grant_signals.signal_types:
                     print(f"  Grant Signal Type  : {', '.join(result.grant_signals.signal_types)}")
 
-            # 💡 v1.9.5: 人間向けの軽い導線を末尾に追加
             print("\n---------------------------------------------------------")
             print("💡 Observation generated locally. This result was not submitted.")
             print("To contribute a redacted observation to the public corpus, use an explicit opt-in submission flow.")
             print("LN Church Observatory collects agent-readable evidence for HTTP 402 / x402 / L402 / MPP payment surfaces.")
             print("---------------------------------------------------------")
 
-    if args.command == "grant" and args.grant_command == "inspect":
+    elif args.command == "grant" and args.grant_command == "inspect":
         from .grants import diagnose_grant_token
         import json
         diag = diagnose_grant_token(args.token, agent_id=args.agent_id, base_url=args.base_url, route=args.route, method=args.method)
@@ -571,6 +605,114 @@ def main():
         if diag.fallback_action:
             res["fallback_action"] = diag.fallback_action
         print(json.dumps(res, indent=2))
+
+    # 💡 [NEW] Paid Domain Observation Slot Management
+    elif args.command == "observe-domain":
+        from .client import LnChurchClient
+        import os, json
+
+        if args.obs_cmd == "register":
+            pk = getattr(args, "private_key", None) or os.environ.get("AGENT_PRIVATE_KEY")
+            if not pk:
+                print("❌ Error: --private-key or AGENT_PRIVATE_KEY environment variable is required to register a domain.")
+                return
+            if not args.pay:
+                print("❌ Safety Check Failed: This is a paid endpoint. Use '--pay' to explicitly acknowledge the payment action.")
+                return
+                
+            client = LnChurchClient(private_key=pk)
+            if hasattr(args, "base_url") and args.base_url:
+                client.base_url = args.base_url
+
+            try:
+                res = client.register_domain_observation_slot(args.domain, idempotency_key=args.idempotency_key)
+                if args.json:
+                    print(res.model_dump_json(indent=2))
+                else:
+                    print(f"✅ Slot Registered for {res.domain}")
+                    print(f"  Request ID    : {res.request_id}")
+                    print(f"  Requester Paid: {res.requester_paid}")
+                    print(f"  Result Handle : {res.result_handle}")
+                    print(f"  Read Model    : {res.public_read_model_url}")
+            except Exception as e:
+                print(f"❌ Failed: {e}")
+
+        elif args.obs_cmd == "status":
+            client = LnChurchClient(agent_id="cli_observer")
+            if hasattr(args, "base_url") and args.base_url:
+                client.base_url = args.base_url
+
+            try:
+                res = client.get_domain_observation_request(args.request_id)
+                if args.json:
+                    print(res.model_dump_json(indent=2))
+                else:
+                    print(f"✅ Status for {res.domain}:")
+                    print(f"  Request ID : {res.request_id}")
+                    print(f"  Status     : {res.status}")
+                    print(f"  Observed   : {res.observation_count} times (Last: {res.last_observed_at or 'Never'})")
+            except Exception as e:
+                print(f"❌ Failed: {e}")
+
+        elif args.obs_cmd == "read-model":
+            client = LnChurchClient(agent_id="cli_observer")
+            if hasattr(args, "base_url") and args.base_url:
+                client.base_url = args.base_url
+
+            try:
+                res = client.get_domain_observation_read_model(args.domain)
+                if args.json:
+                    print(res.model_dump_json(indent=2))
+                else:
+                    print(f"✅ Read Model for {res.domain}:")
+                    print(f"  Latest Observations : {len(res.latest_observations)}")
+                    print(f"  Discovered Surfaces : {len(res.discovered_surfaces)}")
+                    print(f"  Verdict / Score     : None (not_a_verdict=True)")
+            except Exception as e:
+                print(f"❌ Failed: {e}")
+
+    # 💡 [NEW] Internal Observatory (Internal Observatory Worker Tools)
+    elif args.command == "observatory":
+        from .client import LnChurchClient
+        import os, json
+        
+        client = LnChurchClient(agent_id="internal_worker")
+        if hasattr(args, "base_url") and args.base_url:
+            client.base_url = args.base_url
+            
+        secret = getattr(args, "internal_secret", None) or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+        
+        if args.observatory_cmd == "targets" and args.targets_cmd == "claim":
+            if not secret:
+                print("❌ Error: --internal-secret or LN_CHURCH_INTERNAL_SECRET environment variable is required.")
+                return
+            try:
+                res = client.claim_domain_observation_targets(observer=args.observer, limit=args.limit, internal_secret=secret)
+                if args.json:
+                    print(res.model_dump_json(indent=2))
+                else:
+                    print(f"✅ Claimed {len(res.targets)} targets for observation.")
+                    for t in res.targets:
+                        print(f"  - {t.domain} (ID: {t.target_id})")
+            except Exception as e:
+                print(f"❌ Failed: {e}")
+
+        elif args.observatory_cmd == "results" and args.results_cmd == "submit":
+            if not secret:
+                print("❌ Error: --internal-secret or LN_CHURCH_INTERNAL_SECRET environment variable is required.")
+                return
+            try:
+                with open(args.file, "r") as f:
+                    data = json.load(f)
+                res = client.submit_domain_observation_result(data, internal_secret=secret)
+                if args.json:
+                    print(res.model_dump_json(indent=2))
+                else:
+                    print(f"✅ Result Submitted Successfully")
+                    print(f"  Observation ID: {res.observation_id}")
+            except Exception as e:
+                print(f"❌ Failed: {e}")
+
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,9 @@
-from .client import Payment402Client, LnChurchClient, SURFACE_PREFLIGHT_SCHEMA_VERSION
+from .client import (
+    Payment402Client,
+    LnChurchClient,
+    SURFACE_PREFLIGHT_SCHEMA_VERSION,
+    validate_public_domain_for_observation
+)
 from .exceptions import (
     PaymentChallengeError,
     PaymentExecutionError,
@@ -46,7 +51,14 @@ from .models import (
     PROTOCOL_ROLES_SCHEMA_VERSION,
     VERIFICATION_COST_VECTOR_SCHEMA_VERSION,
     VERIFICATION_COST_FORMULA_VERSION,
-    READ_MODEL_REVISION
+    READ_MODEL_REVISION,
+    DomainObservationSlotResponse,
+    DomainObservationRequestStatus,
+    DomainObservationDomainReadModel,
+    DomainObservationTarget,
+    DomainObservationTargetsResponse,
+    DomainObservationResultSubmission,
+    DomainObservationResultResponse
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -126,5 +138,13 @@ __all__ = [
     "PROTOCOL_ROLES_SCHEMA_VERSION",
     "VERIFICATION_COST_VECTOR_SCHEMA_VERSION",
     "VERIFICATION_COST_FORMULA_VERSION",
-    "READ_MODEL_REVISION"
+    "READ_MODEL_REVISION",
+    "DomainObservationSlotResponse",
+    "DomainObservationRequestStatus",
+    "DomainObservationDomainReadModel",
+    "DomainObservationTarget",
+    "DomainObservationTargetsResponse",
+    "DomainObservationResultSubmission",
+    "DomainObservationResultResponse",
+    "validate_public_domain_for_observation"
 ]

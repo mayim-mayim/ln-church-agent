@@ -2,6 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.14.0] - 2026-06-23 (Paid Domain Observation Slot)
+* **Added**: Introduced `register_domain_observation_slot` to purchase a 7-day public-safe observation run for a specified domain (x402 Paid Action).
+* **Added**: Introduced public read models `get_domain_observation_request` and `get_domain_observation_read_model` to safely query the observation status and discovered surfaces.
+* **Added**: Introduced internal observer APIs (`claim_domain_observation_targets`, `submit_domain_observation_result`) for observatory workers, strictly protected by `X-Internal-Secret`.
+* **Added**: CLI commands `observe-domain` for paid registration/status, and `observatory` for internal worker operations.
+* **Added**: Robust domain validation (`validate_public_domain_for_observation`) to prevent SSRF (blocking IPs, localhost, metadata endpoints).
+* **Security**: Enforced strict `public-safe` constraints (GET/HEAD only, no forms, no login, no payment to target).
+* **Architecture**: Clear separation between `requester_paid` and `domain_owner_verified`. The slot purchase does not imply domain ownership, endorsement, security scan, or certification (`not_a_verdict: true`).
+
 ## [1.13.0] - 2026-06-14 (Observation Provenance / Protocol Roles / Verification Cost Vector)
 * Added public-safe `observation_provenance` metadata helpers.
 * Added `protocol_roles` shape for role → protocol → capability observations.

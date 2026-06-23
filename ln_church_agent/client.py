@@ -6,7 +6,7 @@ import importlib.metadata
 import uuid
 import inspect
 from urllib.parse import urlparse, parse_qsl, urlencode
-from typing import Optional, Dict, Any, Callable, List
+from typing import Optional, Dict, Any, Callable, List, Union
 import warnings
 import base64
 import json
@@ -53,7 +53,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.13.0"
+        return "1.14.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -112,6 +112,38 @@ def _derive_surface_key(
 
     seed = f"{method.upper()}|{canonical_url}|{rail}|{network}|{asset}|{authorization_scheme}|{draft_shape}"
     return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]
+
+def validate_public_domain_for_observation(domain: str) -> bool:
+    """
+    Validates a domain string to prevent SSRF and ensure it is a public-safe target.
+    This strips URLs and blocks IPs, localhost, and metadata endpoints.
+    Note: The LN Church backend validation is the final authority.
+    """
+    if not domain or not isinstance(domain, str):
+        return False
+    d = domain.strip().lower()
+    if not d or len(d) > 253:
+        return False
+    
+    # Block URLs and ports
+    if "://" in d or "/" in d or ":" in d:
+        return False
+        
+    # Block raw IPv4
+    if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', d):
+        return False
+        
+    # Block dangerous prefixes/exact matches
+    forbidden = [
+        r'^localhost$', r'^127\.', r'^10\.', r'^172\.(1[6-9]|2[0-9]|3[0-1])\.',
+        r'^192\.168\.', r'^169\.254\.', r'^::1$', r'^fc00::', r'metadata\.google\.internal'
+    ]
+    for pat in forbidden:
+        if re.search(pat, d):
+            return False
+            
+    # Basic ASCII domain regex
+    return bool(re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$', d))
 
 class Payment402Client:
     def __init__(
@@ -587,7 +619,12 @@ class Payment402Client:
             except Exception:
                 resp_data = {"status": "success", "message": "unparseable"}
 
-            result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
+            result = ExecutionResult(
+                response=resp_data, 
+                final_url=url, 
+                retry_count=_payment_retry_count,
+                response_headers=dict(res.headers)
+            )
             
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
@@ -854,7 +891,12 @@ class Payment402Client:
             except Exception:
                 resp_data = {"status": "success", "message": "unparseable"}
 
-            result = ExecutionResult(response=resp_data, final_url=url, retry_count=_payment_retry_count)
+            result = ExecutionResult(
+                response=resp_data, 
+                final_url=url, 
+                retry_count=_payment_retry_count,
+                response_headers=dict(res.headers)
+            )
             
             raw_response = res.headers.get("PAYMENT-RESPONSE")
             token = None
@@ -3265,6 +3307,132 @@ class LnChurchClient(Payment402Client):
         self._reporter_proof_id = verify_res["proof_id"]
         
         return verify_res
+
+    # ==========================================
+    # v1.14.0: Domain Observation Slots & Internal Observatory Worker
+    # ==========================================
+
+    def register_domain_observation_slot(
+        self,
+        domain: str,
+        duration_days: int = 7,
+        observation_profile: str = "public_safe_light",
+        idempotency_key: Optional[str] = None,
+        endpoint_path: str = "/api/bazaar/domain-observation-slots",
+        **kwargs
+    ) -> "DomainObservationSlotResponse":
+        """
+        Registers a domain for a 7-day public-safe observation run.
+        This is an HTTP 402 paid action.
+        
+        NOTE: This purchases a slot in the LN Church observatory queue. 
+        It DOES NOT execute payment to the target domain, and domain_owner_verified is always False in v0.
+        """
+        from .models import DomainObservationSlotResponse
+        
+        if not validate_public_domain_for_observation(domain):
+            raise ValueError(f"Invalid public domain provided for observation: {domain}")
+
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "domain": domain,
+            "duration_days": duration_days,
+            "observation_profile": observation_profile
+        }
+        payload.update(kwargs)
+
+        headers = {}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        result = self.execute_detailed("POST", endpoint_path, payload=payload, headers=headers)
+        data = result.response
+
+        # Backend headers -> body fallback extraction
+        rh_lower = {k.lower(): v for k, v in result.response_headers.items()}
+        if "result_handle" not in data and "x-ln-result-handle" in rh_lower:
+            data["result_handle"] = rh_lower["x-ln-result-handle"]
+        if "request_hash" not in data and "x-ln-request-hash" in rh_lower:
+            data["request_hash"] = rh_lower["x-ln-request-hash"]
+
+        return DomainObservationSlotResponse(**data)
+
+    def get_domain_observation_request(self, request_id: str) -> "DomainObservationRequestStatus":
+        from .models import DomainObservationRequestStatus
+        res = self.execute_request("GET", f"/api/agent/external/observatory/domain-observation-requests/{request_id}")
+        return DomainObservationRequestStatus(**res)
+
+    def get_domain_observation_read_model(self, domain: str) -> "DomainObservationDomainReadModel":
+        from .models import DomainObservationDomainReadModel
+        res = self.execute_request("GET", f"/api/agent/external/observatory/domains/{domain}")
+        return DomainObservationDomainReadModel(**res)
+
+    # --- Internal Observer (Internal Observatory Worker) Methods ---
+
+    def claim_domain_observation_targets(
+        self,
+        observer: str = "default_worker",
+        limit: int = 5,
+        internal_secret: Optional[str] = None
+    ) -> "DomainObservationTargetsResponse":
+        """
+        [Internal Observer API]
+        Claims active observation targets for external crawlers (e.g., OpenClaw).
+        Requires LN_CHURCH_INTERNAL_SECRET.
+        """
+        from urllib.parse import urlencode
+
+        import os
+        from urllib.parse import urlencode # 💡 追加
+        from .models import DomainObservationTargetsResponse
+        
+        secret = internal_secret or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+        if not secret:
+            raise ValueError("LN_CHURCH_INTERNAL_SECRET is required to claim targets.")
+            
+        limit = max(1, min(10, limit))
+        headers = {"X-Internal-Secret": secret}
+        
+        query = urlencode({"observer": observer, "limit": limit})
+        res = self.execute_request("GET", f"/api/agent/external/observation-targets?{query}", headers=headers)
+        return DomainObservationTargetsResponse(**res)
+
+    def submit_domain_observation_result(
+        self,
+        result: Union["DomainObservationResultSubmission", Dict[str, Any]],
+        internal_secret: Optional[str] = None
+    ) -> "DomainObservationResultResponse":
+        """
+        [Internal Observer API]
+        Submits public-safe observation results back to the LN Church observatory.
+        Requires LN_CHURCH_INTERNAL_SECRET.
+        """
+        import os
+        from .models import DomainObservationResultSubmission, DomainObservationResultResponse
+        
+        secret = internal_secret or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+        if not secret:
+            raise ValueError("LN_CHURCH_INTERNAL_SECRET is required to submit results.")
+
+        if isinstance(result, dict):
+            result_obj = DomainObservationResultSubmission(**result)
+        else:
+            result_obj = result
+
+        # Client-side guardrails
+        if not result_obj.no_payment_to_target:
+            raise ValueError("Observation result rejected: no_payment_to_target must be True.")
+        
+        vcv = result_obj.verification_cost_vector or {}
+        if vcv.get("payment_attempts", 0) > 0:
+            raise ValueError("Observation result rejected: payment_attempts must be 0.")
+        if vcv.get("irreversible_action_attempted") is True:
+            raise ValueError("Observation result rejected: irreversible_action_attempted is not allowed.")
+
+        headers = {"X-Internal-Secret": secret}
+        res = self.execute_request("POST", "/api/agent/external/domain-observation-results", payload=result_obj.model_dump(), headers=headers)
+        return DomainObservationResultResponse(**res)
+
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

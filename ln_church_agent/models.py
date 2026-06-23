@@ -232,12 +232,12 @@ class ExecutionResult(BaseModel):
     response: dict
     final_url: str
     retry_count: int = 0
+    response_headers: Dict[str, str] = Field(default_factory=dict) 
     settlement_receipt: Optional[Any] = None
     used_scheme: Optional[str] = None
     used_asset: Optional[str] = None
     verification_status: Optional[str] = None
     outcome: Optional[OutcomeSummary] = None
-    # 💡 新規追加: 失敗時のテレメトリ伝播用
     credential_shape: Optional[str] = None
     failure_reason: Optional[str] = None
 
@@ -882,3 +882,99 @@ def build_verification_cost_vector(
             "score": None
         }
     }
+
+# ==========================================
+# v1.14.0: Domain Observation Slot Models
+# ==========================================
+
+class DomainObservationSlotResponse(BaseModel):
+    request_id: str
+    domain: str
+    status: str
+    requester_paid: bool = True
+    domain_owner_verified: bool = False
+    sponsor_verified: bool = False
+    sponsor_type: str = "paid_observation_slot"
+    duration_days: int = 7
+    observation_profile: str = "public_safe_light"
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    status_url: Optional[str] = None
+    public_read_model_url: Optional[str] = None
+    result_handle: Optional[str] = None
+    request_hash: Optional[str] = None
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+
+class DomainObservationRequestStatus(BaseModel):
+    request_id: str
+    domain: str
+    status: str
+    requester_paid: bool = True
+    domain_owner_verified: bool = False
+    sponsor_verified: bool = False
+    sponsor_type: str = "paid_observation_slot"
+    duration_days: int = 7
+    observation_profile: str = "public_safe_light"
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    last_observed_at: Optional[str] = None
+    observation_count: int = 0
+    public_read_model_url: Optional[str] = None
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+
+class DomainObservationDomainReadModel(BaseModel):
+    domain: str
+    observation_requests: List[Dict[str, Any]] = Field(default_factory=list)
+    latest_observations: List[Dict[str, Any]] = Field(default_factory=list)
+    discovered_surfaces: List[Dict[str, Any]] = Field(default_factory=list)
+    observation_provenance: Dict[str, Any] = Field(default_factory=dict)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+
+class DomainObservationTarget(BaseModel):
+    target_id: str
+    request_id: str
+    domain: str
+    seed_urls: List[str] = Field(default_factory=list)
+    observation_profile: str = "public_safe_light"
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    lease_expires_at: Optional[str] = None
+
+class DomainObservationTargetsResponse(BaseModel):
+    targets: List[DomainObservationTarget] = Field(default_factory=list)
+
+class DomainObservationResultSubmission(BaseModel):
+    target_id: str
+    request_id: str
+    observed_domain: str
+    observer: Dict[str, Any] = Field(default_factory=lambda: {
+        "name": "default_worker",
+        "reporter_verification": "self_reported"
+    })
+    observed_urls: List[Dict[str, Any]] = Field(default_factory=list)
+    discovered_surfaces: List[Dict[str, Any]] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    safety_profile: str = "public_safe_light"
+    no_payment_to_target: bool = True
+    not_a_security_scan: bool = True
+    verification_cost_vector: Dict[str, Any] = Field(default_factory=lambda: {
+        "http_requests": 0,
+        "tool_calls": 0,
+        "payment_attempts": 0,
+        "personal_data_required": False,
+        "human_confirmation_required": False,
+        "irreversible_action_attempted": False
+    })
+
+class DomainObservationResultResponse(BaseModel):
+    accepted: bool
+    request_id: str
+    target_id: str
+    observation_id: str
+    status: str
+    public_read_model_url: Optional[str] = None

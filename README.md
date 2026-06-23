@@ -116,6 +116,7 @@ client.submit_unmapped_observation(
     status_code=402,
 )
 
+
 ```
 
 *Note: Unmapped observations are treated strictly as discovery signals. They declare `payment_performed=False` and `verification_status="unverified"`. Default telemetry auto-submission scripts remain conservative; explicit opt-in is required to submit unmapped observations.*
@@ -145,6 +146,9 @@ client.submit_unmapped_observation(
     * report redacted observations explicitly
     * record goal-conditioned attempts
 
+
+
+
 ---
 
 ## 🧠 AI Decision Card
@@ -152,6 +156,7 @@ client.submit_unmapped_observation(
 Use `ln-church-agent` when an AI agent must do more than simply pay for one API call.
 
 Choose this SDK when the agent needs:
+
 - **Multi-rail support**: L402, x402, and MPP-aware flows.
 - **Policy enforcement**: Local spend limits, session budgets, and trust checks.
 - **Verifiable evidence**: Receipts, evidence records, and traces for auditing.
@@ -170,7 +175,9 @@ Start with a no-payment inspection command. This validates the API and endpoint 
 ```bash
 pip install ln-church-agent
 ln-church-agent inspect https://kari.mayim-mayim.com/api/agent/sandbox/mpp/charge/basic --json
+
 ```
+
 This command does not execute payment. It detects the HTTP 402 challenge, identifies the payment rail, recommends a safe action, and prints the next command.
 
 Canonical first loop: `inspect → decide → pay → verify → trace`
@@ -189,7 +196,8 @@ It can safely detect higher-order commerce metadata, starting with OKX Agent Pay
 In v1.9.1+, inspect results can also include Guided Handoff metadata for AP2 / ACP / OKX APP-like surfaces. This tells the upstream agent what to ask the site for, what not to treat as settlement proof, which evidence is required, what information is missing, and why operator approval may be required.
 
 **Grant-like Signal Detection Sidecar (v1.12+):**
-The `inspect` tool may also detect unverified incentive signals (e.g., faucets, trial credits) as a local sidecar observation. 
+The `inspect` tool may also detect unverified incentive signals (e.g., faucets, trial credits) as a local sidecar observation.
+
 * This is **not** a guarantee of grant availability.
 * It does **not** verify signed grant tokens or redeemability.
 * It is **not** automatically submitted to the Hon-den observation network.
@@ -212,6 +220,7 @@ Example output:
   "will_execute_payment": false
 }
 
+
 ```
 
 ```json
@@ -222,6 +231,7 @@ Example output:
   "do_not": ["treat_authorization_artifact_as_settlement_proof"],
   "required_evidence": ["explicit_price", "merchant_identity", "settlement_rail", "receipt_model"]
 }
+
 ```
 
 This distinction is intentional:
@@ -231,6 +241,55 @@ This distinction is intentional:
 * `inspect` never executes payment, initializes wallets, signs payloads, or calls brokers.
 
 Use this mode when your agent needs to understand a paid-action surface before deciding whether payment execution is safe, unsupported, or observation-only.
+
+---
+
+## 🔭 Paid Domain Observation Slot (v1.14.0+)
+
+`ln-church-agent` allows agents or human operators to explicitly register a public domain for an extended 7-day observation run by the LN Church observatory queue via an HTTP 402 paid action.
+
+**Strict Architectural & Safety Rules:**
+
+* **Paid Domain Observation Slot is a paid request to LN Church, not a payment to the target domain.**
+* **It is not a security scan, endorsement, certification, recommendation, or trust score.**
+* **MVP v0 does not verify domain ownership.** (`requester_paid=true`, `domain_owner_verified=false`). Requester paid and domain owner verified are entirely separate concepts.
+* Internal workers fetching targets from this queue operate under strict `public-safe` constraints (GET/HEAD only, no forms, no login, no vulnerability scan, no payment to target).
+* Results are published to public-safe read models.
+
+**CLI Usage:**
+
+```bash
+# Register a domain for observation (approx 1 USDC via x402)
+ln-church-agent observe-domain register example.com --pay
+
+# Check the active queue status (free, read-only)
+ln-church-agent observe-domain status obsreq_xxxxx
+
+# Read the public-safe observation facts (Read Model)
+ln-church-agent observe-domain read-model example.com
+
+```
+
+**SDK Usage:**
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(private_key="0x...")
+
+# 1. Paid Registration (Requires funds)
+res = client.register_domain_observation_slot("example.com")
+print(f"Request ID: {res.request_id}")
+
+# 2. Check Status (Free, Read-Only)
+# Can be called safely without private keys: LnChurchClient(agent_id="cli_observer")
+status_client = LnChurchClient(agent_id="cli_observer")
+status = status_client.get_domain_observation_request(res.request_id)
+
+# 3. Fetch Domain Read Model (Free, Read-Only)
+read_model = status_client.get_domain_observation_read_model("example.com")
+
+```
 
 ---
 
@@ -261,7 +320,9 @@ To expose these safe tools to your AI agent:
 
 ```bash
 ln-church-agent-mcp
+
 ```
+
 ---
 
 ## Payment Failure Observation
@@ -297,6 +358,7 @@ print(record.changed_fields)
 payload = build_payment_failure_observation_payload(record, agent_id="agent-007")
 print(payload["evidence"]["payment_performed"]) 
 # Output: False
+
 
 ```
 
@@ -338,6 +400,7 @@ print(card["guardrails"]["final_authority"])
 
 # Or query directly by Surface Key if known
 card2 = client.get_surface_preflight(surface_key="surface_0123456789abcdef01234567")
+
 ```
 
 ---
@@ -351,6 +414,7 @@ A Goal Attempt records what an agent tried to accomplish for a declared goal, wh
 This is not automatic telemetry.
 
 It does not:
+
 - execute a payment,
 - recommend a recipe,
 - auto-submit from `execute_detailed()`,
@@ -388,6 +452,7 @@ client.submit_goal_attempt_observation(
         "payment_performed": False
     }
 )
+
 ```
 
 ## 🧭 Goal Attempt Memory Read Models (v1.10.0)
@@ -395,7 +460,9 @@ client.submit_goal_attempt_observation(
 While full behavioral mapping is achieved via the premium graph, analyzing the complete `monzen-graph.json` during an active reasoning loop can cause context-window bloat. `ln-church-agent` v1.10.0 introduces two lightweight, static S3 snapshot endpoints to read historical attempt context efficiently.
 
 ### Rational Read Order for Autonomous Agents
+
 To minimize data ingestion and allocation overhead, autonomous agents SHOULD query information using the following hierarchy:
+
 1. **Goal Attempt Summary (Free):** Query overall volume counters and unassessed ratios to determine base-layer viability.
 2. **Goal Surface Candidates (Paid - 1 SAT):** Fetch up to 20 historically observed surfaces previously harnessed by the network for a specific objective.
 3. **Full Resonance Graph (Premium - 10 SATS):** Download the full multi-chain dataset only when deep analytical structural mapping is required.
@@ -428,6 +495,7 @@ candidates = client.get_goal_surface_candidates(
 for surface in candidates["candidate_groups"][0]["candidate_surfaces"]:
     print(f"Observed Surface: {surface['surface_key']} (Used: {surface['used_count']} times)")
 
+
 ```
 
 **Strict Architectural Guardrails:**
@@ -443,6 +511,7 @@ for surface in candidates["candidate_groups"][0]["candidate_surfaces"]:
 Choose your execution path based on your immediate goal:
 
 ### Route A: Generic Paid Fetch (Open Web Integration)
+
 Integrate with any HTTP 402 compliant API on the open web. The SDK autonomously handles the standard payment negotiation loop, shielding your agent from cryptographic complexity.
 
 ```python
@@ -457,18 +526,23 @@ result = client.execute_request(
     payload={"input": "data"}
 )
 print(result)
+
 ```
 
 ### Route B: Agent Tool Integration (MCP)
+
 Instantly equip any Model Context Protocol (MCP) compatible agent (e.g., Claude Desktop) with cross-chain 402-payment and scouting capabilities.
 
 ```bash
 export AGENT_PRIVATE_KEY="your-0x-prefixed-key"
 python -m ln_church_agent.integrations.mcp
+
 ```
+
 *Your agent can now autonomously call paid tools and benchmark flows directly from its reasoning loop.*
 
 ### Route C: Public Benchmark against LN Church Sandbox
+
 Prove your agent's parsing and execution capabilities against the physically isolated Agentic Payment Sandbox. This verifies protocol compliance (L402 or MPP) and reports telemetry to the Interop Matrix.
 
 ```python
@@ -484,6 +558,7 @@ mpp_result = client.run_mpp_charge_sandbox_harness()
 
 print(f"L402 Hash Matched: {l402_result.canonical_hash_matched}")
 print(f"MPP Hash Matched: {mpp_result.canonical_hash_matched}")
+
 ```
 
 ### Observation → Corpus → Synthetic Replay → Agent Dry-run Validation
@@ -512,7 +587,9 @@ replay_result = client.run_corpus_replay(
 
 print(f"Success: {replay_result.ok}")
 print(f"Expected: {replay_result.expected_action}, Observed: {replay_result.observed_action}")
+
 ```
+
 ---
 
 ## 🛡️ Why teams adopt this runtime
@@ -530,18 +607,23 @@ print(f"Expected: {replay_result.expected_action}, Observed: {replay_result.obse
 The SDK supports multiple settlement rails through a unified interface.
 
 **Standard x402 v2 (Global Standards):**
+
 * **EVM exact (`x402`)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads.
 * **SVM exact (Solana)**: Official x402 v2 SVM exact payments via CAIP-2 `solana:<genesisHash>` networks. This SDK features a built-in transaction builder for standard x402 SVM exact compatible payloads.
-  * *Note: The current LN Church exact sandboxes act as **post-settlement validators**. They require submitted tx hash / signature evidence and will reject unbroadcasted payloads. True V2 exact settlement (facilitator broadcasting) is a future phase.*
+* *Note: The current LN Church exact sandboxes act as **post-settlement validators**. They require submitted tx hash / signature evidence and will reject unbroadcasted payloads. True V2 exact settlement (facilitator broadcasting) is a future phase.*
+
+
 * **L402 / MPP**: Standard Lightning Network settlement (SATS) supporting Macaroon and BOLT11 invoice parsing.
 
 **Compatibility & Sandbox Paths (LN Church Extensions):**
+
 * **`lnc-solana-transfer`**: Legacy compatibility path for direct SPL Token (USDC) transfers via Solana RPC.
 * **`lnc-evm-relay`**: Optimized gasless relayer orchestration.
 * **`grant` / `faucet`**: Cold-start overrides and sponsored access.
 * *Legacy aliases like `x402-direct` are transparently normalized internally.*
 
 **Observable Commerce / Authorization Surfaces (Inspect-Only):**
+
 * **AP2 (Agent Payments Protocol)**: Detected via payment/checkout mandate metadata. Classified as an authorization surface. The SDK does not sign mandates.
 * **ACP (Agentic Commerce Protocol)**: Detected via checkout, cart, or delegated payment token metadata. The SDK does not execute ACP checkouts.
 * **OKX APP**: Detected when explicit APP metadata or broker objects are present.
@@ -551,7 +633,7 @@ The SDK supports multiple settlement rails through a unified interface.
 
 ## 🚀 Initializing with Dual-Stack Keys (EVM & SVM)
 
-For agents operating across both Ethereum and Solana ecosystems, the SDK strictly isolates key handling to prevent parsing collisions. 
+For agents operating across both Ethereum and Solana ecosystems, the SDK strictly isolates key handling to prevent parsing collisions.
 
 ```python
 from ln_church_agent import Payment402Client, PaymentPolicy
@@ -563,6 +645,7 @@ client = Payment402Client(
     svm_rpc_url=os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
     policy=PaymentPolicy(...)
 )
+
 ```
 
 > **⚠️ SVM Exact Architecture & Constraints:**
@@ -574,6 +657,9 @@ client = Payment402Client(
 > * **Safety:** Always validate your agent's negotiation flow on Solana Devnet before committing real liquidity on Mainnet.
 > * **Architecture Note:** Due to the current lack of a public low-level transaction builder in the official Python SDK, this runtime utilizes a **Local SVM Exact Transaction Builder** to construct standardized `VersionedTransaction` payloads.
 > * **Interop Validation:** This implementation has been successfully validated against a live Hono x402 gateway (`@x402/svm`) on Solana Mainnet (USDC), successfully negotiating a full 402 gasless settlement.
+> 
+> 
+
 ---
 
 ## 🎟️ Two LN Church Onboarding Paths (Cold-Start Overrides)
@@ -581,6 +667,7 @@ client = Payment402Client(
 While direct settlement (x402/L402/MPP) remains the standard paid path, LN Church provides two onboarding paths for cold-start execution and sandbox testing. Both act as a `paymentOverride` before standard settlement.
 
 ### 1. Zero-Balance Faucet Fallback
+
 A one-time fallback for agents with no available cryptocurrency. Designed strictly for initial capability verification.
 
 ```python
@@ -595,9 +682,11 @@ client.init_probe()
 client.claim_faucet_if_empty()
 
 result = client.draw_omikuji(asset=AssetType.SATS) # Uses Faucet override
+
 ```
 
 ### 2. Sponsored Grant Access
+
 Execute using a signed, scoped, single-use grant token issued by a trusted sponsor. This serves as an experimental foundation for sponsor-funded pre-payment distribution in A2A settings.
 
 `ln-church-agent` v1.8.3 can locally diagnose a grant token before use (`client.explain_grant()`), explaining whether it appears usable for the target route/method/audience/agentId. This diagnostic is advisory only; the LN Church backend remains the authoritative validator and enforces single-use consumption.
@@ -613,6 +702,7 @@ client.init_probe()
 
 client.set_grant_token("<JWS_GRANT_TOKEN>")
 result = client.draw_omikuji()  # Uses Grant override
+
 ```
 
 ---
@@ -622,7 +712,7 @@ result = client.draw_omikuji()  # Uses Grant override
 This SDK is designed to follow the evolving open standards around HTTP 402 agent payments, ensuring application developers do not need to track each protocol directly.
 
 * **Normative Upstream References:** Coinbase `x402`, IETF `draft-ryan-httpauth-payment-01` (`MPP`), and Lightning Labs `L402`.
-* **Tracking Policy:** This SDK prioritizes the current standard path for each protocol. Legacy and ecosystem-specific flows remain available as fallback compatibility paths. 
+* **Tracking Policy:** This SDK prioritizes the current standard path for each protocol. Legacy and ecosystem-specific flows remain available as fallback compatibility paths.
 * **Design Goal:** One SDK, one execution loop, multiple 402 payment rails.
 
 When upstream standards evolve, this SDK aims to absorb those changes behind a stable developer-facing interface. **If you use this SDK, you should not need to manually follow every protocol revision in the 402 ecosystem.**
@@ -634,9 +724,9 @@ When upstream standards evolve, this SDK aims to absorb those changes behind a s
 
 ## ⚖️ Advisor & Final Judge Architecture
 
-Agents can consult the Monzen network as an **evidence-rich advisor** to assess counterparty risk before paying, and to verify semantic outcomes after execution. 
+Agents can consult the Monzen network as an **evidence-rich advisor** to assess counterparty risk before paying, and to verify semantic outcomes after execution.
 
-Crucially, **the network can advise, but final authority remains in the local runtime**. 
+Crucially, **the network can advise, but final authority remains in the local runtime**.
 The LN Church backend returns structured recommendations (e.g., Sanctification status, historical mismatches), but the SDK's local `PaymentPolicy` and `allowed_hosts` configuration will always explicitly supersede remote advice.
 
 ---
