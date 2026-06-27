@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.14.2] - 2026-06-27 (MCP Registry Metadata Fix)
+
+* **Fixed**: Shortened the `server.json` description to satisfy the official MCP Registry `description.length <= 100` validation rule.
+* **Changed**: Preserved the inspect-only MCP positioning in a more compact registry-safe form: keyless, no wallet, no signing, and no payment execution.
+* **Safety**: No runtime behavior, payment execution logic, settlement serialization, telemetry submission, or API surface was altered.
+
+
 ## [1.14.1] - 2026-06-27 (Runtime Mode Boundary Clarification)
 * **Documentation**: Explicitly separated the SDK's positioning into two distinct modes: **Inspect-only Mode** (keyless, safe for enterprise preflight) and **Execution Runtime Mode** (policy-aware settlement loop).
 * **Added**: Expanded the Capability Matrix (`docs/07_capability_matrix.md`) and the `get_capability_matrix()` helper with new strict boundary fields (`mode`, `requires_private_key`, `can_execute_payment`, `can_submit_telemetry`, `auto_submits_telemetry`).
