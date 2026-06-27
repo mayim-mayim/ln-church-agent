@@ -2,6 +2,12 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.14.1] - 2026-06-27 (Runtime Mode Boundary Clarification)
+* **Documentation**: Explicitly separated the SDK's positioning into two distinct modes: **Inspect-only Mode** (keyless, safe for enterprise preflight) and **Execution Runtime Mode** (policy-aware settlement loop).
+* **Added**: Expanded the Capability Matrix (`docs/07_capability_matrix.md`) and the `get_capability_matrix()` helper with new strict boundary fields (`mode`, `requires_private_key`, `can_execute_payment`, `can_submit_telemetry`, `auto_submits_telemetry`).
+* **Changed**: Updated `ln-church-agent-mcp` metadata to explicitly declare its keyless, inspect-only nature.
+* **Safety**: Added rigorous unit tests to ensure the MCP inspect entrypoint never calls the payment execution engine. No payment execution behavior or auto-telemetry logic was altered.
+
 ## [1.14.0] - 2026-06-23 (Paid Domain Observation Slot)
 * **Added**: Introduced `register_domain_observation_slot` to purchase a 7-day public-safe observation run for a specified domain (x402 Paid Action).
 * **Added**: Introduced public read models `get_domain_observation_request` and `get_domain_observation_read_model` to safely query the observation status and discovered surfaces.

@@ -2,9 +2,20 @@
 
 `ln_church_agent` is designed to be "Agent-Native," providing out-of-the-box tools for the most popular AI orchestration frameworks.These integrations allow your agent to autonomously negotiate payments, report paywalls, and access premium intelligence.
 
+
 ## 🔌 Model Context Protocol (MCP)
 
 You can instantly equip any MCP-compatible agent (such as Claude Desktop) with cross-chain 402-payment and scouting capabilities. The bundled MCP server provides a suite of tools to interact with the LN Church API directly from the agent's reasoning loop.
+
+### Model Context Protocol (MCP) Integration Routes
+
+You must choose the appropriate MCP server mode based on your environment's safety requirements:
+
+* **B1. Inspect-Only Sidecar (`ln-church-agent-mcp`)**
+  Use `ln-church-agent-mcp` for enterprise/read-only/preflight inspection. It never signs, pays, or executes transactions. Telemetry is purely explicit via `submit_mcp_observation`.
+
+* **B2. Execution-Capable Runtime (`python -m ln_church_agent.integrations.mcp`)**
+  Use this execution-capable runtime only when the operator explicitly wants an MCP server that can execute paid actions with configured credentials.
 
 ### Running the MCP Server
 The server requires your agent's private key to be set in the environment.

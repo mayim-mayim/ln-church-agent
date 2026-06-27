@@ -17,7 +17,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "execute",
             "proof_semantics": "verified",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": False,
+            "requires_payment_credential": True,
+            "credential_requirement": "lightning_wallet_or_ln_adapter",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "mpp_charge",
@@ -28,7 +37,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "execute",
             "proof_semantics": "verified",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": False,
+            "requires_payment_credential": True,
+            "credential_requirement": "lightning_wallet_or_mpp_capable_adapter",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "mpp_session_intent",
@@ -39,18 +57,38 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "unverified",
             "default_recommended_action": "stop_safely",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "payment_draft_challenge",
             "name": "Payment draft challenge",
             "layer": "settlement_rail",
-            "current_sdk_support": "executable_now",
+            "current_sdk_support": "conditional_execution",
             "inspect_behavior": "supported_but_not_executed_in_inspect",
-            "execution_behavior": "execute",
-            "proof_semantics": "verified",
+            "execution_behavior": "execute_when_mapped_to_supported_payment_method",
+            "proof_semantics": "method_dependent",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": False,
+            "requires_payment_credential": True,
+            "credential_requirement": "depends_on_payment_method",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False,
+            "does_not_construct_payment_auth_json_credential": True,
+            "unsupported_shapes_default_action": "stop_safely"
         },
         {
             "id": "x402_v1_evm",
@@ -61,7 +99,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "execute",
             "proof_semantics": "verified",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": True,
+            "requires_payment_credential": True,
+            "credential_requirement": "evm_or_svm_signer",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_v2_exact_evm",
@@ -72,7 +119,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "execute",
             "proof_semantics": "verified",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": True,
+            "requires_payment_credential": True,
+            "credential_requirement": "evm_or_svm_signer",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_v2_exact_svm",
@@ -83,7 +139,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "execute",
             "proof_semantics": "verified",
             "default_recommended_action": "pay_and_verify",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": True,
+            "requires_payment_credential": True,
+            "credential_requirement": "evm_or_svm_signer",
+            "can_execute_payment": True,
+            "can_authorize_access": False,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_exact_post_settlement",
@@ -94,7 +159,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "post_settlement_proof_required",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_batch_settlement",
@@ -105,7 +179,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "deferred_voucher_not_settlement_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_auth_capture",
@@ -116,7 +199,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "authorization_signature_not_settlement_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "grant_sponsored_access",
@@ -124,10 +216,20 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "layer": "authorization_artifact",
             "current_sdk_support": "executable_now",
             "inspect_behavior": "inspect_supported",
-            "execution_behavior": "execute",
-            "proof_semantics": "verified",
+            "execution_behavior": "execute_protected_action",
+            "proof_semantics": "grant_validated_not_settlement_proof",
             "default_recommended_action": "use_grant",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "execution_runtime",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "requires_authorization_artifact": True,
+            "credential_requirement": "scoped_grant_token",
+            "can_execute_payment": False,
+            "can_authorize_access": True,
+            "can_execute_protected_action": True,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "grant_like_signal_detection",
@@ -138,7 +240,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "unverified_signal_not_grant_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "experimental"
+            "watchlist_status": "experimental",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "external_observation",
@@ -149,7 +260,20 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "unverified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "explicit_observation",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": True,
+            "auto_submits_telemetry": False,
+            "not_a_verdict": True,
+            "not_a_recommendation": True,
+            "observation_semantics": "reusable_observation_record",
+            "interpretation_hint": "Observed memory only. Final payment authority remains with local runtime."
         },
         {
             "id": "sandbox_evidence",
@@ -160,7 +284,20 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "unverified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "explicit_observation",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": True,
+            "auto_submits_telemetry": False,
+            "not_a_verdict": True,
+            "not_a_recommendation": True,
+            "observation_semantics": "reusable_observation_record",
+            "interpretation_hint": "Observed memory only. Final payment authority remains with local runtime."
         },
         {
             "id": "goal_attempt_observation",
@@ -171,7 +308,44 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "unverified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "explicit_observation",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": True,
+            "auto_submits_telemetry": False,
+            "not_a_verdict": True,
+            "not_a_recommendation": True,
+            "observation_semantics": "reusable_observation_record",
+            "interpretation_hint": "Observed memory only. Final payment authority remains with local runtime."
+        },
+        {
+            "id": "surface_preflight",
+            "name": "Surface Preflight",
+            "layer": "memory",
+            "current_sdk_support": "explicit_only",
+            "inspect_behavior": "observe_only",
+            "execution_behavior": "none",
+            "proof_semantics": "unverified",
+            "default_recommended_action": "observe_only",
+            "watchlist_status": "implemented",
+            "mode": "read_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False,
+            "not_a_verdict": True,
+            "not_a_recommendation": True,
+            "observation_semantics": "reusable_observation_record",
+            "interpretation_hint": "Observed memory only. Final payment authority remains with local runtime."
         },
         {
             "id": "ap2",
@@ -182,7 +356,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "authorization_or_commerce_artifact_not_settlement_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "acp",
@@ -193,7 +376,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "authorization_or_commerce_artifact_not_settlement_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "okx_app",
@@ -204,7 +396,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "authorization_or_commerce_artifact_not_settlement_proof",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "unknown_unmapped",
@@ -215,7 +416,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "halt",
             "proof_semantics": "not_verified",
             "default_recommended_action": "reject_invalid",
-            "watchlist_status": "implemented"
+            "watchlist_status": "implemented",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "aws_agentcore_payments",
@@ -226,7 +436,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "not_verified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "x402_bazaar_discovery",
@@ -237,7 +456,16 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "not_verified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         },
         {
             "id": "openapi_multi_offer_discovery",
@@ -248,6 +476,15 @@ def get_capability_matrix() -> List[Dict[str, Any]]:
             "execution_behavior": "none",
             "proof_semantics": "not_verified",
             "default_recommended_action": "observe_only",
-            "watchlist_status": "watch_only"
+            "watchlist_status": "watch_only",
+            "mode": "inspect_only",
+            "requires_private_key": False,
+            "requires_payment_credential": False,
+            "credential_requirement": "none",
+            "can_execute_payment": False,
+            "can_authorize_access": False,
+            "can_execute_protected_action": False,
+            "can_submit_telemetry": False,
+            "auto_submits_telemetry": False
         }
     ]

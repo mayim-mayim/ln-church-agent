@@ -1,5 +1,10 @@
 # ln-church-agent
 
+
+**The Value of "Not a Verdict"**
+LN Church read models do not decide for the agent. They preserve **observed memory**: what was seen, what was paid, what failed, what receipt shape appeared, what protocol role was observed, and what verification cost was reported. This is not a recommendation or verdict; it is a **reusable observation record** that helps the local runtime avoid re-verifying everything. Final payment authority remains local.
+
+
 Your agent will hit a 402 paywall in the wild.
 
 Will it inspect, decide, pay, recover, verify, and continue — or freeze?
@@ -8,7 +13,7 @@ Will it inspect, decide, pay, recover, verify, and continue — or freeze?
 
 In the broader agentic commerce stack, `ln-church-agent` acts as the buyer-side component of an observability and trust-evidence layer for HTTP 402-compatible paid actions.
 
-It helps agents inspect paid-action surfaces, distinguish executable payment rails from higher-order commerce protocols, and prove real paid execution across **L402, x402, and MPP** with receipts, policy checks, HATEOAS recovery, and traceable outcomes.
+It helps agents inspect paid-action surfaces, distinguish executable payment rails from higher-order commerce protocols, and prove paid execution across **L402, x402, and supported MPP** charge shapes when a concrete HTTP 402-compatible challenge, supported credential path, and verifiable receipt path are present
 
 In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP), Google AP2, and ACP** without executing payment logic. These protocols are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
 
@@ -62,6 +67,28 @@ It is designed for agents that must:
 * **Open-Web 402 Interoperability**: Natively supports Base64URL JSON headers, CAIP-2 network routing, and multi-chain execution out of the box.
 * **Reference Sandbox Support**: Optionally integrates with the LN Church observation network for public benchmarking, trace reporting, and discovery workflows.
 * **Stable Interface**: An unchanging developer API surface that safely absorbs the constant fluctuations of upstream protocol drafts.
+
+## Two Runtime Modes
+
+To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` explicitly separates surface inspection from payment execution.
+
+| Mode | Entrypoints | Capabilities & Safety Boundaries |
+| :--- | :--- | :--- |
+| **1. Inspect-only Mode** | `ln-church-agent-mcp`, `inspect` CLI | **Keyless**. Requires no private key, no wallet, and no signer. Performs no payment execution. Safe for enterprise preflight and classification. Classifies HTTP 402 and agent-commerce surfaces (AP2/ACP/APP). Outputs guided handoff, settlement options, and safe next steps (`observe_only` or `stop_safely`). |
+| **2. Execution Runtime Mode** | `Payment402Client`, `LnChurchClient` | May use private key, wallet, LN adapter, or SVM/EVM signer. Can execute supported HTTP 402-compatible settlement rails when local policy allows. Performs the full `Pay → Execute → Verify → Trace` loop. Does not auto-submit telemetry unless explicitly called. |
+| **3. Read-only Memory** | `get_surface_preflight()` | Fetches public-safe observed memory for a surface without executing payments or interacting with the target. |
+| **4. Explicit Telemetry** | `submit_goal_attempt_observation()`, `submit_external_observation()` | Explicit-only telemetry submission. Never auto-submits from standard execution paths. |
+
+### Explicit MCP Routes and Telemetry Boundaries
+
+`ln-church-agent` provides two distinct Model Context Protocol (MCP) entrypoints:
+
+* **1. Inspect-only MCP (`ln-church-agent-mcp`)**: 
+  Use `ln-church-agent-mcp` for enterprise/read-only/preflight inspection. It **never** signs, pays, or executes transactions. 
+  *Telemetry Side-effects*: This MCP never auto-submits telemetry. It may submit redacted observation telemetry *only* when the `submit_mcp_observation` tool is explicitly invoked by the agent.
+  
+* **2. Execution-capable MCP (`python -m ln_church_agent.integrations.mcp`)**: 
+  Use `python -m ln_church_agent.integrations.mcp` *only* when the operator explicitly wants an MCP server that can execute paid actions with configured credentials (e.g., Lightning wallets or EVM signers).
 
 ## Paid Surface Observer
 
@@ -136,18 +163,9 @@ client.submit_unmapped_observation(
 
 `ln-church-agent` is a complement, not a replacement, for official protocol SDKs.
 
-* **Use official x402 / MPP / L402 SDKs** when you only need protocol-native settlement.
-* **Use `ln-church-agent`** when an autonomous agent needs a deterministic buyer-side runtime around settlement to:
-    * inspect before paying
-    * select or reject rails according to local policy
-    * recover via HATEOAS
-    * verify receipts
-    * capture evidence
-    * report redacted observations explicitly
-    * record goal-conditioned attempts
-
-
-
+* **Use official protocol SDKs** for simple, pure protocol-native settlement.
+* **Use `ln-church-agent`** when the agent needs deterministic inspection, policy-aware decision support, HATEOAS recovery, receipt verification, evidence capture, cross-protocol comparison, or traceable paid-action attempts.
+* **Final payment authority remains local.** The network can advise, but the SDK's local `PaymentPolicy` explicitly supersedes remote advice.
 
 ---
 
@@ -370,8 +388,8 @@ print(payload["evidence"]["payment_performed"])
 
 Before touching a specific paid surface, your agent can explicitly read the Hon-den's observed historical memory for that endpoint to inspect past friction, evidence grades, and settlement options.
 
-* **This is NOT a recommendation.**
-* **This is NOT a verdict.**
+* **This is NOT a recommendation. A reusable observation record.**
+* **This is NOT a verdict. A reusable observation record.**
 * **This is NOT a payment proof.**
 * **It does NOT execute payments.**
 * **Final decision authority remains with your local runtime (`PaymentPolicy` / `TrustEvaluator`).**
@@ -500,7 +518,7 @@ for surface in candidates["candidate_groups"][0]["candidate_surfaces"]:
 
 **Strict Architectural Guardrails:**
 
-* **Not a Recommendation:** Candidate surfaces are historical memory markers, not recipe predictions or active verdicts (`not_a_recommendation: true`).
+* **Not a Recommendation. A reusable observation record:** Candidate surfaces are historical memory markers, not recipe predictions or active verdicts (`not_a_recommendation: true`).
 * **Unassessed Integrity:** Traces with missing outcomes indicate an unassessed state, never an execution error.
 * **Fixed Cost Isolation:** Candidate lookups utilize an isolated pricing table, completely decoupled from full graph pricing.
 

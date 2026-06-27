@@ -229,3 +229,23 @@ def test_contains_secret_keys_recursive():
         ]
     }
     assert _contains_secret_keys(unsafe_obj) is True
+
+@patch("ln_church_agent.client.Payment402Client.execute_detailed")
+@patch("ln_church_agent.cli.requests.request")
+def test_mcp_inspect_never_calls_execute_detailed(mock_req, mock_execute_detailed):
+    """
+    Ensure the inspect_paid_surface tool purely relies on request/parsing
+    and NEVER accidentally triggers the full runtime Payment402Client.execute_detailed loop.
+    """
+    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res.headers = {"WWW-Authenticate": 'L402 macaroon="mac", invoice="inv"'}
+    mock_res.content = b""
+    mock_res.json.side_effect = ValueError()
+    mock_req.return_value = mock_res
+
+    res = inspect_paid_surface("http://test.local")
+    
+    # 決済実行メソッドが一度も呼ばれていないことを担保する
+    mock_execute_detailed.assert_not_called()
+    assert res["will_execute_payment"] is False
+    assert res["safety"]["requires_private_key"] is False

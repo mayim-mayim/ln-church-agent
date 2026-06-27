@@ -2,30 +2,32 @@
 
 This matrix defines the strict boundaries of what the `ln-church-agent` SDK can execute versus what it only inspects, observes, or halts on.
 
-| Capability / Surface | Layer | Current SDK Support | Inspect Behavior | Execution Behavior | Proof Semantics | Default Recommended Action | Watchlist Status |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **L402** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **MPP charge** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **MPP session intent** | settlement_rail | `stop_safely` | `stop_safely` | `halt` | `unverified` | `stop_safely` | `watch_only` |
-| **Payment draft challenge** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **x402 V1 EVM** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **x402 V2 exact EVM** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **x402 V2 exact SVM** | settlement_rail | `executable_now` | `supported_but_not_executed_in_inspect` | `execute` | `verified` | `pay_and_verify` | `implemented` |
-| **x402 exact post-settlement diagnostic endpoint** | settlement_rail | `observe_only` | `observe_only` | `halt` | `post_settlement_proof_required` | `observe_only` | `implemented` |
-| **x402 batch-settlement** | settlement_rail | `observe_only` | `observe_only` | `halt` | `deferred_voucher_not_settlement_proof` | `observe_only` | `implemented` |
-| **x402 auth-capture** | settlement_rail | `observe_only` | `observe_only` | `halt` | `authorization_signature_not_settlement_proof` | `observe_only` | `watch_only` |
-| **Grant / Sponsored Access** | authorization_artifact | `executable_now` | `inspect_supported` | `execute` | `verified` | `use_grant` | `implemented` |
-| **Grant-like Signal Detection** | incentive_signal | `observe_only` | `sidecar_detection` | `none` | `unverified_signal_not_grant_proof` | `observe_only` | `experimental` |
-| **External Observation** | observation | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |
-| **Sandbox Evidence** | observation | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |
-| **Goal Attempt Observation** | memory | `explicit_only` | `observe_only` | `none` | `unverified` | `observe_only` | `implemented` |
-| **AP2** | commerce_surface | `observe_only` | `observe_only` | `halt` | `authorization_or_commerce_artifact_not_settlement_proof` | `observe_only` | `watch_only` |
-| **ACP** | commerce_surface | `observe_only` | `observe_only` | `halt` | `authorization_or_commerce_artifact_not_settlement_proof` | `observe_only` | `watch_only` |
-| **OKX APP** | commerce_surface | `observe_only` | `observe_only` | `halt` | `authorization_or_commerce_artifact_not_settlement_proof` | `observe_only` | `watch_only` |
-| **Unknown / unmapped** | observation | `unsupported_or_unmapped` | `observe_only` | `halt` | `not_verified` | `reject_invalid` | `implemented` |
-| **AWS AgentCore payments** | managed_platform | `unsupported_or_unmapped` | `observe_only` | `none` | `not_verified` | `observe_only` | `watch_only` |
-| **x402 Bazaar / Discovery** | discovery | `unsupported_or_unmapped` | `observe_only` | `none` | `not_verified` | `observe_only` | `watch_only` |
-| **OpenAPI multi-offer discovery** | discovery | `unsupported_or_unmapped` | `observe_only` | `none` | `not_verified` | `observe_only` | `watch_only` |
+| Capability / Surface | Layer | Mode | Req. Private Key | Req. Payment Cred. | Credential Requirement | Exec. Payment | Auth. Access | Submit Telemetry | Auto Submit |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **L402** | settlement_rail | `execution_runtime` | False | True | `lightning_wallet_or_ln_adapter` | Yes | No | False | False |
+| **MPP charge** | settlement_rail | `execution_runtime` | False | True | `lightning_wallet_or_mpp_capable_adapter` | Yes | No | False | False |
+| **MPP session intent** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
+| **Payment draft challenge** | settlement_rail | `execution_runtime` | False | True | `depends_on_payment_method` | Yes | No | False | False |
+| **x402 V1 EVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
+| **x402 V2 exact EVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
+| **x402 V2 exact SVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
+| **x402 exact post-settlement diagnostic endpoint** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
+| **x402 batch-settlement** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
+| **x402 auth-capture** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
+| **Grant / Sponsored Access** | authorization_artifact | `execution_runtime` | False | False | `scoped_grant_token` | **False** | **Yes** | False | False |
+| **Grant-like Signal Detection** | incentive_signal | `inspect_only` | False | False | `none` | False | No | False | False |
+| **External Observation** | observation | `explicit_observation`| False | False | `none` | False | No | True | False |
+| **Sandbox Evidence** | observation | `explicit_observation`| False | False | `none` | False | No | True | False |
+| **Goal Attempt Observation** | memory | `explicit_observation`| False | False | `none` | False | No | True | False |
+| **Surface Preflight** | memory | `read_only` | False | False | `none` | False | No | False | False |
+| **AP2** | commerce_surface | `inspect_only` | False | False | `none` | False | No | False | False |
+| **ACP** | commerce_surface | `inspect_only` | False | False | `none` | False | No | False | False |
+| **OKX APP** | commerce_surface | `inspect_only` | False | False | `none` | False | No | False | False |
+| **Unknown / unmapped** | observation | `inspect_only` | False | False | `none` | False | No | False | False |
+| **AWS AgentCore payments** | managed_platform | `inspect_only` | False | False | `none` | False | No | False | False |
+| **x402 Bazaar / Discovery** | discovery | `inspect_only` | False | False | `none` | False | No | False | False |
+| **OpenAPI multi-offer discovery**| discovery | `inspect_only` | False | False | `none` | False | No | False | False |
+
 
 ### Semantic Glossary
 * **`classified`** is not payment success.
@@ -39,3 +41,4 @@ This matrix defines the strict boundaries of what the `ln-church-agent` SDK can 
 * **capture / void / refund / reclaim lifecycle state** must not be collapsed into a single verified payment state.
 * **Payment-Receipt presence** is not final settlement by itself. Future receipt states may include SETTLED, PENDING_FINALITY, REVERSED, CANCELLED-like categories. Receipt class, settlement state, attestor, canonical reference, and reversal state must be evaluated separately.
 * **Goal Surface Candidates** are observed historical memories, not automated recommendations.
+* **Payment draft challenge** is not blanket execution permission. Only concrete challenge shapes mapped to natively supported rails may execute. The SDK explicitly defers generating unstable `Authorization: Payment <base64url-json>` credentials until schemas completely stabilize (`does_not_construct_payment_auth_json_credential = true`). Any unsupported shapes will halt execution safely (`stop_safely`).
