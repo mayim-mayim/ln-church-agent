@@ -2,6 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.15.0] - Unreleased (Verified Domain Sponsor MVP v1)
+* **Added**: SDK helpers for Verified Domain Sponsor (`create_domain_sponsor_challenge()`, `verify_domain_sponsor()`, `save_domain_sponsor_challenge_document()`).
+* **Added**: CLI commands `ln-church-agent observe-domain sponsor challenge` and `ln-church-agent observe-domain sponsor verify`.
+* **Added**: Public-safe models for sponsor verification read models (`DomainSponsorVerification`, `DomainSponsorVerificationSummary`, etc).
+* **Safety**: Verified Domain Sponsor proves only domain-control challenge publication. It is not legal ownership proof, not a certification, not a recommendation, not a trust score, and not a security scan.
+* **Safety**: SDK does not automatically issue challenges or verify sponsors after paid registration. CLI avoids printing proof headers and challenge tokens unless explicitly requested with `--json` or `--print-document`.
+
 ## [1.14.2] - 2026-06-27 (MCP Registry Metadata Fix)
 
 * **Fixed**: Shortened the `server.json` description to satisfy the official MCP Registry `description.length <= 100` validation rule.

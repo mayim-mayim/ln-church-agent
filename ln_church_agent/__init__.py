@@ -58,7 +58,11 @@ from .models import (
     DomainObservationTarget,
     DomainObservationTargetsResponse,
     DomainObservationResultSubmission,
-    DomainObservationResultResponse
+    DomainObservationResultResponse,
+    DomainSponsorVerification,
+    DomainSponsorVerificationSummary,
+    DomainSponsorChallengeResponse,
+    DomainSponsorVerifyResponse
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -146,5 +150,9 @@ __all__ = [
     "DomainObservationTargetsResponse",
     "DomainObservationResultSubmission",
     "DomainObservationResultResponse",
-    "validate_public_domain_for_observation"
+    "validate_public_domain_for_observation",
+    "DomainSponsorVerification",
+    "DomainSponsorVerificationSummary",
+    "DomainSponsorChallengeResponse",
+    "DomainSponsorVerifyResponse"
 ]

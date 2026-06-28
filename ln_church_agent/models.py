@@ -894,6 +894,10 @@ class DomainObservationSlotResponse(BaseModel):
     requester_paid: bool = True
     domain_owner_verified: bool = False
     sponsor_verified: bool = False
+    domain_control_verified: bool = False
+    sponsor_verification_status: str = "unverified"
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
     sponsor_type: str = "paid_observation_slot"
     duration_days: int = 7
     observation_profile: str = "public_safe_light"
@@ -912,6 +916,14 @@ class DomainObservationRequestStatus(BaseModel):
     requester_paid: bool = True
     domain_owner_verified: bool = False
     sponsor_verified: bool = False
+    domain_control_verified: bool = False
+    sponsor_verification_status: str = "unverified"
+    verification_method: str = "none"
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    verified_at: Optional[str] = None
+    verification_expires_at: Optional[str] = None
+    sponsor_verification: Optional["DomainSponsorVerification"] = None
     sponsor_type: str = "paid_observation_slot"
     duration_days: int = 7
     observation_profile: str = "public_safe_light"
@@ -920,17 +932,22 @@ class DomainObservationRequestStatus(BaseModel):
     last_observed_at: Optional[str] = None
     observation_count: int = 0
     public_read_model_url: Optional[str] = None
+    not_a_recommendation: bool = True
     not_a_verdict: bool = True
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
+    not_a_certification: bool = True
 
 class DomainObservationDomainReadModel(BaseModel):
     domain: str
     observation_requests: List[Dict[str, Any]] = Field(default_factory=list)
+    sponsor_verification_summary: Optional["DomainSponsorVerificationSummary"] = None    
     latest_observations: List[Dict[str, Any]] = Field(default_factory=list)
     discovered_surfaces: List[Dict[str, Any]] = Field(default_factory=list)
     observation_provenance: Dict[str, Any] = Field(default_factory=dict)
     constraints: Dict[str, Any] = Field(default_factory=dict)
+    not_a_recommendation: bool = True
+    not_legal_ownership_proof: bool = True
     not_a_verdict: bool = True
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
@@ -978,3 +995,78 @@ class DomainObservationResultResponse(BaseModel):
     observation_id: str
     status: str
     public_read_model_url: Optional[str] = None
+
+# ==========================================
+# v1.15.0
+# ==========================================
+
+class DomainSponsorVerification(BaseModel):
+    schema_version: str = "ln_church.domain_sponsor_verification.v1"
+    sponsor_verified: bool = False
+    domain_owner_verified: bool = False
+    domain_control_verified: bool = False
+    sponsor_verification_status: str = "unverified"
+    verification_method: str = "none"
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    verified_at: Optional[str] = None
+    verification_expires_at: Optional[str] = None
+    challenge_issued: bool = False
+    challenge_present: bool = False
+    challenge_expires_at: Optional[str] = None
+    not_a_trust_score: bool = True
+    not_a_recommendation: bool = True
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+
+class DomainSponsorChallengeResponse(BaseModel):
+    request_id: str
+    domain: str
+    challenge_id: str
+    challenge_url: str
+    challenge_document: Dict[str, Any] = Field(default_factory=dict)
+    placement_instructions: Dict[str, Any] = Field(default_factory=dict)
+    verify_url: Optional[str] = None
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+
+class DomainSponsorVerifyResponse(BaseModel):
+    request_id: str
+    domain: str
+    sponsor_verified: bool = False
+    domain_owner_verified: bool = False
+    domain_control_verified: bool = False
+    sponsor_verification_status: str = "unverified"
+    verification_method: str = "http_well_known_challenge"
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    verified_at: Optional[str] = None
+    verification_expires_at: Optional[str] = None
+    verification_proof_id: Optional[str] = None
+    public_read_model_url: Optional[str] = None
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+
+class DomainSponsorVerificationSummary(BaseModel):
+    schema_version: str = "ln_church.domain_sponsor_verification_summary.v1"
+    has_verified_domain_sponsor: bool = False
+    active_request_count: int = 0
+    verified_request_count: int = 0
+    challenge_issued_count: int = 0
+    unverified_request_count: int = 0
+    latest_verified_at: Optional[str] = None
+    verification_methods: List[str] = Field(default_factory=list)
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    not_a_trust_score: bool = True
+    not_a_recommendation: bool = True
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True

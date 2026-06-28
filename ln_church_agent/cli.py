@@ -541,6 +541,27 @@ def main():
     submit_parser.add_argument("--internal-secret", type=str, help="Or use LN_CHURCH_INTERNAL_SECRET env")
     submit_parser.add_argument("--json", action="store_true")
 
+    # 💡1.15.0
+    sponsor_parser = obs_domain_sub.add_parser("sponsor", help="Manage domain sponsor verification")
+    sponsor_sub = sponsor_parser.add_subparsers(dest="sponsor_cmd", required=True)
+    
+    chal_cmd = sponsor_sub.add_parser("challenge", help="Issue a sponsor challenge")
+    chal_cmd.add_argument("request_id", type=str, help="Observation Request ID")
+    chal_cmd.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com")
+    chal_cmd.add_argument("--result-handle", type=str, help="Proof handle (or LN_CHURCH_RESULT_HANDLE env)")
+    chal_cmd.add_argument("--request-hash", type=str, help="Proof hash (or LN_CHURCH_REQUEST_HASH env)")
+    chal_cmd.add_argument("--internal-secret", type=str, help="Or use LN_CHURCH_INTERNAL_SECRET env")
+    chal_cmd.add_argument("--json", action="store_true", help="Output JSON response (excludes headers)")
+    chal_cmd.add_argument("--output-file", type=str, help="Save challenge document safely to a file")
+    chal_cmd.add_argument("--print-document", action="store_true", help="Print challenge document JSON to stdout")
+
+    ver_cmd = sponsor_sub.add_parser("verify", help="Verify the sponsor challenge")
+    ver_cmd.add_argument("request_id", type=str, help="Observation Request ID")
+    ver_cmd.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com")
+    ver_cmd.add_argument("--result-handle", type=str)
+    ver_cmd.add_argument("--request-hash", type=str)
+    ver_cmd.add_argument("--internal-secret", type=str)
+    ver_cmd.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
 
@@ -670,6 +691,64 @@ def main():
                     print(f"  Verdict / Score     : None (not_a_verdict=True)")
             except Exception as e:
                 print(f"❌ Failed: {e}")
+
+        elif args.obs_cmd == "sponsor":
+            client = LnChurchClient(agent_id="cli_sponsor")
+            if hasattr(args, "base_url") and args.base_url:
+                client.base_url = args.base_url
+
+            rh = getattr(args, "result_handle", None) or os.environ.get("LN_CHURCH_RESULT_HANDLE")
+            rhsh = getattr(args, "request_hash", None) or os.environ.get("LN_CHURCH_REQUEST_HASH")
+            secret = getattr(args, "internal_secret", None) or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+
+            if args.sponsor_cmd == "challenge":
+                try:
+                    res = client.create_domain_sponsor_challenge(
+                        args.request_id, result_handle=rh, request_hash=rhsh, internal_secret=secret
+                    )
+                    
+                    if args.output_file:
+                        client.save_domain_sponsor_challenge_document(res, args.output_file)
+                        if not args.json and not args.print_document:
+                            print("✅ Challenge document saved.")
+                            print(f"  File      : {args.output_file}")
+                            print(f"  Publish   : {res.challenge_url}")
+                            print(f"  Verify    : ln-church-agent observe-domain sponsor verify {res.request_id}")
+                            
+                    if args.json:
+                        print(res.model_dump_json(indent=2))
+                    elif args.print_document:
+                        print(json.dumps(res.challenge_document, indent=2, ensure_ascii=False))
+                    elif not args.output_file:
+                        print("✅ Domain sponsor challenge issued.")
+                        print(f"  Request ID : {res.request_id}")
+                        print(f"  Domain     : {res.domain}")
+                        print(f"  Challenge  : {res.challenge_url}")
+                        print(f"  Scope      : domain_control_not_legal_ownership\n")
+                        print("Challenge document contains a public challenge_token.")
+                        print("Use --output-file .well-known/ln-church-domain-sponsor.json to save it safely.")
+                        
+                except Exception as e:
+                    print(f"❌ Failed: {e}")
+
+            elif args.sponsor_cmd == "verify":
+                try:
+                    res = client.verify_domain_sponsor(
+                        args.request_id, result_handle=rh, request_hash=rhsh, internal_secret=secret
+                    )
+                    if args.json:
+                        print(res.model_dump_json(indent=2))
+                    else:
+                        print("✅ Domain sponsor verified.")
+                        print(f"  Request ID              : {res.request_id}")
+                        print(f"  Domain                  : {res.domain}")
+                        print(f"  Domain Control Verified : {res.domain_control_verified}")
+                        print(f"  Sponsor Verified        : {res.sponsor_verified}")
+                        print(f"  Scope                   : {res.verification_scope}")
+                        print(f"  Legal Ownership Proof   : {res.not_legal_ownership_proof is not True}")
+                        print(f"  Read Model              : {res.public_read_model_url}")
+                except Exception as e:
+                    print(f"❌ Failed: {e}")
 
     # 💡 [NEW] Internal Observatory (Internal Observatory Worker Tools)
     elif args.command == "observatory":

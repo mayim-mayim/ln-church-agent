@@ -48,12 +48,13 @@ from .evidence import (
 )
 
 SURFACE_PREFLIGHT_SCHEMA_VERSION = "ln_church.surface_preflight_read_model.v1"
+_DOMAIN_OBSERVATION_REQUEST_ID_RE = re.compile(r"^obsreq_[a-f0-9]+$")
 
 def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.14.2"
+        return "1.15.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -3432,6 +3433,92 @@ class LnChurchClient(Payment402Client):
         headers = {"X-Internal-Secret": secret}
         res = self.execute_request("POST", "/api/agent/external/domain-observation-results", payload=result_obj.model_dump(), headers=headers)
         return DomainObservationResultResponse(**res)
+
+    def _build_domain_sponsor_proof_headers(
+        self,
+        result_handle: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        internal_secret: Optional[str] = None
+    ) -> Dict[str, str]:
+        import os
+        headers = {}
+        secret = internal_secret or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+        
+        if secret:
+            headers["X-Internal-Secret"] = secret
+        else:
+            rh = result_handle or os.environ.get("LN_CHURCH_RESULT_HANDLE")
+            rhsh = request_hash or os.environ.get("LN_CHURCH_REQUEST_HASH")
+            if not rh or not rhsh:
+                raise ValueError("Either 'internal_secret' or BOTH 'result_handle' and 'request_hash' must be provided.")
+            headers["X-LN-Result-Handle"] = rh
+            headers["X-LN-Request-Hash"] = rhsh
+        return headers
+
+    def create_domain_sponsor_challenge(
+        self,
+        request_id: str,
+        result_handle: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        internal_secret: Optional[str] = None
+    ) -> "DomainSponsorChallengeResponse":
+        from .models import DomainSponsorChallengeResponse
+        
+        if not _DOMAIN_OBSERVATION_REQUEST_ID_RE.match(request_id):
+            raise ValueError(f"Invalid request_id format: {request_id}")
+            
+        headers = self._build_domain_sponsor_proof_headers(result_handle, request_hash, internal_secret)
+        
+        res = self.execute_request(
+            "POST", 
+            f"/api/agent/external/observatory/domain-observation-requests/{request_id}/sponsor-challenge", 
+            payload={}, 
+            headers=headers
+        )
+        return DomainSponsorChallengeResponse(**res)
+
+    def verify_domain_sponsor(
+        self,
+        request_id: str,
+        result_handle: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        internal_secret: Optional[str] = None
+    ) -> "DomainSponsorVerifyResponse":
+        from .models import DomainSponsorVerifyResponse
+        
+        if not _DOMAIN_OBSERVATION_REQUEST_ID_RE.match(request_id):
+            raise ValueError(f"Invalid request_id format: {request_id}")
+            
+        headers = self._build_domain_sponsor_proof_headers(result_handle, request_hash, internal_secret)
+        
+        res = self.execute_request(
+            "POST", 
+            f"/api/agent/external/observatory/domain-observation-requests/{request_id}/verify-sponsor", 
+            payload={}, 
+            headers=headers
+        )
+        return DomainSponsorVerifyResponse(**res)
+
+    def save_domain_sponsor_challenge_document(
+        self,
+        challenge: "DomainSponsorChallengeResponse",
+        file_path: str
+    ) -> str:
+        import os
+        import json
+        doc = challenge.challenge_document
+        
+        if not doc:
+            raise ValueError("challenge.challenge_document is empty.")
+        
+        dir_path = os.path.dirname(os.path.abspath(file_path))
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+            
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=2, ensure_ascii=False)
+            
+        return file_path
 
 
     # ==========================================

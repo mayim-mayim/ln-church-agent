@@ -311,6 +311,66 @@ read_model = status_client.get_domain_observation_read_model("example.com")
 
 ---
 
+## 🛡️ Verified Domain Sponsor (v1.15.0+)
+
+For Paid Domain Observation Slots, `ln-church-agent` v1.15.0+ allows the sponsor to cryptographically prove they control the target domain's public web surface by placing a deterministic challenge document at a `.well-known` path.
+
+**Strict Architectural & Safety Rules:**
+* **Domain Control Only:** This proves the sponsor could publish a file on the domain. It explicitly is **NOT** a legal ownership proof.
+* **Not a Verdict:** Verified domains are not ranked higher, trusted inherently, or endorsed by LN Church (`not_a_verdict: true`, `not_an_endorsement: true`).
+* **No Automatic Execution:** The SDK intentionally does not automatically issue challenges or verify sponsors after registration to prevent unprompted executions.
+* **Secret Leakage Prevention:** The CLI and SDK strictly redact proof headers (`X-LN-Result-Handle`, `X-LN-Request-Hash`) and the `challenge_token` from standard outputs.
+
+**CLI Usage:**
+
+```bash
+# 1. Issue a challenge and save the document locally safely
+ln-church-agent observe-domain sponsor challenge obsreq_xxxxx \
+  --output-file ".well-known/ln-church-domain-sponsor.json"
+
+# 2. (Manual Step) Publish the JSON file to exactly:
+# https://{target-domain}/.well-known/ln-church-domain-sponsor.json
+
+# 3. Request the LN Church backend to fetch and verify the document
+ln-church-agent observe-domain sponsor verify obsreq_xxxxx
+
+```
+
+**SDK Usage:**
+
+```python
+from ln_church_agent import LnChurchClient
+
+client = LnChurchClient(agent_id="domain_sponsor_cli")
+
+# 1. Issue Challenge
+challenge = client.create_domain_sponsor_challenge(
+    request_id="obsreq_xxxxx",
+    result_handle="pr_...", 
+    request_hash="sha256:..."
+)
+
+# 2. Save Document Safely (excluding headers/secrets from the file)
+client.save_domain_sponsor_challenge_document(
+    challenge, 
+    ".well-known/ln-church-domain-sponsor.json"
+)
+
+# 3. Verify
+verified = client.verify_domain_sponsor(
+    request_id="obsreq_xxxxx",
+    result_handle="pr_...", 
+    request_hash="sha256:..."
+)
+
+print(f"Domain Control Verified: {verified.domain_control_verified}")
+print(f"Legal Ownership Proof: {not verified.not_legal_ownership_proof}") # Evaluates to False
+
+```
+
+---
+
+
 ## MCP: Inspect-only payment surface discovery
 
 <!-- mcp-name: io.github.mayim-mayim/ln-church-agent-mcp -->
