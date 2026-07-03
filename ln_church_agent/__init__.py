@@ -62,7 +62,12 @@ from .models import (
     DomainSponsorVerification,
     DomainSponsorVerificationSummary,
     DomainSponsorChallengeResponse,
-    DomainSponsorVerifyResponse
+    DomainSponsorVerifyResponse,
+    VerifiedDomainTrackPrice,
+    VerifiedDomainTrackNextAction,
+    VerifiedDomainTrackRegistrationResponse,
+    VerifiedDomainTrackReadModel,
+    VerifiedDomainTrackSummary
 )
 from .crypto.protocols import EVMSigner, LightningProvider 
 from .grants import diagnose_grant_token, decode_grant_token
@@ -154,5 +159,10 @@ __all__ = [
     "DomainSponsorVerification",
     "DomainSponsorVerificationSummary",
     "DomainSponsorChallengeResponse",
-    "DomainSponsorVerifyResponse"
+    "DomainSponsorVerifyResponse",
+    "VerifiedDomainTrackPrice",
+    "VerifiedDomainTrackNextAction",
+    "VerifiedDomainTrackRegistrationResponse",
+    "VerifiedDomainTrackReadModel",
+    "VerifiedDomainTrackSummary"
 ]

@@ -554,6 +554,7 @@ def main():
     chal_cmd.add_argument("--json", action="store_true", help="Output JSON response (excludes headers)")
     chal_cmd.add_argument("--output-file", type=str, help="Save challenge document safely to a file")
     chal_cmd.add_argument("--print-document", action="store_true", help="Print challenge document JSON to stdout")
+    chal_cmd.add_argument("--proof-file", type=str, help="Load result-handle/request-hash from proof file")
 
     ver_cmd = sponsor_sub.add_parser("verify", help="Verify the sponsor challenge")
     ver_cmd.add_argument("request_id", type=str, help="Observation Request ID")
@@ -562,6 +563,33 @@ def main():
     ver_cmd.add_argument("--request-hash", type=str)
     ver_cmd.add_argument("--internal-secret", type=str)
     ver_cmd.add_argument("--json", action="store_true")
+    ver_cmd.add_argument("--proof-file", type=str, help="Load result-handle/request-hash from proof file")
+
+    track_parser = obs_domain_sub.add_parser("track", help="Manage Verified Domain Tracks")
+    track_sub = track_parser.add_subparsers(dest="track_cmd", required=True)
+    
+    trk_reg = track_sub.add_parser("register", help="Register a Verified Domain Track (Paid Action)")
+    trk_reg.add_argument("domain", type=str)
+    trk_reg.add_argument("--plan", type=str, default="verified_domain_track_lite")
+    trk_reg.add_argument("--idempotency-key", type=str)
+    trk_reg.add_argument("--proof-file", type=str)
+    trk_reg.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com")
+    trk_reg.add_argument("--json", action="store_true")
+    
+    trk_reg.add_argument("--pay", action="store_true", help="Acknowledge this is a paid action (19 USDC)")
+    trk_reg.add_argument("--max-spend-usd", type=float, default=25.0, help="Max spend for this transaction (default: 25.0)")
+    trk_reg.add_argument("--private-key", type=str, help="Agent EVM Private Key (or AGENT_PRIVATE_KEY)")
+    trk_reg.add_argument("--include-proof", action="store_true", help="Include secret proof details in JSON output")
+    
+    trk_stat = track_sub.add_parser("status", help="Get Verified Domain Track Status")
+    trk_stat.add_argument("request_id", type=str)
+    trk_stat.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com")
+    trk_stat.add_argument("--json", action="store_true")
+
+    trk_dom = track_sub.add_parser("domain", help="Get Domain Verified Track Read Model")
+    trk_dom.add_argument("domain", type=str)
+    trk_dom.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com")
+    trk_dom.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
 
@@ -632,6 +660,19 @@ def main():
         from .client import LnChurchClient
         import os, json
 
+        def _load_proof_file(proof_file: str):
+            import json
+            with open(proof_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            rh = data.get("result_handle")
+            rhsh = data.get("request_hash")
+
+            if not rh or not rhsh:
+                raise ValueError("Proof file is missing result_handle or request_hash.")
+
+            return rh, rhsh
+
         if args.obs_cmd == "register":
             pk = getattr(args, "private_key", None) or os.environ.get("AGENT_PRIVATE_KEY")
             if not pk:
@@ -697,9 +738,17 @@ def main():
             if hasattr(args, "base_url") and args.base_url:
                 client.base_url = args.base_url
 
-            rh = getattr(args, "result_handle", None) or os.environ.get("LN_CHURCH_RESULT_HANDLE")
-            rhsh = getattr(args, "request_hash", None) or os.environ.get("LN_CHURCH_REQUEST_HASH")
+            rh = getattr(args, "result_handle", None)
+            rhsh = getattr(args, "request_hash", None)
             secret = getattr(args, "internal_secret", None) or os.environ.get("LN_CHURCH_INTERNAL_SECRET")
+            
+            if hasattr(args, "proof_file") and args.proof_file and (not rh or not rhsh):
+                f_rh, f_rhsh = _load_proof_file(args.proof_file)
+                if not rh: rh = f_rh
+                if not rhsh: rhsh = f_rhsh
+
+            rh = rh or os.environ.get("LN_CHURCH_RESULT_HANDLE")
+            rhsh = rhsh or os.environ.get("LN_CHURCH_REQUEST_HASH")
 
             if args.sponsor_cmd == "challenge":
                 try:
@@ -747,6 +796,120 @@ def main():
                         print(f"  Scope                   : {res.verification_scope}")
                         print(f"  Legal Ownership Proof   : {res.not_legal_ownership_proof is not True}")
                         print(f"  Read Model              : {res.public_read_model_url}")
+                except Exception as e:
+                    print(f"❌ Failed: {e}")
+
+        elif args.obs_cmd == "track":
+            client = LnChurchClient(agent_id="cli_observer")
+            if hasattr(args, "base_url") and args.base_url:
+                client.base_url = args.base_url
+
+            if args.track_cmd == "register":
+                # [追加] 安全確認: $19の決済エンドポイントであることの明示同意
+                if not getattr(args, "pay", False):
+                    import sys
+                    sys.stderr.write("❌ Safety Check Failed: This is a paid endpoint. Use '--pay' to explicitly acknowledge the 19 USDC payment action.\n")
+                    return
+
+                pk = getattr(args, "private_key", None) or os.environ.get("AGENT_PRIVATE_KEY")
+                if not pk:
+                    print("❌ Error: AGENT_PRIVATE_KEY or --private-key is required to purchase a track.")
+                    return
+                
+                # [追加] $19決済が弾かれないようにPaymentPolicyを上書き
+                from .models import PaymentPolicy
+                policy = PaymentPolicy(
+                    max_spend_per_tx_usd=args.max_spend_usd,
+                    max_spend_per_session_usd=args.max_spend_usd
+                )
+                
+                client = LnChurchClient(private_key=pk, policy=policy)
+                if hasattr(args, "base_url") and args.base_url:
+                    client.base_url = args.base_url
+
+                try:
+                    res = client.register_verified_domain_track(
+                        args.domain,
+                        plan_id=args.plan,
+                        idempotency_key=args.idempotency_key
+                    )
+                    
+                    if args.proof_file:
+                        client.save_verified_domain_track_proof(res, args.proof_file)
+
+                    if args.json:
+                        import json
+                        # [修正] 標準出力を壊さずに安全なJSONを出力 (警告は出さない)
+                        exclude_fields = {"result_handle", "request_hash"} if not getattr(args, "include_proof", False) else None
+                        safe_dump = res.model_dump(exclude=exclude_fields)
+                        print(json.dumps(safe_dump, indent=2))
+                    else:
+                        print("✅ Verified Domain Track Lite purchased.\n")
+                        print(f"Domain      : {res.domain}")
+                        print(f"Request ID  : {res.request_id}")
+                        print(f"Status      : {res.status}")
+                        print(f"Track Plan  : {res.track_plan}")
+                        if res.price:
+                            print(f"Price       : {res.price.amount} {res.price.currency}")
+                        if args.proof_file:
+                            print(f"📄 Proof saved to: {args.proof_file}")
+
+                except Exception as e:
+                    import sys
+                    if args.json:
+                        sys.stderr.write(f"Error: {e}\n")
+                    else:
+                        print(f"❌ Track registration failed: {e}")
+
+            elif args.track_cmd == "status":
+                try:
+                    res = client.get_verified_domain_track_status(args.request_id)
+                    if not res:
+                        print("❌ Failed: Request is not a verified domain track.")
+                        return
+                    if args.json:
+                        print(res.model_dump_json(indent=2))
+                    else:
+                        print(f"✅ Verified Domain Track Status for {res.request_id}:")
+                        print(f"  Domain                      : {res.domain}")
+                        print(f"  Track Plan                  : {res.track_plan}")
+                        print(f"  Track Status                : {res.track_status}")
+                        print(f"  Active Verified Track       : {res.is_active_verified_track}")
+                        print(f"  Domain Control Verified     : {res.domain_control_verified}")
+                        print(f"  Sponsor Verified            : {res.sponsor_verified}")
+                        print(f"  Sponsor Verification Status : {res.sponsor_verification_status}")
+                        print(f"  Track Activated At          : {res.track_activated_at}")
+                        print(f"  Track Expires At            : {res.track_expires_at}")
+                        print(f"  Last Observed At            : {res.last_observed_at}")
+                        print(f"  Next Observable At          : {res.next_observable_at}")
+                        print(f"  Observation Interval Hours  : {res.observation_interval_hours}")
+                        print(f"  Not Legal Ownership Proof   : {res.not_legal_ownership_proof}")
+                        print(f"  Not A Recommendation        : {res.not_a_recommendation}")
+                        print(f"  Not A Trust Score           : {res.not_a_trust_score}")
+                except Exception as e:
+                    print(f"❌ Failed: {e}")
+
+            elif args.track_cmd == "domain":
+                try:
+                    res = client.get_domain_verified_track(args.domain)
+                    if not res:
+                        print("❌ Failed: Domain not found or error occurred.")
+                        return
+                    if args.json:
+                        print(res.model_dump_json(indent=2))
+                    else:
+                        print(f"✅ Verified Domain Track for {args.domain}:")
+                        print(f"  Has Active Verified Track : {res.has_active_verified_domain_track}")
+                        if res.current_track:
+                            ct = res.current_track
+                            print(f"  Request ID                : {ct.request_id}")
+                            print(f"  Track Status              : {ct.track_status}")
+                            print(f"  Track Plan                : {ct.track_plan}")
+                            print(f"  Domain Control Verified   : {ct.domain_control_verified}")
+                            print(f"  Last Observed At          : {ct.last_observed_at}")
+                            print(f"  Next Observable At        : {ct.next_observable_at}")
+                            print(f"  Observation Interval Hours: {ct.observation_interval_hours}")
+                        print(f"  Safety Flags              : not_a_verdict={res.not_a_verdict}, not_a_recommendation={res.not_a_recommendation}, not_a_trust_score={res.not_a_trust_score}")
                 except Exception as e:
                     print(f"❌ Failed: {e}")
 

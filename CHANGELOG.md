@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.16.0] - Unreleased (Verified Domain Track Lite)
+
+* Added SDK and CLI support for Verified Domain Track Lite.
+* Added `register_verified_domain_track()`, `get_verified_domain_track_status()`, `get_domain_verified_track()`, and `save_verified_domain_track_proof()`.
+* Added `observe-domain track register/status/domain`.
+* Added `--proof-file` support for sponsor challenge / verify.
+* Safety: Verified Domain Track is not legal ownership proof, not a certification, not a recommendation, not a security scan, and not a trust score.
+
 ## [1.15.0] - Unreleased (Verified Domain Sponsor MVP v1)
 * **Added**: SDK helpers for Verified Domain Sponsor (`create_domain_sponsor_challenge()`, `verify_domain_sponsor()`, `save_domain_sponsor_challenge_document()`).
 * **Added**: CLI commands `ln-church-agent observe-domain sponsor challenge` and `ln-church-agent observe-domain sponsor verify`.

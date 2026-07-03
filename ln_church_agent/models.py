@@ -909,6 +909,90 @@ class DomainObservationSlotResponse(BaseModel):
     request_hash: Optional[str] = None
     constraints: Dict[str, Any] = Field(default_factory=dict)
 
+class VerifiedDomainTrackPrice(BaseModel):
+    amount: str
+    currency: str
+    duration_days: int
+
+class VerifiedDomainTrackNextAction(BaseModel):
+    action: str
+    method: Optional[str] = None
+    url: Optional[str] = None
+    path: Optional[str] = None
+    description: Optional[str] = None
+
+class VerifiedDomainTrackRegistrationResponse(BaseModel):
+    request_id: str
+    domain: str
+    status: str
+    
+    requester_paid: bool = True
+    sponsor_type: str = "verified_domain_track"
+    track_type: str = "verified_domain_track"
+    track_plan: str = "verified_domain_track_lite"
+    track_status: str = "pending_verification"
+    price: Optional[VerifiedDomainTrackPrice] = None
+    duration_days: int = 30
+    observation_interval_hours: int = 168
+    observation_profile: str = "public_safe_light"
+    verification_required: bool = True
+    domain_owner_verified: bool = False
+    sponsor_verified: bool = False
+    domain_control_verified: bool = False
+    sponsor_verification_status: str = "unverified"
+    
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    track_expires_at: Optional[str] = None
+    sponsor_challenge_url: Optional[str] = None
+    status_url: Optional[str] = None
+    public_read_model_url: Optional[str] = None
+    result_handle: Optional[str] = None
+    request_hash: Optional[str] = None
+    next_actions: List[VerifiedDomainTrackNextAction] = Field(default_factory=list)
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+    not_a_recommendation: bool = True
+    not_a_trust_score: bool = True
+
+class VerifiedDomainTrackReadModel(BaseModel):
+    track_type: str
+    track_plan: str
+    track_status: str
+    is_active_verified_track: bool
+    request_id: Optional[str] = None
+    domain: Optional[str] = None
+    track_activated_at: Optional[str] = None
+    track_expires_at: Optional[str] = None
+    observation_interval_hours: Optional[int] = None
+    last_observed_at: Optional[str] = None
+    next_observable_at: Optional[str] = None
+    observation_count: int = 0
+    sponsor_verification_status: str = "unknown"
+    domain_control_verified: bool = False
+    sponsor_verified: bool = False
+    domain_owner_verified: bool = False
+    verification_method: Optional[str] = None
+    verification_scope: str = "domain_control_not_legal_ownership"
+    not_legal_ownership_proof: bool = True
+    not_a_verdict: bool = True
+    not_a_security_scan: bool = True
+    not_an_endorsement: bool = True
+    not_a_certification: bool = True
+    not_a_recommendation: bool = True
+    not_a_trust_score: bool = True
+
+class VerifiedDomainTrackSummary(BaseModel):
+    has_active_verified_domain_track: bool
+    current_track: Optional[VerifiedDomainTrackReadModel] = None
+    not_a_verdict: bool = True
+    not_a_recommendation: bool = True
+    not_a_trust_score: bool = True
+
 class DomainObservationRequestStatus(BaseModel):
     request_id: str
     domain: str
@@ -937,6 +1021,8 @@ class DomainObservationRequestStatus(BaseModel):
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
     not_a_certification: bool = True
+    verified_domain_track: Optional[VerifiedDomainTrackReadModel] = None
+    not_a_trust_score: bool = True
 
 class DomainObservationDomainReadModel(BaseModel):
     domain: str
@@ -952,6 +1038,8 @@ class DomainObservationDomainReadModel(BaseModel):
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
     not_a_certification: bool = True
+    verified_domain_track: Optional[VerifiedDomainTrackSummary] = None
+    not_a_trust_score: bool = True
 
 class DomainObservationTarget(BaseModel):
     target_id: str

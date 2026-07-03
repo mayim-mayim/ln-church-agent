@@ -22,7 +22,10 @@ from .models import (
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
     PaymentEvidenceRecord, EvidenceRepository,
     ChallengeSource, AttestationSource, NextAction,
-    _ExecutionUnlock, _FundingPolicy, _EntitlementKind, _ExecutionAccessPlan
+    _ExecutionUnlock, _FundingPolicy, _EntitlementKind, _ExecutionAccessPlan,
+    VerifiedDomainTrackRegistrationResponse,
+    VerifiedDomainTrackReadModel,
+    VerifiedDomainTrackSummary
 )
 from .exceptions import (
     PaymentExecutionError, InvoiceParseError, NavigationGuardrailError, 
@@ -54,7 +57,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.15.0"
+        return "1.16.0"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -586,6 +589,13 @@ class Payment402Client:
 
         return None, "none"
 
+    def _resolve_url(self, endpoint_path: str) -> str:
+        if endpoint_path.startswith("http://") or endpoint_path.startswith("https://"):
+            return endpoint_path
+        
+        base = getattr(self, "base_url", "https://kari.mayim-mayim.com")
+        return f"{base.rstrip('/')}/{endpoint_path.lstrip('/')}"
+
     def execute_detailed(
         self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None, 
         _current_hop: int = 0, _payment_retry_count: int = 0,
@@ -594,6 +604,8 @@ class Payment402Client:
         _current_receipt: Optional[SettlementReceipt] = None
     ) -> ExecutionResult:
         
+        url = self._resolve_url(endpoint_path)
+
         context = context or ExecutionContext()
         self._restore_session_spend_from_evidence(context)
         
@@ -863,6 +875,8 @@ class Payment402Client:
         outcome_matcher: Optional[Callable] = None,
         _current_receipt: Optional[SettlementReceipt] = None 
     ) -> ExecutionResult:
+
+        url = self._resolve_url(endpoint_path)
         
         context = context or ExecutionContext()
         await self._restore_session_spend_from_evidence_async(context)
@@ -3450,7 +3464,7 @@ class LnChurchClient(Payment402Client):
             rh = result_handle or os.environ.get("LN_CHURCH_RESULT_HANDLE")
             rhsh = request_hash or os.environ.get("LN_CHURCH_REQUEST_HASH")
             if not rh or not rhsh:
-                raise ValueError("Either 'internal_secret' or BOTH 'result_handle' and 'request_hash' must be provided.")
+                raise ValueError("Either 'internal_secret', BOTH 'result_handle' and 'request_hash', or a '--proof-file' must be provided.")
             headers["X-LN-Result-Handle"] = rh
             headers["X-LN-Request-Hash"] = rhsh
         return headers
@@ -3520,6 +3534,115 @@ class LnChurchClient(Payment402Client):
             
         return file_path
 
+    def register_verified_domain_track(
+        self,
+        domain: str,
+        *,
+        agent_id: Optional[str] = None,
+        plan_id: str = "verified_domain_track_lite",
+        idempotency_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        **kwargs
+    ) -> "VerifiedDomainTrackRegistrationResponse":
+        """
+        Register a domain for the Verified Domain Track. (Costs 19 USDC)
+        Requires an execution-capable client with a payment policy allowing >= $19 per tx.
+        """
+        if plan_id != "verified_domain_track_lite":
+            raise ValueError(f"Unsupported Verified Domain Track plan: {plan_id}")
+        
+        if not validate_public_domain_for_observation(domain):
+            raise ValueError(f"Invalid public domain: {domain}")
+
+        payload = {
+            "agentId": agent_id or getattr(self, "agent_id", None) or "Anonymous_Agent",
+            "domain": domain,
+            "plan_id": plan_id,
+        }
+        payload.update(kwargs)
+
+        from urllib.parse import urlparse
+        target_base = base_url if base_url else getattr(self, "base_url", "https://kari.mayim-mayim.com")
+        parsed = urlparse(target_base)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        
+        endpoint_path = f"{origin}/api/bazaar/verified-domain-tracks"
+        
+        headers = {}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        result = self.execute_detailed(
+            "POST",
+            endpoint_path,
+            payload=payload,
+            headers=headers
+        )
+        
+        data = result.response.get("data", result.response)
+        
+        def get_header(keys: list) -> Optional[str]:
+            for k in keys:
+                val = result.response_headers.get(k) or result.response_headers.get(k.lower())
+                if val: return val
+            return None
+
+        result_handle = get_header(["X-LN-Result-Handle", "x-ln-church-result-handle"]) or data.get("result_handle")
+        request_hash = get_header(["X-LN-Request-Hash", "x-ln-church-request-hash"]) or data.get("request_hash")
+
+        if "result_handle" not in data and result_handle:
+            data["result_handle"] = result_handle
+        if "request_hash" not in data and request_hash:
+            data["request_hash"] = request_hash
+
+        from .models import VerifiedDomainTrackRegistrationResponse
+        return VerifiedDomainTrackRegistrationResponse(**data)
+
+    def get_verified_domain_track_status(self, request_id: str) -> Optional["VerifiedDomainTrackReadModel"]:
+        res = self.get_domain_observation_request(request_id)
+        return res.verified_domain_track
+
+    def get_domain_verified_track(self, domain: str) -> Optional["VerifiedDomainTrackSummary"]:
+        res = self.get_domain_observation_read_model(domain)
+        return res.verified_domain_track
+
+    def save_verified_domain_track_proof(
+        self,
+        registration: "VerifiedDomainTrackRegistrationResponse",
+        file_path: str
+    ) -> str:
+        import os
+        import json
+        
+        if not registration.result_handle or not registration.request_hash:
+            raise ValueError("Missing result_handle or request_hash in registration response.")
+            
+        proof_data = {
+            "schema_version": "ln_church.verified_domain_track_proof.v1",
+            "request_id": registration.request_id,
+            "domain": registration.domain,
+            "track_plan": registration.track_plan,
+            "result_handle": registration.result_handle,
+            "request_hash": registration.request_hash,
+            "status_url": registration.status_url,
+            "sponsor_challenge_url": registration.sponsor_challenge_url,
+            "public_read_model_url": registration.public_read_model_url,
+            "created_at": registration.created_at
+        }
+        
+        dir_path = os.path.dirname(os.path.abspath(file_path))
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+            
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(proof_data, f, indent=2, ensure_ascii=False)
+            
+        try:
+            os.chmod(file_path, 0o600)  # Secure the proof file!
+        except Exception:
+            pass
+            
+        return file_path
 
     # ==========================================
     # v1.8.4: Public API for Evidence & Sandbox

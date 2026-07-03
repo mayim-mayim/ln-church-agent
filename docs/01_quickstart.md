@@ -116,3 +116,29 @@ client = Payment402Client(
     # ...
 )
 ```
+
+### Verified Domain Track Lite Workflow
+Register a domain for the public-safe observation track and establish sponsorship proof.
+
+```bash
+# 1. Register and pay (19 USDC)
+ln-church-agent observe-domain track register kari.mayim-mayim.com \
+  --pay \
+  --max-spend-usd 25 \
+  --proof-file .ln-church/vdt-kari-proof.json
+
+# 2. Generate sponsor challenge file
+ln-church-agent observe-domain sponsor challenge obsreq_123 \
+  --proof-file .ln-church/vdt-kari-proof.json \
+  --output-file .well-known/ln-church-domain-sponsor.json
+
+# (Host the generated file at your domain's /.well-known/ path)
+
+# 3. Verify sponsorship
+ln-church-agent observe-domain sponsor verify obsreq_123 \
+  --proof-file .ln-church/vdt-kari-proof.json
+
+# 4. Check status
+ln-church-agent observe-domain track status obsreq_123
+```
+---
