@@ -2,8 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
-## [1.16.0] - 2026-07-03 (Verified Domain Track Lite)
+## [1.16.1] - 2026-07-04 (Verified Domain Track Semantics & Standards Alignment)
+* **Changed**: Renames the public framing toward "Domain-Control Verified Observation Track Lite" while keeping `verified_domain_track_lite` as a backward-compatible plan ID.
+* **Changed**: Treats `domain_control_verified` as the primary public semantic. Keeps `domain_owner_verified` only as a legacy compatibility field.
+* **Clarified**: Explicitly documents that `/.well-known/ln-church-domain-sponsor.json` is an LN Church domain-control challenge document, not an AI discovery standard.
+* **Added**: Adds standard-adapter metadata for future `/.well-known/ai`, A2A Agent Card, AI Catalog, and DNS TXT challenge support.
+* **Added**: Adds `/.well-known/agent-card.json` to OpenClaw discovery seed candidates.
+* **Safety**: Preserves all safety boundaries: not legal ownership proof, not recommendation, not verdict, not security scan, not certification, not trust score.
 
+## [1.16.0] - 2026-07-03 (Verified Domain Track Lite)
 * Added SDK and CLI support for Verified Domain Track Lite.
 * Added `register_verified_domain_track()`, `get_verified_domain_track_status()`, `get_domain_verified_track()`, and `save_verified_domain_track_proof()`.
 * Added `observe-domain track register/status/domain`.
@@ -18,11 +25,9 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Safety**: SDK does not automatically issue challenges or verify sponsors after paid registration. CLI avoids printing proof headers and challenge tokens unless explicitly requested with `--json` or `--print-document`.
 
 ## [1.14.2] - 2026-06-27 (MCP Registry Metadata Fix)
-
 * **Fixed**: Shortened the `server.json` description to satisfy the official MCP Registry `description.length <= 100` validation rule.
 * **Changed**: Preserved the inspect-only MCP positioning in a more compact registry-safe form: keyless, no wallet, no signing, and no payment execution.
 * **Safety**: No runtime behavior, payment execution logic, settlement serialization, telemetry submission, or API surface was altered.
-
 
 ## [1.14.1] - 2026-06-27 (Runtime Mode Boundary Clarification)
 * **Documentation**: Explicitly separated the SDK's positioning into two distinct modes: **Inspect-only Mode** (keyless, safe for enterprise preflight) and **Execution Runtime Mode** (policy-aware settlement loop).

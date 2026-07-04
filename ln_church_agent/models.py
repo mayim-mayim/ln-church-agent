@@ -985,6 +985,10 @@ class VerifiedDomainTrackReadModel(BaseModel):
     not_a_certification: bool = True
     not_a_recommendation: bool = True
     not_a_trust_score: bool = True
+    domain_owner_verified_semantics: str = "legacy_alias_for_domain_control_verified_not_legal_ownership"
+    not_ai_discovery_standard: bool = True
+    not_standard_compliance_proof: bool = True
+    domain_control_verification: Optional[Dict[str, Any]] = None
 
 class VerifiedDomainTrackSummary(BaseModel):
     has_active_verified_domain_track: bool
@@ -1108,6 +1112,8 @@ class DomainSponsorVerification(BaseModel):
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
     not_a_certification: bool = True
+    not_ai_discovery_standard: bool = True
+    not_standard_compliance_proof: bool = True
 
 class DomainSponsorChallengeResponse(BaseModel):
     request_id: str
@@ -1140,6 +1146,9 @@ class DomainSponsorVerifyResponse(BaseModel):
     not_a_security_scan: bool = True
     not_an_endorsement: bool = True
     not_a_certification: bool = True
+    domain_owner_verified_semantics: str = "legacy_alias_for_domain_control_verified_not_legal_ownership"
+    not_ai_discovery_standard: bool = True
+    not_standard_compliance_proof: bool = True
 
 class DomainSponsorVerificationSummary(BaseModel):
     schema_version: str = "ln_church.domain_sponsor_verification_summary.v1"

@@ -29,6 +29,9 @@ To maintain the safety and focus of the `ln-church-agent` SDK, **DO NOT** implem
   * Do not treat grant-like signals as proof of availability.
   * Do not rank or recommend surfaces based on grant-like signals.
   * Grant-like signal detection is inspect-only and sidecar-only.
+* **Domain Sponsor Verification**:
+  * Do not treat `/.well-known/ln-church-domain-sponsor.json` as an AI discovery standard, ARD, A2A Agent Card, or standard compliance proof. It is strictly an LN Church domain-control challenge path.
+  * Do not use `domain_owner_verified` as a primary semantic; it is a legacy compatibility field for `domain_control_verified`.  
 
 ### 1. Payment-Receipt Semantics & Cache Rules
 * **Observation:** The IETF payment draft is expanding beyond prefix negotiation and is clarifying `Payment-Receipt` semantics, retry expectations, and cache behavior around `402`, `401`, and `403` flows. Payment-Receipt presence is not final settlement by itself. Future receipt states may include SETTLED, PENDING_FINALITY, REVERSED, CANCELLED-like categories.

@@ -788,11 +788,10 @@ def main():
                     if args.json:
                         print(res.model_dump_json(indent=2))
                     else:
-                        print("✅ Domain sponsor verified.")
+                        print("✅ Domain-control sponsor verified.")
                         print(f"  Request ID              : {res.request_id}")
                         print(f"  Domain                  : {res.domain}")
                         print(f"  Domain Control Verified : {res.domain_control_verified}")
-                        print(f"  Sponsor Verified        : {res.sponsor_verified}")
                         print(f"  Scope                   : {res.verification_scope}")
                         print(f"  Legal Ownership Proof   : {res.not_legal_ownership_proof is not True}")
                         print(f"  Read Model              : {res.public_read_model_url}")
@@ -839,12 +838,11 @@ def main():
 
                     if args.json:
                         import json
-                        # [修正] 標準出力を壊さずに安全なJSONを出力 (警告は出さない)
                         exclude_fields = {"result_handle", "request_hash"} if not getattr(args, "include_proof", False) else None
                         safe_dump = res.model_dump(exclude=exclude_fields)
                         print(json.dumps(safe_dump, indent=2))
                     else:
-                        print("✅ Verified Domain Track Lite purchased.\n")
+                        print("✅ Domain-Control Verified Observation Track Lite purchased.\n")
                         print(f"Domain      : {res.domain}")
                         print(f"Request ID  : {res.request_id}")
                         print(f"Status      : {res.status}")
