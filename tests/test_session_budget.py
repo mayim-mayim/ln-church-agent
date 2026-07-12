@@ -177,22 +177,19 @@ def test_budget_event_on_downstream_failure():
     ctx = ExecutionContext(session_id="s1")
 
     with patch("requests.request") as mock_req:
-        # 1回目は402、2回目(決済後のリトライ)は通信エラー(ConnectionError)を発生させる
         mock_req.side_effect = [
             _create_402_mock(amount=2.0),
             requests.exceptions.ConnectionError("Downstream failed")
         ]
         
         with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
-            with pytest.raises(requests.exceptions.ConnectionError):
+            # P0-D要件に基づき、例外はambiguous_payment_resultとして安全にラップされる
+            with pytest.raises(PaymentExecutionError, match="ambiguous_payment_result"):
                 client.execute_detailed("POST", "/test", context=ctx)
                 
-    # 例外で落ちたが、エクスポートはされているはず
     assert len(exported_records) == 1
     record = exported_records[0]
     
-    # エラーメッセージが記録されていること
-    assert "Downstream failed" in record.error_message
-    # しかし、決済自体は成立していたため delta_usd がロストしていないこと
+    assert "ambiguous_payment_result" in record.error_message
     assert record.session_spend_delta_usd == 2.0
     assert record.receipt_summary is not None

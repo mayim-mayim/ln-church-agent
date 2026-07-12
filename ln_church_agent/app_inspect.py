@@ -1,9 +1,9 @@
 import httpx
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .challenges import b64url_decode_json
 
-def _extract_json_payloads(response: httpx.Response) -> list[Dict[str, Any]]:
+def _extract_json_payloads(response: httpx.Response) -> List[Dict[str, Any]]:
     payloads = []
     try:
         body = response.json()

@@ -41,7 +41,7 @@ def test_v2_raw_to_human_amount_normalization():
     
     payload = {
         "accepts": [
-            {"network": "eip155:137", "scheme": "exact", "asset": "USDC", "amount": "10000", "payTo": "0xABC"} 
+            {"network": "eip155:137", "scheme": "exact", "asset": "0x2791bca1f2de4661ed88a30c99a7a9449aa84174", "amount": "10000", "payTo": "0xABC"}
         ]
     }
     b64_str = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
@@ -65,12 +65,10 @@ def test_v2_raw_to_human_amount_normalization():
 @patch("ln_church_agent.crypto.evm.LocalKeyAdapter.generate_eip3009_payload")
 def test_v2_exact_envelope_construction_and_extension_echo(mock_gen_payload, mock_request):
     """exact スキーム時、x402Versionやextensionsを含む正しいV2エンベロープが構築・送信されるか確認"""
-    # 署名生成のモック
     mock_gen_payload.return_value = {"signature": "0xDummySignature", "authorization": {}}
     
-    # 402 レスポンス (Extensions付き)
     payload = {
-        "accepts": [{"network": "eip155:137", "scheme": "exact", "asset": "USDC", "amount": "1000000", "payTo": "0xABC"}],
+        "accepts": [{"network": "eip155:137", "scheme": "exact", "asset": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "amount": "1000000", "payTo": "0x1111111111111111111111111111111111111111"}],
         "resource": {"url": "http://api.test", "method": "POST"},
         "extensions": {"agentic_market": {"discovery_id": "999-XYZ"}}
     }
@@ -79,7 +77,6 @@ def test_v2_exact_envelope_construction_and_extension_echo(mock_gen_payload, moc
     res_402.status_code = 402
     res_402.headers = {"PAYMENT-REQUIRED": b64_str}
     
-    # 200 レスポンス
     res_200 = MagicMock()
     res_200.status_code = 200
     res_200.headers = {}
@@ -90,10 +87,8 @@ def test_v2_exact_envelope_construction_and_extension_echo(mock_gen_payload, moc
     
     client = Payment402Client(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
     
-    # 💡 修正: SATS にフォールバックして巨額決済とみなされないよう、asset を明示的に USDC にする
     client.execute_detailed("POST", "http://api.test", payload={"asset": "USDC"})
     
-    # リトライ時(インデックス1)の送信リクエスト引数を検証
     args, kwargs = mock_request.call_args_list[1]
     headers = kwargs.get("headers", {})
     
@@ -101,13 +96,11 @@ def test_v2_exact_envelope_construction_and_extension_echo(mock_gen_payload, moc
     encoded_sig = headers["PAYMENT-SIGNATURE"]
     decoded_env = _b64url_decode(encoded_sig)
     
-    # V2 Envelopeの必須キーが存在するか
     assert decoded_env.get("x402Version") == 2
     assert "accepted" in decoded_env
     assert "resource" in decoded_env
     assert "payload" in decoded_env
     
-    # Extensions が正しくエコーバックされているか
     assert "extensions" in decoded_env
     assert decoded_env["extensions"]["agentic_market"]["discovery_id"] == "999-XYZ"
 

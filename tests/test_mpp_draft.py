@@ -25,7 +25,8 @@ def test_2_legacy_mpp_flat_invoice():
     assert parsed.payment_method == "lightning"
     assert parsed.payment_intent == "charge"
 
-def test_3_payment_draft_challenge():
+@patch("ln_church_agent.challenges.decode_bolt11_amount_msats", return_value=1000000)
+def test_3_payment_draft_challenge(mock_decode):
     """Test 3: Payment draft challenge (Base64URL JSON) のパースと分類"""
     client = Payment402Client()
     
@@ -50,11 +51,8 @@ def test_3_payment_draft_challenge():
     assert parsed.request_b64_present is True
     assert parsed.decoded_request_valid is True
     
-    # 💡 追加: amount と currency が反映されていること
     assert parsed.amount == 1000.0
     assert parsed.asset == "SATS"
-    
-    # 💡 追加: request_json が保持されていること
     assert parsed.parameters["request_json"]["amount"] == "1000"
 
 def test_4_invalid_request():

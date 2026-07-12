@@ -35,13 +35,12 @@ def test_evidence_export_on_trust_block():
         with pytest.raises(CounterpartyTrustError):
             client.execute_detailed("POST", "/test")
             
-        # Error が起きても Export されているか
         assert len(repo.exported_records) == 1
         record = repo.exported_records[0]
         assert record.target_url == "http://mock/test"
         assert record.trust_decision.is_trusted is False
         assert record.error_message is not None
-        assert "Too suspicious" in record.error_message
+        assert "CounterpartyTrustError" in record.error_message
 
 def test_evidence_import_assists_trust():
     """Import された過去の Evidence が past_evidence に格納され、型安全に評価に使えることを確認"""

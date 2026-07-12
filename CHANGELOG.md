@@ -2,6 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.16.2] - Unreleased (Buyer-side Payment Boundary Hardening)
+* **Fixed**: Preserves canonical atomic payment requirements from parsing through policy evaluation, signer input, and signer-output verification without rebuilding exact amounts from floats.
+* **Hardened**: Requires `bolt11>=2.0.6,<2.1.0` for signed Lightning invoice validation; rejects invalid, amountless, placeholder, or mismatched L402/MPP invoices before wallet invocation; and treats MPP auth-parameter names case-insensitively while rejecting empty, duplicate, falsey, non-canonical, or contradictory amount/currency/invoice declarations.
+* **Fixed**: Rejects incomplete, invalid, or contradictory `Payment request` drafts before wallet, delegate, signer, retry, Evidence-success, or budget side effects regardless of the legacy fallback flag; only a complete draft retains the existing explicit opt-in fallback behavior.
+* **Hardened**: Validates trusted EIP-3009 domains and authorization signatures, and validates SVM `TransferChecked` instructions plus Compute Budget bounds of 200,000 CU, 1,000,000 micro-lamports/CU, and 200,000 lamports total priority fee.
+* **Security**: Applies case-insensitive strict netloc policy matching, removes camel/snake/hyphen credential families from nested navigation payloads and Evidence submissions, and discards original payload data on cross-origin redirect or HATEOAS navigation.
+* **Safety**: Validates EVM/SVM signer output before marking an operation irreversible, carries one Idempotency-Key-aware fingerprint across paid retries and HATEOAS navigation, reserves a canonical ambiguous amount once only after an irreversible result is lost, and keeps Evidence repository failures secondary to the primary payment outcome.
+* **Compatibility**: Preserves compatible pre-irreversible exception types and direct exception bases with secret-free replacement messages, retains v1.16.1 public constructors, execution signatures, the six-field `ExecutionContext` serialization shape, and Protocol member sets, keeps CLI inspection annotations evaluable on Python 3.8, and declares Python `>=3.8.1`.
+
 ## [1.16.1] - 2026-07-04 (Verified Domain Track Semantics & Standards Alignment)
 * **Changed**: Renames the public framing toward "Domain-Control Verified Observation Track Lite" while keeping `verified_domain_track_lite` as a backward-compatible plan ID.
 * **Changed**: Treats `domain_control_verified` as the primary public semantic. Keeps `domain_owner_verified` only as a legacy compatibility field.
@@ -278,7 +287,7 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 
 ## [1.6.0] - 2026-04-22 (Internal Access Selection & Refactoring)
 * **Changed (Internal)**: Refactored the internal access selection loop for `LnChurchClient` by introducing strict Selector and Builder separation (`_ExecutionAccessPlan`, `_FundingPolicy`, etc.).
-* **Compatibility**: Guaranteed 100% backward compatibility with the 1.5.x public API, concrete vocabulary (`GRANT_CREDIT`, `grant`, `faucet`), and wire-level protocol. 
+* **Compatibility**: Guaranteed 100% backward compatibility with the 1.5.x public API, concrete vocabulary (`GRANT_CREDIT`, `grant`, `faucet`), and wire-level protocol.
 * **Details**: [v1.6.0 Release Notes](docs/release_notes/v1.6.0.md)
 
 ## [1.5.12] - 2026-04-21 (Sponsored Access Override)
@@ -315,7 +324,7 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Changed**: Fortified Cross-Origin guardrails to use strict **netloc** (host:port) matching, preventing malicious redirections to unauthorized ports on trusted domains.
 * **Changed**: Implemented "Header Hardening" to automatically isolate and strip sensitive credentials (e.g., `Authorization`) from server-suggested headers during autonomous navigation.
 * **Fixed**: Eliminated redundant `asyncio.sleep(1)` from the asynchronous execution path to ensure wire-level performance parity between Sync and Async runtimes.
-* **Fixed**: Synchronized the public API surface by exporting `ChallengeSource` and aligning `ParsedChallenge` with mandatory schema fields, resolving latent `NameError` in downstream validation tests. 
+* **Fixed**: Synchronized the public API surface by exporting `ChallengeSource` and aligning `ParsedChallenge` with mandatory schema fields, resolving latent `NameError` in downstream validation tests.
 
 ## [1.5.7] - 2026-04-14 (Documentation Alignment & Protocol Fluctuation Absorption)
 * **Fixed (Docs)**: Resolved a documentation misalignment from v1.5.6 regarding the `Payment` and `MPP` header prefixes.
@@ -330,9 +339,9 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Details**: [v1.5.6 Release Notes](docs/release_notes/v1.5.6.md)
 
 ## [1.5.5] - 2026-04-13 (Dual-Stack Resilience & Initialization Fix)
-* **Fixed**: Reordered 402 challenge parsing to prioritize Lightning (L402) over x402, resolving the "Dual-Stack Paradox" where L402 invoices were ignored. 
+* **Fixed**: Reordered 402 challenge parsing to prioritize Lightning (L402) over x402, resolving the "Dual-Stack Paradox" where L402 invoices were ignored.
 * **Fixed**: Normalized `ValueError` bubbling and corrected constructor argument propagation in `LnChurchClient`.
-* **Fixed**: Improved the legacy challenge parser to fetch missing parameters (like destination) from the response body. 
+* **Fixed**: Improved the legacy challenge parser to fetch missing parameters (like destination) from the response body.
 * **Details**: [v1.5.5 Release Notes](docs/release_notes/v1.5.5.md)
 
 ## [1.5.4] - 2026-04-13 (Wire-Level Standard Compliance)

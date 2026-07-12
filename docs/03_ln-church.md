@@ -12,14 +12,14 @@ import os
 
 # Initialize the Reference Adapter
 client = LnChurchClient(
-    private_key=os.environ.get("AGENT_PRIVATE_KEY"), 
-    ln_provider="alby", 
+    private_key=os.environ.get("AGENT_PRIVATE_KEY"),
+    ln_provider="alby",
     ln_api_key=os.environ.get("ALBY_TOKEN")
 )
 
 # ⛩️ Phase 0 & 1: Connection & Oracle
-client.init_probe()             
-client.claim_faucet_if_empty()  
+client.init_probe()
+client.claim_faucet_if_empty()
 omikuji_res = client.draw_omikuji(asset=AssetType.SATS)
 print(f"Oracle Result: {omikuji_res.result}")
 
@@ -70,4 +70,3 @@ async def main():
 
 asyncio.run(main())
 ```
-
