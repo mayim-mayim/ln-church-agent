@@ -16,7 +16,7 @@ setup(
         "pydantic>=2.0.0",
         "eth-account>=0.11.0",
         "httpx>=0.25.0",
-        "bolt11>=2.0.6,<2.1.0",
+        "bolt11>=2.1.0,<2.1.1",
     ],
     extras_require={
         "langchain": ["langchain-core>=0.1.0"],
