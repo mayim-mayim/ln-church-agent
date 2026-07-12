@@ -116,11 +116,22 @@ def test_4_relayer_endpoint_survives_parsing():
     # The inner should override or the outer should be present
     assert parsed.parameters.get("relayer_endpoint") in ["https://example.com/relay", "https://example.com/relay_inner"]
 
-@patch("ln_church_agent.crypto.evm.LocalKeyAdapter.generate_eip3009_payload")
-def test_5_evm_exact_signer_receives_correct_amount_semantics(mock_gen):
-    mock_gen.return_value = {"signature": "0xSig", "authorization": {}}
-    
-    client = Payment402Client(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
+@patch("ln_church_agent.crypto.evm.LocalKeyAdapter.generate_eip3009_payload_atomic")
+@patch("eth_account.Account.recover_message")
+def test_5_evm_exact_signer_receives_correct_amount_semantics(mock_recover, mock_gen):
+    client = Payment402Client(private_key="0x" + "1"*64)
+    mock_gen.return_value = {
+        "signature": "0x" + "1"*130,
+        "authorization": {
+            "value": "1000",
+            "to": "0x1111111111111111111111111111111111111111",
+            "from": client.evm_signer.address,
+            "validAfter": "0",
+            "validBefore": "9999999999",
+            "nonce": "0x" + "a"*64
+         }
+     }
+    mock_recover.return_value = client.evm_signer.address
     payload = {
         "accepts": [
             {
@@ -128,7 +139,7 @@ def test_5_evm_exact_signer_receives_correct_amount_semantics(mock_gen):
                 "network": "eip155:8453",
                 "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
                 "amount": "1000",
-                "payTo": "0xABC"
+                "payTo": "0x1111111111111111111111111111111111111111"
             }
         ]
     }
@@ -140,11 +151,9 @@ def test_5_evm_exact_signer_receives_correct_amount_semantics(mock_gen):
     headers = {}
     client._process_payment(parsed, headers, {}, url="http://mock")
     
-    # Signer should receive human amount 0.001
     args, kwargs = mock_gen.call_args
-    assert args[1] == 0.001  # human_amount
+    assert kwargs["atomic_amount_str"] == "1000"
     
-    # Envelope should contain raw "1000"
     b64_env = headers["PAYMENT-SIGNATURE"]
     env = json.loads(base64.urlsafe_b64decode(b64_env + '==').decode('utf-8'))
     assert env["accepted"]["amount"] == "1000"

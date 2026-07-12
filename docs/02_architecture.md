@@ -25,6 +25,8 @@ Autonomous agents can hallucinate or be subjected to malicious HATEOAS redirects
 * Evaluates requested `scheme` and `asset` against allowed lists.
 * Calculates estimated USD value and blocks transactions exceeding `max_spend_per_tx_usd`.
 * Tracks cumulative session spending and enforces `max_spend_per_session_usd` to prevent budget exhaustion across multiple HATEOAS navigations or loops.
+* **Strict Amount & Token Validation (v1.16.2+)**: BOLT11 invoices are strictly decoded to verify exact SATS amounts before hitting the wallet. For x402 exact payloads, unknown EVM/SVM token contracts are safely rejected, and wire-level atomic amounts are enforced to prevent float-rounding manipulation.
+* **Double-Payment Prevention (v1.16.2+)**: Enforces a strict one-irreversible-payment lock per execution context, halting infinite `402 -> pay -> 402` drain loops and preserving `Idempotency-Key` tracking.
 
 **Internal Access Selection (v1.15+)**: The SDK internally isolates "Access Selection" (choosing between Grants, Faucets, or Direct Settlement) from the wire-level payload building. This ensures future pricing models like subsidies can be added without altering the public execution API.
 
@@ -38,8 +40,9 @@ After a successful 402 negotiation, the SDK generates a `SettlementReceipt`. Thi
 To prevent agent stalls due to lack of funds, the SDK includes automatic claim-and-bypass logic. It utilizes a strict `paymentOverride` schema to request temporary credits from a Faucet when necessary.
 
 ### 5. Safe HATEOAS Auto-Navigation
-The engine autonomously follows `next_action` links provided in 4xx/5xx HATEOAS errors.
-* **Guardrails**: It includes built-in protections such as maximum hop counts and restrictions on unsafe HTTP methods to prevent infinite loops or unintended state mutations.
+The engine autonomously follows `next_action` links or HTTP Redirects (`301`/`302`/`307`/`308`) provided in 4xx/5xx HATEOAS errors.
+* **Guardrails**: It includes built-in protections such as maximum hop counts and absolute restrictions on unsafe method conversions.
+* **Cross-Origin Integrity (v1.16.2+)**: Automatic HTTP redirects are handled manually. If an agent is redirected to a new domain (Cross-Origin), sensitive credentials (`Authorization`, `Cookie`, `macaroon`, `preimage`, private keys) are aggressively stripped before the transition to prevent credential leakage. HTTPS-to-HTTP downgrades are unconditionally blocked.
 
 ### 6. Decentralized Paywall DNS (Monzen)
 The SDK allows agents to natively interact with a global registry of L402-protected APIs. Agents can:

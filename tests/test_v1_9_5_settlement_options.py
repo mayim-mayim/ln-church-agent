@@ -58,8 +58,8 @@ def test_accepts_array_multiple_options_extracted(mock_req):
 def test_allowed_networks_selection_reason():
     payload = {
         "accepts": [
-            {"scheme": "exact", "network": "eip155:137", "asset": "USDC", "amount": "100"},
-            {"scheme": "exact", "network": "eip155:8453", "asset": "USDC", "amount": "100"}
+            {"scheme": "exact", "network": "eip155:137", "asset": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "amount": "100"},
+            {"scheme": "exact", "network": "eip155:8453", "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "amount": "100"}
         ]
     }
     res_mock = _create_mock_402(payload)
@@ -83,8 +83,8 @@ def test_allowed_networks_selection_reason():
 def test_prefer_svm_selection_reason():
     payload = {
         "accepts": [
-            {"scheme": "exact", "network": "eip155:137", "asset": "USDC", "amount": "100"},
-            {"scheme": "exact", "network": "solana:1234", "asset": "USDC", "amount": "100"}
+            {"scheme": "exact", "network": "eip155:137", "asset": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "amount": "100"},
+            {"scheme": "exact", "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "amount": "100"}
         ]
     }
     res_mock = _create_mock_402(payload)
@@ -94,9 +94,8 @@ def test_prefer_svm_selection_reason():
     
     assert len(opts) == 2
     assert sel is not None
-    assert sel.network == "solana:1234"
+    assert sel.network.startswith("solana:")
     assert sel.chain_family == "svm"
-    # 💡 prefer_svm フラグによる選択
     assert sel.selection_reason == "prefer_svm"
     
     assert opts[0].network == "eip155:137"

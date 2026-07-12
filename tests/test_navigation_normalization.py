@@ -12,7 +12,7 @@ from ln_church_agent.models import ExecutionContext
 def test_canonical_next_action_navigation():
     """既存の canonical な `next_action` 構造が壊れず、意図通りに自動遷移できることを確認"""
     client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-    
+
     with patch("requests.request") as mock_req:
         # 1回目: 400エラーと共に正規の next_action が返る
         resp1 = MagicMock()
@@ -27,20 +27,20 @@ def test_canonical_next_action_navigation():
                 "instruction_for_agent": "Retry safely."
             }
         }
-        
+
         # 2回目: 自動遷移先で成功
         resp2 = MagicMock()
         resp2.status_code = 200
         resp2.headers = {}
         resp2.json.return_value = {"status": "success"}
-        
+
         mock_req.side_effect = [resp1, resp2]
 
-        result = client.execute_detailed("POST", "/first")
-        
+        result = client.execute_detailed("GET", "/first")
+
         # 正常に遷移して2回目の結果を取得できているか
         assert result.response == {"status": "success"}
-        
+
         # 呼び出し履歴の検証
         assert mock_req.call_count == 2
         args, kwargs = mock_req.call_args_list[1]
@@ -53,7 +53,7 @@ def test_canonical_next_action_navigation():
 def test_body_alias_normalization():
     """`action` や `payload` などの揺れたエイリアスが NextAction に正規化されることを確認"""
     client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-    
+
     with patch("requests.request") as mock_req:
         resp1 = MagicMock()
         resp1.status_code = 409
@@ -66,18 +66,18 @@ def test_body_alias_normalization():
                 "payload": {"agent_mode": "strict"}
             }
         }
-        
+
         resp2 = MagicMock()
         resp2.status_code = 200
         resp2.headers = {}
         resp2.json.return_value = {"status": "alias_ok"}
-        
+
         mock_req.side_effect = [resp1, resp2]
 
-        result = client.execute_detailed("POST", "/first")
-        
+        result = client.execute_detailed("GET", "/first")
+
         assert result.response == {"status": "alias_ok"}
-        
+
         # 呼び出し履歴の検証 (GETなので payload は params に入る)
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"
@@ -90,25 +90,27 @@ def test_body_alias_normalization():
 def test_location_header_same_origin_safe():
     """Location ヘッダによる遷移指示が GET メソッドとして解釈され、Same-Originなら通ることを確認"""
     client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-    
+
     with patch("requests.request") as mock_req:
         # 302 リダイレクトをエミュレート (JSONパースは失敗する)
         resp1 = MagicMock()
         resp1.status_code = 302
         resp1.headers = {"Location": "http://dummy.local/redirected"}
         resp1.json.side_effect = ValueError("No JSON body")
-        
+
         resp2 = MagicMock()
         resp2.status_code = 200
         resp2.headers = {}
         resp2.json.return_value = {"success": True}
-        
+
         mock_req.side_effect = [resp1, resp2]
 
-        result = client.execute_detailed("POST", "/first")
-        
+        # 💡 [P0-C 修正] POSTでの302リダイレクト(GETへの暗黙の変換)は P0-C の要件11により禁止されたため、
+        # ここでは元々 GET で遷移するように変更しています。
+        result = client.execute_detailed("GET", "/first")
+
         assert result.response == {"success": True}
-        
+
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"  # ヘッダ由来は必ずGETに正規化される
         assert args[1] == "http://dummy.local/redirected"
@@ -119,25 +121,22 @@ def test_location_header_same_origin_safe():
 def test_guardrail_blocks_cross_origin_and_auth_override():
     """
     1. Location ヘッダによる遷移でも、Cross-Origin の場合はガードレールでブロックされること
-    2. suggested_headers に Authorization が含まれていても、マージ時に無視されること
+    2. pathが変わるsame-origin遷移では、元とsuggestedのAuthorizationが両方除去されること
     """
     client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-    
+
     with patch("requests.request") as mock_req:
-        # --- Part 1: Cross-Origin ブロック ---
         resp_cross_origin = MagicMock()
         resp_cross_origin.status_code = 302
         resp_cross_origin.headers = {"Location": "https://evil.com/steal"}
         resp_cross_origin.json.side_effect = ValueError()
         mock_req.return_value = resp_cross_origin
 
-        with pytest.raises(NavigationGuardrailError, match="Stopped unsafe automatic navigation"):
+        with pytest.raises(NavigationGuardrailError, match="(?i).*Cross-origin.*|.*Stopped unsafe.*"):
             client.execute_detailed("GET", "/first")
 
-        # Part 1の呼び出し履歴をリセットして、インデックスのズレを防ぐ
         mock_req.reset_mock()
 
-        # --- Part 2: Authorization ヘッダの保護 ---
         resp_auth_attack = MagicMock()
         resp_auth_attack.status_code = 400
         resp_auth_attack.headers = {}
@@ -152,24 +151,20 @@ def test_guardrail_blocks_cross_origin_and_auth_override():
                 }
             }
         }
-        
+
         resp_ok = MagicMock()
         resp_ok.status_code = 200
         resp_ok.headers = {}
         resp_ok.json.return_value = {"ok": True}
-        
+
         mock_req.side_effect = [resp_auth_attack, resp_ok]
 
-        # クライアントは正当な Authorization を持っている想定
         result = client.execute_detailed("GET", "/first", headers={"Authorization": "Bearer GOOD_TOKEN"})
-        
-        # 2回目の呼び出し（リトライ）ヘッダを検証
-        args, kwargs = mock_req.call_args_list[1] # 履歴がリセットされたので、正しくインデックス1がリトライを指す
+
+        args, kwargs = mock_req.call_args_list[1]
         req_headers = kwargs["headers"]
-        
-        # 危険なヘッダは上書きされず、元の値が維持されていること
-        assert req_headers["Authorization"] == "Bearer GOOD_TOKEN"
-        # 安全なカスタムヘッダはマージされていること
+
+        assert "Authorization" not in req_headers
         assert req_headers["X-Custom-Safe-Header"] == "OK"
 
 # ==========================================
@@ -179,7 +174,7 @@ def test_async_alias_normalization():
     """非同期の `execute_detailed_async` でも、正規化と自動遷移が正しく動作することを確認"""
     async def run_test():
         client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-        
+
         with patch("httpx.AsyncClient.request") as mock_req:
             resp1 = MagicMock()
             resp1.status_code = 400
@@ -191,19 +186,19 @@ def test_async_alias_normalization():
                     "method": "GET"
                 }
             }
-            
+
             resp2 = MagicMock()
             resp2.status_code = 200
             resp2.headers = {}
             resp2.json.return_value = {"status": "async_ok"}
-            
+
             mock_req.side_effect = [resp1, resp2]
-            
+
             result = await client.execute_detailed_async("POST", "/first")
-            
+
             assert result.response == {"status": "async_ok"}
             assert mock_req.call_count == 2
-            
+
             args, kwargs = mock_req.call_args_list[1]
             assert args[0] == "GET"
             assert args[1] == "http://dummy.local/async-retry"
@@ -214,7 +209,7 @@ def test_async_alias_normalization():
 def test_guardrail_netloc_precision():
     """Verify that allowed_hosts uses netloc (host:port) matching"""
     client = Payment402Client(base_url="http://dummy.local", auto_navigate=True)
-    
+
     with patch("requests.request") as mock_req:
         resp = MagicMock()
         resp.status_code = 302

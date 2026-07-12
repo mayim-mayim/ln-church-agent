@@ -3,7 +3,7 @@
   "name": "io.github.mayim-mayim/ln-church-agent-mcp",
   "title": "LN Church Agent MCP",
   "description": "Inspect-only HTTP 402 surface classifier. Keyless, no wallet, no signing, no payments.",
-  "version": "1.16.1",
+  "version": "1.16.2",
   "repository": {
     "url": "https://github.com/mayim-mayim/ln-church-agent",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "ln-church-agent",
-      "version": "1.16.1",
+      "version": "1.16.2",
       "transport": {
         "type": "stdio"
       }

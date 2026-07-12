@@ -5,7 +5,7 @@ from ln_church_agent.client import LnChurchClient
 from ln_church_agent.integrations.mcp_inspect import build_mcp_observation_payload
 
 def _get_client():
-    return LnChurchClient(private_key="0x" + "0" * 64)
+    return LnChurchClient(private_key="0x" + "1" * 64)
 
 @patch("ln_church_agent.client.LnChurchClient.execute_request")
 def test_a_sync_submit_accepts_intent_sidecars(mock_exec):
@@ -55,7 +55,7 @@ def test_a_sync_submit_accepts_intent_sidecars(mock_exec):
     assert mock_exec.call_args.args[1] == "/api/agent/external/attempt/observe"
     assert payload["schema_version"] == "goal_attempt.v1"
     assert "intent_sidecar_metadata" in payload
-    
+
     step0 = payload["steps"][0]
     assert "intent_signature" in step0
     assert step0["intent_signature"]["operation_verb"] == "lookup"
@@ -99,17 +99,17 @@ def test_d_and_e_secret_stripping_applies_recursively(mock_exec):
 
     unsafe_steps = [{
         "surface_type": "paid_surface",
-        "payment_performed": True, 
+        "payment_performed": True,
         "intent_signature": {
             "target_object": "company",
-            "input_shape": ["company_name"], 
-            "headers": {"Authorization": "Bearer SECRET"}, 
-            "api_key": "SECRET_API_KEY" 
+            "input_shape": ["company_name"],
+            "headers": {"Authorization": "Bearer SECRET"},
+            "api_key": "SECRET_API_KEY"
         },
         "classification_claims": [{
             "category_id": "company_profile_lookup",
-            "proof": "SECRET_PROOF", 
-            "private_key": "SECRET_KEY" 
+            "proof": "SECRET_PROOF",
+            "private_key": "SECRET_KEY"
         }]
     }]
 
@@ -118,11 +118,11 @@ def test_d_and_e_secret_stripping_applies_recursively(mock_exec):
     )
 
     step0 = mock_exec.call_args.kwargs["payload"]["steps"][0]
-    
+
     assert step0["payment_performed"] is True
     assert step0["intent_signature"]["target_object"] == "company"
     assert step0["classification_claims"][0]["category_id"] == "company_profile_lookup"
-    
+
     assert "headers" not in step0["intent_signature"]
     assert "api_key" not in step0["intent_signature"]
     assert "proof" not in step0["classification_claims"][0]
@@ -131,11 +131,11 @@ def test_d_and_e_secret_stripping_applies_recursively(mock_exec):
 @patch("requests.request")
 def test_f_no_automatic_telemetry_hook(mock_req):
     """Test F: No automatic telemetry hook in standard execution paths"""
-    client = LnChurchClient(base_url="https://api.test", private_key="0x" + "0"*64)
+    client = LnChurchClient(base_url="https://api.test", private_key="0x" + "1"*64)
     mock_res = MagicMock(status_code=200, content=b'{"status":"success"}')
     mock_res.json.return_value = {"status": "success"}
     mock_req.return_value = mock_res
-    
+
     client.execute_request("POST", "/api/v1/resource", payload={"test": "data"})
     assert mock_req.call_count == 1
     assert "observe" not in mock_req.call_args.args[1]
@@ -165,7 +165,7 @@ def test_g_mcp_observation_payload_remains_unchanged():
         "category_id",
         "taxonomy_version"
     }
-    
+
     # Payload内のどこにも混ざっていないことを確認
     assert forbidden.isdisjoint(payload.keys())
     assert forbidden.isdisjoint(payload.get("protocol", {}).keys())
@@ -184,12 +184,12 @@ def test_i_intent_signature_is_secret_stripped_but_not_entity_validated():
     client = _get_client()
     clean = client._strip_secrets_from_evidence({
         "intent_signature": {
-            "target_object": "OpenAI", 
-            "input_shape": ["株式会社Xの非公開調査をしてください"], 
-            "api_key": "SECRET" 
+            "target_object": "OpenAI",
+            "input_shape": ["株式会社Xの非公開調査をしてください"],
+            "api_key": "SECRET"
         }
     })
-    
+
     # Entity values are NOT validated/stripped by the current SDK layer
     assert clean["intent_signature"]["target_object"] == "OpenAI"
     assert clean["intent_signature"]["input_shape"] == ["株式会社Xの非公開調査をしてください"]

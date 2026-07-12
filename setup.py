@@ -9,32 +9,33 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.16.1", 
+    version="1.16.2",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     install_requires=[
         "requests>=2.31.0",
         "pydantic>=2.0.0",
         "eth-account>=0.11.0",
-        "httpx>=0.25.0"
+        "httpx>=0.25.0",
+        "bolt11>=2.0.6,<2.1.0",
     ],
     extras_require={
         "langchain": ["langchain-core>=0.1.0"],
         "mcp": ["mcp>=1.0.0"],
         "solana": [
-            "solana>=0.34.0",
-            "solders>=0.21.0"
+            "solana>=0.34.0,<0.40.0",
+            "solders>=0.21.0,<0.28.0"
         ],
         "svm": [
-            "x402[svm]>=1.0.0",
-            "solana>=0.34.0",
-            "solders>=0.21.0"
+            "x402[svm]>=1.0.0,<3.0.0",
+            "solana>=0.34.0,<0.40.0",
+            "solders>=0.21.0,<0.28.0"
         ],
         "all": [
-            "langchain-core>=0.1.0", 
-            "mcp>=1.0.0", 
-            "solana>=0.34.0", 
-            "solders>=0.21.0",
-            "x402[svm]>=1.0.0"
+            "langchain-core>=0.1.0",
+            "mcp>=1.0.0",
+            "solana>=0.34.0,<0.40.0",
+            "solders>=0.21.0,<0.28.0",
+            "x402[svm]>=1.0.0,<3.0.0"
         ]
     },
     entry_points={
@@ -54,5 +55,5 @@ setup(
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.8.1",
 )
