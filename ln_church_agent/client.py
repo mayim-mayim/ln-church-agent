@@ -1111,12 +1111,20 @@ class Payment402Client:
         return float(self._estimate_usd_decimal(parsed))
 
     def _reserve_ambiguous_spend(
-        self, context: ExecutionContext, fingerprint: str, parsed: ParsedChallenge
+        self,
+        context: ExecutionContext,
+        fingerprint: str,
+        parsed: ParsedChallenge,
+        approved_usd_value: Optional[Any] = None,
     ) -> float:
         """Reserve the canonical amount once after an irreversible call loses its result."""
         if not self.policy:
             return 0.0
-        reserve = self._estimate_usd_decimal(parsed)
+        reserve = (
+            Decimal(str(approved_usd_value))
+            if approved_usd_value is not None
+            else self._estimate_usd_decimal(parsed)
+        )
         if reserve <= 0:
             return 0.0
         self._init_context_state(context)
@@ -1290,6 +1298,7 @@ class Payment402Client:
                     "Fail-Closed: Selected amount contradicts canonical requirement."
                 )
             parsed._approved_requirement_hash = requirement["requirement_hash"]
+            parsed._approved_canonical_snapshot = canonical_json(requirement)
 
         if not self.policy:
             return requirement["requirement_hash"] if requirement else None
@@ -1318,6 +1327,48 @@ class Payment402Client:
 
         return requirement["requirement_hash"] if requirement else None
 
+    def _assert_approved_canonical_snapshot_unchanged(
+        self,
+        parsed: ParsedChallenge,
+        *,
+        target_url: str,
+        method: str,
+        expected_snapshot_json: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        stored_snapshot_json = getattr(parsed, "_approved_canonical_snapshot", None)
+        snapshot_json = expected_snapshot_json or stored_snapshot_json
+        current = getattr(parsed, "_canonical_requirement", None)
+        if not isinstance(snapshot_json, str) or not isinstance(current, Mapping):
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical payment requirement was not frozen at policy approval."
+            )
+        if (
+            expected_snapshot_json is not None
+            and stored_snapshot_json != expected_snapshot_json
+        ):
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical approval snapshot changed during signer execution."
+            )
+        try:
+            snapshot = json.loads(snapshot_json)
+            requirement = verify_request_binding(
+                snapshot, request_url=target_url, method=method
+            )
+            verify_requirement_expiry(requirement, now=int(self._clock()))
+            current_requirement = verify_request_binding(
+                current, request_url=target_url, method=method
+            )
+        except (PaymentContractError, ValueError, TypeError) as exc:
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical payment requirement changed after policy approval. "
+                + sanitize_error_msg(str(exc))
+            ) from None
+        if canonical_json(current_requirement) != snapshot_json:
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical payment requirement changed after policy approval."
+            )
+        return requirement
+
     def _approve_payment_requirement(
         self,
         parsed: ParsedChallenge,
@@ -1333,6 +1384,30 @@ class Payment402Client:
             self._enforce_policy(
                 parsed, target_url, method, require_canonical=True
             )
+
+            # A custom signer is application code and may retain a reference to
+            # the ParsedChallenge (for example through _last_parsed_challenge).
+            # Freeze every exact-payment input as immutable JSON at the policy
+            # boundary.  The execution path later rehydrates a private copy and
+            # never validates signer output against the callback-mutable model.
+            if parsed.scheme == "exact":
+                signer_requirement = getattr(parsed, "_signer_requirement", None)
+                raw_accepted = (parsed.parameters or {}).get("_raw_accepted")
+                if (
+                    not isinstance(signer_requirement, CanonicalPaymentRequirement)
+                    or not isinstance(raw_accepted, Mapping)
+                ):
+                    raise PaymentExecutionError(
+                        "Fail-Closed: Exact payment has no complete signer snapshot."
+                    )
+                self._validate_exact_canonical_alignment(
+                    parsed, signer_requirement, dict(raw_accepted)
+                )
+                parsed._approved_signer_snapshot = self._exact_signer_snapshot_json(
+                    parsed
+                )
+            else:
+                parsed._approved_signer_snapshot = None
 
             if getattr(parsed, "_invoice_msats", None) is not None:
                 dec_sats = Decimal(str(parsed._invoice_msats)) / Decimal("1000")
@@ -1353,6 +1428,125 @@ class Payment402Client:
             )
             raise
 
+    def _exact_signer_snapshot_json(self, parsed: ParsedChallenge) -> str:
+        """Serialize callback-sensitive exact inputs without sharing references."""
+        signer_requirement = getattr(parsed, "_signer_requirement", None)
+        if not isinstance(signer_requirement, CanonicalPaymentRequirement):
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact signer requirement is unavailable."
+            )
+        parameters = parsed.parameters or {}
+        if not isinstance(parameters.get("_raw_accepted"), Mapping):
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact selected payment option is unavailable."
+            )
+
+        snapshot = {
+            "signer_requirement": {
+                "scheme": str(signer_requirement.scheme),
+                "network": str(signer_requirement.network),
+                "chain_id": signer_requirement.chain_id,
+                "asset": str(signer_requirement.asset),
+                "token_address_or_mint": str(
+                    signer_requirement.token_address_or_mint
+                ),
+                "decimals": int(signer_requirement.decimals),
+                "atomic_amount": str(signer_requirement.atomic_amount),
+                "human_amount_decimal": format(
+                    Decimal(str(signer_requirement.human_amount_decimal)), "f"
+                ),
+                "pay_to": str(signer_requirement.pay_to),
+                "source_origin": str(signer_requirement.source_origin),
+            },
+            "parsed_projection": {
+                "scheme": str(parsed.scheme),
+                "network": str(parsed.network),
+                "asset": str(parsed.asset),
+                "amount": parsed.amount,
+                "atomic_amount": getattr(parsed, "_atomic_amount", None),
+                "parameters": parameters,
+            },
+        }
+        try:
+            return json.dumps(
+                snapshot,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact signer inputs are not immutable JSON values."
+            ) from exc
+
+    def _load_approved_exact_signer_snapshot(
+        self,
+        parsed: ParsedChallenge,
+        *,
+        expected_snapshot_json: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        stored_snapshot_json = getattr(parsed, "_approved_signer_snapshot", None)
+        snapshot_json = expected_snapshot_json or stored_snapshot_json
+        if not isinstance(snapshot_json, str) or not snapshot_json:
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact signer inputs were not approved by policy."
+            )
+        if (
+            expected_snapshot_json is not None
+            and stored_snapshot_json != expected_snapshot_json
+        ):
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact signer approval snapshot changed during signer execution."
+            )
+        try:
+            snapshot = json.loads(snapshot_json)
+            signer_fields = snapshot["signer_requirement"]
+            projection = snapshot["parsed_projection"]
+            if (
+                not isinstance(snapshot, dict)
+                or not isinstance(signer_fields, dict)
+                or not isinstance(projection, dict)
+                or not isinstance(projection.get("parameters"), dict)
+                or not isinstance(
+                    projection["parameters"].get("_raw_accepted"), dict
+                )
+            ):
+                raise ValueError("invalid exact signer snapshot shape")
+            CanonicalPaymentRequirement(**signer_fields)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PaymentExecutionError(
+                "Fail-Closed: Approved exact signer snapshot is invalid."
+            ) from exc
+        return snapshot
+
+    def _assert_approved_exact_signer_snapshot_unchanged(
+        self,
+        parsed: ParsedChallenge,
+        *,
+        target_url: Optional[str] = None,
+        method: Optional[str] = None,
+        expected_snapshot_json: Optional[str] = None,
+        expected_canonical_snapshot_json: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if target_url is not None and method is not None:
+            self._assert_approved_canonical_snapshot_unchanged(
+                parsed,
+                target_url=target_url,
+                method=method,
+                expected_snapshot_json=expected_canonical_snapshot_json,
+            )
+        snapshot = self._load_approved_exact_signer_snapshot(
+            parsed, expected_snapshot_json=expected_snapshot_json
+        )
+        current = self._exact_signer_snapshot_json(parsed)
+        anchor = expected_snapshot_json or parsed._approved_signer_snapshot
+        if current != anchor:
+            raise PaymentExecutionError(
+                "Fail-Closed: Exact signer inputs changed after policy approval."
+            )
+        return snapshot
+
     def _recheck_policy_binding_before_payment(
         self, parsed: ParsedChallenge, *, target_url: str, method: str
     ) -> Dict[str, Any]:
@@ -1363,11 +1557,10 @@ class Payment402Client:
                 "Fail-Closed: Payment requirement was not approved by policy."
             )
         try:
-            requirement = verify_request_binding(
-                canonical, request_url=target_url, method=method
+            requirement = self._assert_approved_canonical_snapshot_unchanged(
+                parsed, target_url=target_url, method=method
             )
-            verify_requirement_expiry(requirement, now=int(self._clock()))
-        except (PaymentContractError, ValueError, TypeError) as exc:
+        except PaymentExecutionError as exc:
             raise PaymentExecutionError(
                 f"Fail-Closed: Canonical payment requirement changed after policy approval. {sanitize_error_msg(str(exc))}"
             ) from None
@@ -1389,18 +1582,19 @@ class Payment402Client:
                     "Fail-Closed: Lightning credential payload changed after policy approval."
                 )
         elif requirement["rail"] == "x402":
-            signer_requirement = getattr(parsed, "_signer_requirement", None)
+            snapshot = self._assert_approved_exact_signer_snapshot_unchanged(parsed)
+            signer_requirement = snapshot["signer_requirement"]
             try:
                 selected_seed = {
                     "scheme": "exact",
-                    "network": str(signer_requirement.network),
+                    "network": str(signer_requirement["network"]),
                     "asset_identifier": requirement["asset_identifier"],
-                    "decimals": int(signer_requirement.decimals),
-                    "amount_atomic": str(signer_requirement.atomic_amount),
-                    "pay_to": str(signer_requirement.pay_to),
+                    "decimals": int(signer_requirement["decimals"]),
+                    "amount_atomic": str(signer_requirement["atomic_amount"]),
+                    "pay_to": str(signer_requirement["pay_to"]),
                 }
                 signer_hash = sha256_prefixed(canonical_json(selected_seed))
-            except (AttributeError, TypeError, ValueError, PaymentContractError):
+            except (KeyError, TypeError, ValueError, PaymentContractError):
                 signer_hash = None
             if signer_hash != requirement["credential_payload_hash"]:
                 raise PaymentExecutionError(
@@ -1408,12 +1602,75 @@ class Payment402Client:
                 )
         return requirement
 
-    def _record_session_spend(self, parsed: ParsedChallenge, l402_report: Optional[Any] = None):
+    def _record_session_spend(
+        self,
+        parsed: ParsedChallenge,
+        l402_report: Optional[Any] = None,
+        approved_usd_value: Optional[Any] = None,
+    ):
         if not self.policy:
             return
         if l402_report and not getattr(l402_report, "payment_performed", True):
             return
-        self.policy._session_spent_usd += self._estimate_usd_value(parsed)
+        spend = (
+            float(Decimal(str(approved_usd_value)))
+            if approved_usd_value is not None
+            else self._estimate_usd_value(parsed)
+        )
+        self.policy._session_spent_usd += spend
+
+    def _capture_approved_receipt_snapshot(
+        self, parsed: ParsedChallenge
+    ) -> Dict[str, Any]:
+        canonical_snapshot_json = getattr(
+            parsed, "_approved_canonical_snapshot", None
+        )
+        if not isinstance(canonical_snapshot_json, str):
+            raise PaymentExecutionError(
+                "Fail-Closed: Receipt metadata has no approved canonical snapshot."
+            )
+        return {
+            "canonical_snapshot_json": canonical_snapshot_json,
+            "scheme": str(parsed.scheme),
+            "network": str(parsed.network),
+            "asset": str(parsed.asset),
+            "amount": parsed.amount,
+            "atomic_amount": getattr(parsed, "_atomic_amount", None),
+            "usd_value": str(self._estimate_usd_decimal(parsed)),
+        }
+
+    def _assert_approved_receipt_snapshot_unchanged(
+        self,
+        parsed: ParsedChallenge,
+        snapshot: Mapping[str, Any],
+        *,
+        target_url: str,
+        method: str,
+    ) -> Dict[str, Any]:
+        requirement = self._assert_approved_canonical_snapshot_unchanged(
+            parsed,
+            target_url=target_url,
+            method=method,
+            expected_snapshot_json=str(snapshot["canonical_snapshot_json"]),
+        )
+        current_projection = {
+            "scheme": str(parsed.scheme),
+            "network": str(parsed.network),
+            "asset": str(parsed.asset),
+            "amount": parsed.amount,
+            "atomic_amount": getattr(parsed, "_atomic_amount", None),
+        }
+        expected_projection = {
+            key: snapshot[key]
+            for key in (
+                "scheme", "network", "asset", "amount", "atomic_amount"
+            )
+        }
+        if current_projection != expected_projection:
+            raise PaymentExecutionError(
+                "Fail-Closed: Receipt metadata changed during payment execution."
+            )
+        return requirement
 
     def _new_settlement_receipt(
         self,
@@ -1422,21 +1679,33 @@ class Payment402Client:
         proof_ref: Any,
         l402_report: Optional[Any],
         endpoint: str,
+        approved_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> SettlementReceipt:
-        requirement = getattr(parsed, "_canonical_requirement", None) or {}
+        if approved_snapshot is not None:
+            requirement = json.loads(
+                str(approved_snapshot["canonical_snapshot_json"])
+            )
+            receipt_scheme = str(approved_snapshot["scheme"])
+            receipt_asset = str(approved_snapshot["asset"])
+            receipt_amount = approved_snapshot["amount"]
+        else:
+            requirement = getattr(parsed, "_canonical_requirement", None) or {}
+            receipt_scheme = parsed.scheme
+            receipt_asset = parsed.asset
+            receipt_amount = parsed.amount
         payment_id = requirement.get("payment_id") if isinstance(requirement, Mapping) else None
         requirement_hash = requirement.get("requirement_hash") if isinstance(requirement, Mapping) else None
         settlement_verified = bool(
-            parsed.scheme == "L402"
+            receipt_scheme == "L402"
             and payment_id
             and getattr(l402_report, "payment_hash", None) == payment_id
         )
         return SettlementReceipt(
             receipt_id=payment_id or str(uuid.uuid4()),
-            scheme=parsed.scheme,
+            scheme=receipt_scheme,
             network=network_name,
-            asset=parsed.asset,
-            settled_amount=parsed.amount,
+            asset=receipt_asset,
+            settled_amount=receipt_amount,
             proof_reference=_normalize_receipt_proof_reference(proof_ref),
             verification_status=(
                 "settlement_verified" if settlement_verified else "unverified"
@@ -1655,10 +1924,29 @@ class Payment402Client:
             raise PaymentExecutionError("auth_capture_execution_not_supported: SDK will not execute auth-capture.")
 
         canonical_v1 = None
+        approved_exact_snapshot = None
+        approved_exact_snapshot_json = None
+        approved_canonical_snapshot_json = None
         if getattr(parsed, "_approved_requirement_hash", None):
             canonical_v1 = self._recheck_policy_binding_before_payment(
                 parsed, target_url=url, method=method.upper()
             )
+            approved_canonical_snapshot_json = canonical_json(canonical_v1)
+            if canonical_v1["rail"] == "x402":
+                approved_exact_snapshot_json = getattr(
+                    parsed, "_approved_signer_snapshot", None
+                )
+                approved_exact_snapshot = (
+                    self._assert_approved_exact_signer_snapshot_unchanged(
+                        parsed,
+                        target_url=url,
+                        method=method.upper(),
+                        expected_snapshot_json=approved_exact_snapshot_json,
+                        expected_canonical_snapshot_json=(
+                            approved_canonical_snapshot_json
+                        ),
+                    )
+                )
             idempotency_values = [
                 str(value)
                 for key, value in headers.items()
@@ -1678,22 +1966,36 @@ class Payment402Client:
         l402_report = None
 
         if parsed.scheme in [SchemeType.x402.value, SchemeType.lnc_evm_relay.value, SchemeType.lnc_evm_transfer.value, "exact"]:
-            is_svm_exact = parsed.scheme == "exact" and parsed.network.startswith("solana:")
+            credential_parameters = parsed.parameters or {}
+            if approved_exact_snapshot is not None:
+                credential_parameters = approved_exact_snapshot[
+                    "parsed_projection"
+                ]["parameters"]
+                canonical_req = CanonicalPaymentRequirement(
+                    **approved_exact_snapshot["signer_requirement"]
+                )
+            else:
+                canonical_req = (
+                    getattr(parsed, "_signer_requirement", None)
+                    or getattr(parsed, "_canonical_requirement", None)
+                )
 
-            reason = parsed.parameters.get("_selection_reason")
+            is_svm_exact = (
+                parsed.scheme == "exact"
+                and canonical_req is not None
+                and str(canonical_req.network).startswith("solana:")
+            )
+
+            reason = credential_parameters.get("_selection_reason")
             if reason in [
                 "unknown_token_contract", "no_allowed_network_match",
                 "outer_inner_mismatch", "invalid_atomic_amount", "invalid_network",
             ]:
                 raise PaymentExecutionError(f"Fail-Closed: {reason}")
 
-            raw_accepted = parsed.parameters.get("_raw_accepted") or {}
+            raw_accepted = credential_parameters.get("_raw_accepted") or {}
             extra = raw_accepted.get("extra") or {}
 
-            canonical_req: CanonicalPaymentRequirement = (
-                getattr(parsed, "_signer_requirement", None)
-                or getattr(parsed, "_canonical_requirement", None)
-            )
             if not canonical_req:
                 if parsed.scheme == "exact":
                     raise PaymentExecutionError(
@@ -1704,11 +2006,11 @@ class Payment402Client:
                     network=_normalize_network(parsed.network),
                     chain_id=int(parsed.network.split(":")[1]) if "eip155:" in parsed.network else 137,
                     asset=parsed.asset,
-                    token_address_or_mint=parsed.parameters.get("token_address") or "",
+                    token_address_or_mint=credential_parameters.get("token_address") or "",
                     decimals=6,
                     atomic_amount=str(int(parsed.amount * 1000000)),
                     human_amount_decimal=Decimal(str(parsed.amount)),
-                    pay_to=parsed.parameters.get("destination") or parsed.parameters.get("payTo") or "",
+                    pay_to=credential_parameters.get("destination") or credential_parameters.get("payTo") or "",
                     source_origin="synthesized_in_process_payment"
                 )
 
@@ -1753,6 +2055,17 @@ class Payment402Client:
                     memo=extra.get("memo")
                 )
 
+                if approved_exact_snapshot is not None:
+                    self._assert_approved_exact_signer_snapshot_unchanged(
+                        parsed,
+                        target_url=url,
+                        method=method.upper(),
+                        expected_snapshot_json=approved_exact_snapshot_json,
+                        expected_canonical_snapshot_json=(
+                            approved_canonical_snapshot_json
+                        ),
+                    )
+
                 if not svm_payload or not svm_payload.get("transaction"):
                     raise PaymentExecutionError("Fail-Closed: Invalid SVM signer output.")
 
@@ -1778,7 +2091,7 @@ class Payment402Client:
                 proof_ref = "svm_exact_signature_payload"
                 network_name = parsed.network
 
-                raw_resource = parsed.parameters.get("_raw_resource")
+                raw_resource = credential_parameters.get("_raw_resource")
                 if not raw_resource:
                     raw_resource = {"url": url, "description": "Agent Payment", "mimeType": "application/json"}
 
@@ -1789,7 +2102,7 @@ class Payment402Client:
                     "resource": raw_resource
                 }
 
-                raw_extensions = parsed.parameters.get("_raw_extensions")
+                raw_extensions = credential_parameters.get("_raw_extensions")
                 if raw_extensions:
                     cdp_v2_payload["extensions"] = raw_extensions
 
@@ -1861,6 +2174,17 @@ class Payment402Client:
                             canonical_req.asset, legacy_human_amount, canonical_req.pay_to, chain_id_to_use, raw_asset
                         )
 
+                    if approved_exact_snapshot is not None:
+                        self._assert_approved_exact_signer_snapshot_unchanged(
+                            parsed,
+                            target_url=url,
+                            method=method.upper(),
+                            expected_snapshot_json=approved_exact_snapshot_json,
+                            expected_canonical_snapshot_json=(
+                                approved_canonical_snapshot_json
+                            ),
+                        )
+
                     eip3009_validation_error = None
                     try:
                         validate_eip3009_payload(
@@ -1907,7 +2231,7 @@ class Payment402Client:
                             "extra": {"name": "USD Coin", "version": "2"}
                         }
 
-                    raw_resource = parsed.parameters.get("_raw_resource")
+                    raw_resource = credential_parameters.get("_raw_resource")
                     if not raw_resource:
                         raw_resource = {"url": url, "description": "Agent Payment", "mimeType": "application/json"}
 
@@ -1918,7 +2242,7 @@ class Payment402Client:
                         "resource": raw_resource
                     }
 
-                    raw_extensions = parsed.parameters.get("_raw_extensions")
+                    raw_extensions = credential_parameters.get("_raw_extensions")
                     if raw_extensions:
                         cdp_v2_payload["extensions"] = raw_extensions
 
@@ -2467,6 +2791,7 @@ class Payment402Client:
                 deferred_error_message = None
                 deferred_error_record = None
                 approval_completed = False
+                approved_receipt_snapshot = None
 
                 try:
                     self._approve_payment_requirement(
@@ -2477,9 +2802,18 @@ class Payment402Client:
                         fingerprint=fingerprint,
                     )
                     approval_completed = True
+                    approved_receipt_snapshot = (
+                        self._capture_approved_receipt_snapshot(parsed)
+                    )
                     proof_ref, network_name, l402_report = self._process_payment(
                         parsed, headers, payload, method=method, url=url,
                         _attempt_tracker=attempt_tracker,
+                    )
+                    self._assert_approved_receipt_snapshot_unchanged(
+                        parsed,
+                        approved_receipt_snapshot,
+                        target_url=url,
+                        method=method_upper,
                     )
 
                     payment_performed = not (
@@ -2490,13 +2824,26 @@ class Payment402Client:
                     else:
                         self._update_payment_state(context, fingerprint, "completed")
                         context._payment_executed = True
-                        self._record_session_spend(parsed, l402_report)
+                        self._record_session_spend(
+                            parsed,
+                            l402_report,
+                            approved_usd_value=approved_receipt_snapshot["usd_value"],
+                        )
 
                     payment_completed = True
-                    delta_usd = self._estimate_usd_value(parsed) if payment_performed else 0.0
+                    delta_usd = (
+                        float(Decimal(approved_receipt_snapshot["usd_value"]))
+                        if payment_performed
+                        else 0.0
+                    )
 
                     receipt = self._new_settlement_receipt(
-                        parsed, network_name, proof_ref, l402_report, url
+                        parsed,
+                        network_name,
+                        proof_ref,
+                        l402_report,
+                        url,
+                        approved_snapshot=approved_receipt_snapshot,
                     )
                     self.last_receipt = receipt
 
@@ -2506,14 +2853,15 @@ class Payment402Client:
                     )
 
                     next_result.settlement_receipt = receipt
-                    next_result.used_scheme = parsed.scheme
-                    next_result.used_asset = parsed.asset
+                    next_result.used_scheme = receipt.scheme
+                    next_result.used_asset = receipt.asset
                     next_result.verification_status = receipt.verification_status
 
                     if self.evidence_repo:
                         record = PaymentEvidenceRecord(
                             session_id=context.session_id, correlation_id=context.correlation_id,
-                            target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                            target_url=url, method=method, scheme=receipt.scheme,
+                            asset=receipt.asset, amount=receipt.settled_amount,
                             trust_decision=decision, receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
                             outcome=next_result.outcome, session_spend_delta_usd=delta_usd,
                             delegate_source=getattr(l402_report, "delegate_source", "native") if l402_report else "native",
@@ -2538,7 +2886,16 @@ class Payment402Client:
                     if payment_completed:
                         self._mark_known_settled_ambiguity(context, fingerprint)
                     elif attempt_tracker.irreversible_attempt_started:
-                        reserve_delta = self._reserve_ambiguous_spend(context, fingerprint, parsed)
+                        reserve_delta = self._reserve_ambiguous_spend(
+                            context,
+                            fingerprint,
+                            parsed,
+                            approved_usd_value=(
+                                approved_receipt_snapshot["usd_value"]
+                                if approved_receipt_snapshot is not None
+                                else None
+                            ),
+                        )
                         self._update_payment_state(context, fingerprint, "ambiguous")
                     else:
                         self._update_payment_state(context, fingerprint, "validation_failed")
@@ -2561,9 +2918,17 @@ class Payment402Client:
                             deferred_error_message = final_err
 
                     if self.evidence_repo:
+                        evidence_projection = approved_receipt_snapshot or {
+                            "scheme": parsed.scheme,
+                            "asset": parsed.asset,
+                            "amount": parsed.amount,
+                        }
                         record_kwargs = {
                             "session_id": context.session_id, "correlation_id": context.correlation_id,
-                            "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
+                            "target_url": url, "method": method,
+                            "scheme": evidence_projection["scheme"],
+                            "asset": evidence_projection["asset"],
+                            "amount": evidence_projection["amount"],
                             "trust_decision": decision, "error_message": final_err,
                             "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
                             "sandbox": getattr(self, "_last_sandbox_evidence", None)
@@ -2881,6 +3246,7 @@ class Payment402Client:
                 deferred_error_message = None
                 deferred_error_record = None
                 approval_completed = False
+                approved_receipt_snapshot = None
 
                 try:
                     self._approve_payment_requirement(
@@ -2891,6 +3257,9 @@ class Payment402Client:
                         fingerprint=fingerprint,
                     )
                     approval_completed = True
+                    approved_receipt_snapshot = (
+                        self._capture_approved_receipt_snapshot(parsed)
+                    )
                     loop = asyncio.get_running_loop()
                     def _process_wrapper():
                         return self._process_payment(
@@ -2902,6 +3271,12 @@ class Payment402Client:
                     if inspect.isawaitable(payment_result):
                         payment_result = await payment_result
                     proof_ref, network_name, l402_report = payment_result
+                    self._assert_approved_receipt_snapshot_unchanged(
+                        parsed,
+                        approved_receipt_snapshot,
+                        target_url=url,
+                        method=method_upper,
+                    )
 
                     payment_performed = not (
                         l402_report and not getattr(l402_report, "payment_performed", True)
@@ -2911,13 +3286,26 @@ class Payment402Client:
                     else:
                         self._update_payment_state(context, fingerprint, "completed")
                         context._payment_executed = True
-                        self._record_session_spend(parsed, l402_report)
+                        self._record_session_spend(
+                            parsed,
+                            l402_report,
+                            approved_usd_value=approved_receipt_snapshot["usd_value"],
+                        )
 
                     payment_completed = True
-                    delta_usd = self._estimate_usd_value(parsed) if payment_performed else 0.0
+                    delta_usd = (
+                        float(Decimal(approved_receipt_snapshot["usd_value"]))
+                        if payment_performed
+                        else 0.0
+                    )
 
                     receipt = self._new_settlement_receipt(
-                        parsed, network_name, proof_ref, l402_report, url
+                        parsed,
+                        network_name,
+                        proof_ref,
+                        l402_report,
+                        url,
+                        approved_snapshot=approved_receipt_snapshot,
                     )
                     self.last_receipt = receipt
 
@@ -2928,14 +3316,15 @@ class Payment402Client:
                     )
 
                     next_result.settlement_receipt = receipt
-                    next_result.used_scheme = parsed.scheme
-                    next_result.used_asset = parsed.asset
+                    next_result.used_scheme = receipt.scheme
+                    next_result.used_asset = receipt.asset
                     next_result.verification_status = receipt.verification_status
 
                     if getattr(self, "evidence_repo", None):
                         record = PaymentEvidenceRecord(
                             session_id=context.session_id, correlation_id=context.correlation_id,
-                            target_url=url, method=method, scheme=parsed.scheme, asset=parsed.asset, amount=parsed.amount,
+                            target_url=url, method=method, scheme=receipt.scheme,
+                            asset=receipt.asset, amount=receipt.settled_amount,
                             trust_decision=decision,
                             receipt_summary={"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status},
                             outcome=next_result.outcome,
@@ -2962,7 +3351,16 @@ class Payment402Client:
                     if payment_completed:
                         self._mark_known_settled_ambiguity(context, fingerprint)
                     elif attempt_tracker.irreversible_attempt_started:
-                        reserve_delta = self._reserve_ambiguous_spend(context, fingerprint, parsed)
+                        reserve_delta = self._reserve_ambiguous_spend(
+                            context,
+                            fingerprint,
+                            parsed,
+                            approved_usd_value=(
+                                approved_receipt_snapshot["usd_value"]
+                                if approved_receipt_snapshot is not None
+                                else None
+                            ),
+                        )
                         self._update_payment_state(context, fingerprint, "ambiguous")
                     else:
                         self._update_payment_state(context, fingerprint, "validation_failed")
@@ -2985,9 +3383,17 @@ class Payment402Client:
                             deferred_error_message = final_err
 
                     if getattr(self, "evidence_repo", None):
+                        evidence_projection = approved_receipt_snapshot or {
+                            "scheme": parsed.scheme,
+                            "asset": parsed.asset,
+                            "amount": parsed.amount,
+                        }
                         record_kwargs = {
                             "session_id": context.session_id, "correlation_id": context.correlation_id,
-                            "target_url": url, "method": method, "scheme": parsed.scheme, "asset": parsed.asset, "amount": parsed.amount,
+                            "target_url": url, "method": method,
+                            "scheme": evidence_projection["scheme"],
+                            "asset": evidence_projection["asset"],
+                            "amount": evidence_projection["amount"],
                             "trust_decision": decision, "error_message": final_err,
                             "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
                             "sandbox": getattr(self, "_last_sandbox_evidence", None)

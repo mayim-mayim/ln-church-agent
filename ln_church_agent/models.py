@@ -214,6 +214,8 @@ class ParsedChallenge(BaseModel):
     _canonical_requirement: Optional[Any] = PrivateAttr(default=None)
     _signer_requirement: Optional[Any] = PrivateAttr(default=None)
     _approved_requirement_hash: Optional[str] = PrivateAttr(default=None)
+    _approved_canonical_snapshot: Optional[str] = PrivateAttr(default=None)
+    _approved_signer_snapshot: Optional[str] = PrivateAttr(default=None)
 
 class CanonicalPaymentRequirement(BaseModel):
     """P0-B: PolicyとSignerが合意するための正規化された支払要件"""

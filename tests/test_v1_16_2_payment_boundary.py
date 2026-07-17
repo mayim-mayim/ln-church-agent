@@ -1086,6 +1086,103 @@ def test_exact_parser_private_canonical_flows_to_real_signer_and_verifier():
     assert signed_envelope["payload"]["authorization"]["value"] == "1000000"
 
 
+def test_exact_signer_cannot_mutate_approved_payto_during_callback():
+    real_signer = LocalKeyAdapter(EVM_PRIVATE_KEY)
+
+    class MutatingSigner:
+        address = real_signer.address
+        client = None
+
+        def generate_eip3009_payload_atomic(self, **kwargs):
+            parsed = self.client._last_parsed_challenge
+            parsed._signer_requirement.pay_to = OTHER_ADDRESS
+            mutated = dict(kwargs)
+            mutated["treasury_address"] = OTHER_ADDRESS
+            return real_signer.generate_eip3009_payload_atomic(**mutated)
+
+    signer = MutatingSigner()
+    evidence = _CaptureEvidence()
+    client = Payment402Client(evm_signer=signer, evidence_repo=evidence)
+    signer.client = client
+
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[_exact_402(), _transport_response(200, {"unexpected": True})],
+    ) as transport:
+        with pytest.raises(PaymentExecutionError):
+            client.execute_detailed("GET", "https://buyer.test/start")
+
+    assert transport.call_count == 1
+    assert evidence.records[-1].scheme == "exact"
+    assert evidence.records[-1].asset == "USDC"
+    assert evidence.records[-1].amount == 1.0
+
+
+def test_exact_signer_cannot_mutate_approved_selected_option_during_callback():
+    real_signer = LocalKeyAdapter(EVM_PRIVATE_KEY)
+
+    class MutatingSigner:
+        address = real_signer.address
+        client = None
+
+        def generate_eip3009_payload_atomic(self, **kwargs):
+            parsed = self.client._last_parsed_challenge
+            parsed.parameters["_raw_accepted"]["payTo"] = OTHER_ADDRESS
+            return real_signer.generate_eip3009_payload_atomic(**kwargs)
+
+    signer = MutatingSigner()
+    client = Payment402Client(evm_signer=signer)
+    signer.client = client
+
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[_exact_402(), _transport_response(200, {"unexpected": True})],
+    ) as transport:
+        with pytest.raises(PaymentExecutionError):
+            client.execute_detailed("GET", "https://buyer.test/start")
+
+    assert transport.call_count == 1
+
+
+def test_exact_signer_cannot_rewrite_the_approval_snapshot_during_callback():
+    real_signer = LocalKeyAdapter(EVM_PRIVATE_KEY)
+
+    class MutatingSigner:
+        address = real_signer.address
+        client = None
+
+        def generate_eip3009_payload_atomic(self, **kwargs):
+            parsed = self.client._last_parsed_challenge
+            parsed._signer_requirement.pay_to = OTHER_ADDRESS
+            parsed.parameters["_raw_accepted"]["payTo"] = OTHER_ADDRESS
+            parsed.asset = "JPYC"
+            parsed.amount = 2.0
+            parsed._approved_signer_snapshot = (
+                self.client._exact_signer_snapshot_json(parsed)
+            )
+            # Return a valid payload for the originally approved payment.  A
+            # post-callback check that trusts the rewritten PrivateAttr would
+            # otherwise allow the retry and mis-bind receipt metadata.
+            return real_signer.generate_eip3009_payload_atomic(**kwargs)
+
+    signer = MutatingSigner()
+    evidence = _CaptureEvidence()
+    client = Payment402Client(evm_signer=signer, evidence_repo=evidence)
+    signer.client = client
+
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[_exact_402(), _transport_response(200, {"unexpected": True})],
+    ) as transport:
+        with pytest.raises(PaymentExecutionError):
+            client.execute_detailed("GET", "https://buyer.test/start")
+
+    assert transport.call_count == 1
+    assert evidence.records[-1].scheme == "exact"
+    assert evidence.records[-1].asset == "USDC"
+    assert evidence.records[-1].amount == 1.0
+
+
 def test_exact_policy_ignores_tampered_public_float_amount():
     response = httpx.Response(
         402,
