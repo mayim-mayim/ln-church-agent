@@ -45,7 +45,8 @@ def test_canonical_next_action_navigation():
         assert mock_req.call_count == 2
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"
-        assert args[1] == "http://dummy.local/canonical-retry"
+        assert args[1] == "http://93.184.216.34/canonical-retry"
+        assert kwargs["headers"]["Host"] == "dummy.local"
 
 # ==========================================
 # 2. Body Alias の正規化確認
@@ -81,7 +82,8 @@ def test_body_alias_normalization():
         # 呼び出し履歴の検証 (GETなので payload は params に入る)
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"
-        assert args[1] == "http://dummy.local/alias-retry"
+        assert args[1] == "http://93.184.216.34/alias-retry"
+        assert kwargs["headers"]["Host"] == "dummy.local"
         assert kwargs["params"] == {"agent_mode": "strict"}
 
 # ==========================================
@@ -113,7 +115,8 @@ def test_location_header_same_origin_safe():
 
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"  # ヘッダ由来は必ずGETに正規化される
-        assert args[1] == "http://dummy.local/redirected"
+        assert args[1] == "http://93.184.216.34/redirected"
+        assert kwargs["headers"]["Host"] == "dummy.local"
 
 # ==========================================
 # 4. Guardrail: Cross-Origin と ヘッダ上書きのブロック確認
@@ -201,7 +204,8 @@ def test_async_alias_normalization():
 
             args, kwargs = mock_req.call_args_list[1]
             assert args[0] == "GET"
-            assert args[1] == "http://dummy.local/async-retry"
+            assert args[1] == "http://93.184.216.34/async-retry"
+            assert kwargs["headers"]["Host"] == "dummy.local"
 
     asyncio.run(run_test())
 

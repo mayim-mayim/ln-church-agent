@@ -6,14 +6,16 @@ import asyncio
 import importlib.metadata
 import uuid
 import inspect
-from urllib.parse import urlparse, parse_qsl, urlencode, urljoin
+from urllib.parse import urlparse, urlsplit, urlunsplit, parse_qsl, urlencode, urljoin
 from typing import Optional, Dict, Any, Callable, List, Tuple, Union
 import warnings
 import base64
 import json
 import hashlib
 import threading
+import time
 from decimal import Decimal, InvalidOperation
+from collections.abc import Mapping
 
 from eth_account import Account
 from .models import (
@@ -39,6 +41,23 @@ from .crypto.evm import (
     get_trusted_eip3009_metadata, validate_eip3009_payload, validate_evm_address,
 )
 from .crypto.solana_svm import validate_svm_exact_payload
+from .crypto.lightning import decode_bolt11_payment_metadata
+from .payment_contract import (
+    PaymentContractError,
+    build_canonical_payment_requirement,
+    canonical_json,
+    canonical_request_target,
+    sha256_prefixed,
+    verify_canonical_payment_requirement,
+    verify_request_binding,
+    verify_requirement_expiry,
+)
+from .receipts import evaluate_payment_receipt
+from .navigation import (
+    canonicalize_http_target,
+    resolve_host_addresses,
+    validate_redirect_target,
+)
 
 try:
     from .crypto.protocols import SolanaSigner
@@ -69,6 +88,7 @@ def get_sdk_version() -> str:
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
+_ORIGINAL_REQUESTS_REQUEST = requests.request
 
 def _decode_jwt_payload(token: str) -> dict:
     try:
@@ -138,6 +158,30 @@ _SAFE_EVIDENCE_KEYS = {
     "status-code", "completion-status", "satisfaction-level", "failure-reason",
     "upgrade-signal", "rubric-version", "taxonomy-version", "payment-hash",
 }
+
+# Receipt claims originate in an untrusted HTTP header.  Keep only identifiers
+# that are already known from the locally approved canonical requirement, and
+# only when the received value exactly matches that known value.  Arbitrary
+# decoded receipt JSON must never become persisted/public SDK state.
+_PUBLIC_RECEIPT_BINDING_CLAIMS = ("payment_id", "requirement_hash")
+_CANONICAL_PROOF_REFERENCE_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _normalize_receipt_proof_reference(value: Any) -> Optional[str]:
+    """Return only a canonical digest suitable for public receipt state.
+
+    Payment executors still receive and submit their original wire credential.
+    This function is intentionally applied only at the receipt-construction
+    boundary, after execution, so a preimage, signature, transaction marker, or
+    other rail-specific proof can never be retained by the public model.
+    """
+
+    if value is None:
+        return None
+    text_value = str(value)
+    if _CANONICAL_PROOF_REFERENCE_RE.fullmatch(text_value) is not None:
+        return text_value
+    return sha256_prefixed(text_value)
 
 
 def _is_secret_header_name(name: Any) -> bool:
@@ -235,6 +279,21 @@ def _strip_sensitive_headers(headers: Optional[dict]) -> dict:
         key: value for key, value in dict(headers or {}).items()
         if not _is_secret_header_name(key)
     }
+
+
+class _PinnedHTTPSAdapter(requests.adapters.HTTPAdapter):
+    """Connect to a vetted IP while authenticating the original DNS name."""
+
+    def __init__(self, server_hostname: str):
+        self._server_hostname = server_hostname
+        super().__init__()
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["server_hostname"] = self._server_hostname
+        pool_kwargs["assert_hostname"] = self._server_hostname
+        return super().init_poolmanager(
+            connections, maxsize, block=block, **pool_kwargs
+        )
 
 def _strip_payload_secrets(obj: Any) -> Any:
     if isinstance(obj, dict):
@@ -434,6 +493,10 @@ class Payment402Client:
         self.prefer_lightninglabs_l402 = prefer_lightninglabs_l402
         self.l402_delegate_allowed_hosts = l402_delegate_allowed_hosts or []
         self.allow_legacy_payment_auth_fallback = allow_legacy_payment_auth_fallback
+        self._clock = time.time
+        self._receipt_signature_verifier = None
+        self._receipt_settlement_binding_checker = None
+        self._navigation_resolver = lambda host, port: resolve_host_addresses(host, port)
 
     def _check_local_policy(self, url: str) -> None:
         target_netloc = _strict_netloc_from_url(url)
@@ -473,12 +536,118 @@ class Payment402Client:
             f"{method.upper()}:{canonical_url}:{payload_hash}:{operation_key}".encode()
         ).hexdigest()
 
+    def _logical_and_wire_idempotency_key(
+        self,
+        context: ExecutionContext,
+        url: str,
+        supplied_key: Optional[str] = None,
+        *,
+        initialize: bool = False,
+    ) -> Tuple[str, str]:
+        """Keep one logical key while deriving a non-forwarded cross-origin key."""
+        target = canonicalize_http_target(url)
+        self._init_context_state(context)
+        with context._payment_state_lock:
+            if initialize:
+                if not isinstance(supplied_key, str) or not supplied_key.strip():
+                    raise PaymentExecutionError(
+                        "Fail-Closed: Idempotency-Key must be a non-empty string."
+                    )
+                context._logical_operation_id = supplied_key
+                context._idempotency_key = supplied_key
+                context._origin_idempotency_keys = {target.origin: supplied_key}
+            elif context._logical_operation_id is None:
+                logical = (
+                    supplied_key
+                    or getattr(context, "_idempotency_key", None)
+                    or str(uuid.uuid4())
+                )
+                context._logical_operation_id = logical
+                context._idempotency_key = logical
+                context._origin_idempotency_keys[target.origin] = logical
+
+            logical = context._logical_operation_id
+            wire = context._origin_idempotency_keys.get(target.origin)
+            if wire is None:
+                wire = "lnc_" + hashlib.sha256(
+                    (
+                        "ln_church.origin_idempotency.v1|"
+                        + logical
+                        + "|"
+                        + target.origin
+                    ).encode("utf-8")
+                ).hexdigest()
+                context._origin_idempotency_keys[target.origin] = wire
+            return logical, wire
+
+    @staticmethod
+    def _extract_idempotency_key(headers: Mapping[str, Any]) -> Tuple[bool, Optional[str]]:
+        """Extract one explicit idempotency key without case-split ambiguity."""
+        values = [
+            value for key, value in headers.items()
+            if isinstance(key, str) and key.casefold() == "idempotency-key"
+        ]
+        if not values:
+            return False, None
+        if any(
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            for value in values
+        ):
+            raise PaymentExecutionError(
+                "Fail-Closed: Idempotency-Key must be a non-empty canonical string."
+            )
+        if any(value != values[0] for value in values[1:]):
+            raise PaymentExecutionError(
+                "Fail-Closed: Conflicting duplicate Idempotency-Key headers."
+            )
+        return True, values[0]
+
+    def _initialize_navigation_state(
+        self, context: ExecutionContext, fingerprint: str, url: str
+    ) -> None:
+        canonical = canonicalize_http_target(url).url
+        with context._payment_state_lock:
+            context._navigation_states.setdefault(
+                fingerprint, {"visited": {canonical}, "hops": 0}
+            )
+
+    def _claim_navigation_target(
+        self, context: ExecutionContext, fingerprint: str, url: str
+    ) -> None:
+        canonical = canonicalize_http_target(url).url
+        with context._payment_state_lock:
+            state = context._navigation_states.setdefault(
+                fingerprint, {"visited": set(), "hops": 0}
+            )
+            if canonical in state["visited"]:
+                raise NavigationGuardrailError(
+                    "Fail-Closed: Redirect or navigation loop detected."
+                )
+            if state["hops"] >= self.max_hops:
+                raise NavigationGuardrailError(
+                    "Fail-Closed: Redirect or navigation hop limit exceeded."
+                )
+            state["visited"].add(canonical)
+            state["hops"] += 1
+
     def _init_context_state(self, context: ExecutionContext):
         if not hasattr(context, "_payment_states"):
             context._payment_states = {}
             context._payment_state_lock = threading.RLock()
         if not hasattr(context, "_ambiguous_reservations"):
             context._ambiguous_reservations = {}
+        if not hasattr(context, "_known_settled_ambiguities"):
+            context._known_settled_ambiguities = set()
+        if not hasattr(context, "_payment_identities"):
+            context._payment_identities = {}
+        if not hasattr(context, "_origin_idempotency_keys"):
+            context._origin_idempotency_keys = {}
+        if not hasattr(context, "_navigation_states"):
+            context._navigation_states = {}
+        if not hasattr(context, "_navigation_pins"):
+            context._navigation_pins = {}
 
     def _assert_payment_state_allows_402(self, context: ExecutionContext, fingerprint: str) -> None:
         """Give terminal operation state priority over retry counters and parsing."""
@@ -506,17 +675,394 @@ class Payment402Client:
                 return
             context._payment_states[fingerprint] = state
 
-    def _parse_challenge(self, response: httpx.Response, expected_asset: str = "USDC", expected_chain_id: Optional[str] = None, prefer_svm: bool = False) -> ParsedChallenge:
+    def _mark_known_settled_ambiguity(
+        self, context: ExecutionContext, fingerprint: str
+    ) -> None:
+        """Mark paid-but-undelivered recovery without reserving spend twice."""
+        self._init_context_state(context)
+        with context._payment_state_lock:
+            context._known_settled_ambiguities.add(fingerprint)
+            context._payment_states[fingerprint] = "ambiguous"
+
+    def _register_payment_identity(
+        self, context: ExecutionContext, fingerprint: str, parsed: ParsedChallenge
+    ) -> None:
+        requirement = getattr(parsed, "_canonical_requirement", None)
+        if not isinstance(requirement, Mapping):
+            return
+        identities = tuple(
+            requirement.get(field) for field in ("payment_id", "requirement_hash")
+            if isinstance(requirement.get(field), str)
+        )
+        with context._payment_state_lock:
+            # Check the complete set before mutating so a later conflict cannot
+            # poison identity recovery with a partially registered challenge.
+            if any(
+                context._payment_identities.get(value) not in (None, fingerprint)
+                for value in identities
+            ):
+                raise PaymentExecutionError(
+                    "Fail-Closed: Payment identity was reused across logical operations."
+                )
+            for value in identities:
+                context._payment_identities[value] = fingerprint
+
+    def get_payment_operation_states(
+        self, context: ExecutionContext
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return payment states without exposing credentials or preimages."""
+        self._init_context_state(context)
+        with context._payment_state_lock:
+            identities_by_fingerprint: Dict[str, List[str]] = {}
+            for identity, fingerprint in context._payment_identities.items():
+                identities_by_fingerprint.setdefault(fingerprint, []).append(identity)
+            return {
+                fingerprint: {
+                    "state": state,
+                    "identities": sorted(identities_by_fingerprint.get(fingerprint, [])),
+                    "ambiguous_reservation_usd": str(
+                        context._ambiguous_reservations.get(fingerprint, Decimal("0"))
+                    ),
+                    "ambiguity_kind": (
+                        "known_settled_delivery"
+                        if fingerprint in context._known_settled_ambiguities
+                        else ("settlement_unknown" if state == "ambiguous" else None)
+                    ),
+                }
+                for fingerprint, state in context._payment_states.items()
+            }
+
+    def resolve_ambiguous_payment(
+        self, context: ExecutionContext, operation_or_payment_id: str, outcome: str
+    ) -> str:
+        """Apply an explicit external recovery result to one ambiguous operation.
+
+        ``outcome`` is either ``confirmed_paid`` or ``confirmed_not_paid``.
+        The SDK never infers the latter from a timeout or connection failure.
+        """
+        if outcome not in {"confirmed_paid", "confirmed_not_paid"}:
+            raise ValueError(
+                "outcome must be confirmed_paid or confirmed_not_paid"
+            )
+        self._init_context_state(context)
+        with context._payment_state_lock:
+            fingerprint = context._payment_identities.get(
+                operation_or_payment_id, operation_or_payment_id
+            )
+            if context._payment_states.get(fingerprint) != "ambiguous":
+                raise PaymentExecutionError(
+                    "Payment operation is not awaiting ambiguity recovery."
+                )
+            known_settled = fingerprint in context._known_settled_ambiguities
+            if known_settled and outcome == "confirmed_not_paid":
+                raise PaymentExecutionError(
+                    "Known-settled payment cannot be recovered as not paid."
+                )
+            if outcome == "confirmed_paid":
+                # A reservation for an unknown wallet outcome becomes actual
+                # spend.  Remove only the marker; do not refund the budget.
+                context._ambiguous_reservations.pop(fingerprint, None)
+                context._known_settled_ambiguities.discard(fingerprint)
+                context._payment_states[fingerprint] = "completed"
+            else:
+                reservation = context._ambiguous_reservations.pop(
+                    fingerprint, Decimal("0")
+                )
+                if self.policy and reservation:
+                    self.policy._session_spent_usd = max(
+                        0.0,
+                        self.policy._session_spent_usd - float(reservation),
+                    )
+                context._payment_states[fingerprint] = "not_started"
+            return context._payment_states[fingerprint]
+
+    def _bind_known_legacy_challenge_to_request(
+        self,
+        parsed: ParsedChallenge,
+        *,
+        request_url: str,
+        method: str,
+        idempotency_key: str,
+    ) -> ParsedChallenge:
+        """Upgrade known signed/atomic legacy shapes into the frozen contract.
+
+        Unknown values still remain inspect-only.  This bridge is intentionally
+        local: it binds the exact request the client is about to authorize and
+        never invents an amount, asset, token, network, decimals, or payee.
+        """
+        if isinstance(getattr(parsed, "_canonical_requirement", None), Mapping):
+            return parsed
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            return parsed
+
+        target = canonical_request_target(request_url, method)
+        now = int(self._clock())
+
+        if parsed.scheme in {"L402", "MPP", "Payment"}:
+            # Preserve every parser fail-closed sentinel.  Canonicalizing from
+            # the signed invoice must never erase a contradictory/invalid
+            # outer declaration and turn it into an executable challenge.
+            try:
+                self._validate_lightning_challenge_preflight(parsed)
+            except PaymentExecutionError:
+                return parsed
+            invoice = parsed.parameters.get("invoice")
+            if not isinstance(invoice, str):
+                return parsed
+            try:
+                metadata = decode_bolt11_payment_metadata(invoice)
+            except ValueError:
+                return parsed
+            if parsed.scheme == "L402":
+                macaroon = parsed.parameters.get("macaroon")
+                if (
+                    not isinstance(macaroon, str)
+                    or macaroon != macaroon.strip()
+                    or macaroon.startswith("<")
+                    or re.fullmatch(r"[A-Za-z0-9+/_=-]+", macaroon) is None
+                ):
+                    return parsed
+                rail = "l402"
+            else:
+                rail = "mpp"
+            challenge_seed = sha256_prefixed(
+                f"{parsed.scheme}|{invoice}|{parsed.raw_header or ''}"
+            )[7:]
+            fields = {
+                "schema_version": "ln_church.canonical_payment_requirement.v1",
+                **target,
+                "rail": rail,
+                "authorization_scheme": parsed.scheme,
+                "asset_identifier": "lightning:sats",
+                "chain": "bitcoin",
+                "network": metadata["network"],
+                "decimals": 3,
+                "amount_atomic": metadata["amount_atomic"],
+                "pay_to": metadata["payee"],
+                "expires_at": metadata["expires_at"],
+                "challenge_id": "ch_" + challenge_seed[:24],
+                "payment_id": metadata["payment_hash"],
+                "idempotency_key": idempotency_key,
+                "credential_payload_hash": sha256_prefixed(invoice),
+            }
+            try:
+                requirement = build_canonical_payment_requirement(fields)
+            except PaymentContractError:
+                return parsed
+            signer_requirement = getattr(parsed, "_canonical_requirement", None)
+            parsed._signer_requirement = signer_requirement
+            parsed._canonical_requirement = requirement
+            parsed._invoice_msats = int(metadata["amount_atomic"])
+            parsed._atomic_amount = metadata["amount_atomic"]
+            parsed.network = metadata["network"]
+            parsed.asset = "SATS"
+            parsed.parameters.update(
+                {
+                    "challenge_id": requirement["challenge_id"],
+                    "payment_id": requirement["payment_id"],
+                    "idempotency_key": idempotency_key,
+                    "requirement_hash": requirement["requirement_hash"],
+                    "_selection_reason": "locally_bound_known_lightning",
+                }
+            )
+            return parsed
+
+        signer_requirement = getattr(parsed, "_canonical_requirement", None)
+        if parsed.scheme != "exact" or signer_requirement is None:
+            return parsed
+        try:
+            network = str(signer_requirement.network)
+            token = str(signer_requirement.token_address_or_mint)
+            atomic_amount = str(signer_requirement.atomic_amount)
+            decimals = int(signer_requirement.decimals)
+            pay_to = str(signer_requirement.pay_to)
+            asset = str(signer_requirement.asset)
+            if (
+                not token
+                or not pay_to
+                or re.fullmatch(r"[1-9][0-9]*", atomic_amount) is None
+            ):
+                return parsed
+            chain = "eip155" if network.startswith("eip155:") else (
+                "solana" if network.startswith("solana:") else ""
+            )
+            if not chain:
+                return parsed
+            asset_identifier = f"{network}/token:{token}"
+            selected_seed = {
+                "scheme": "exact",
+                "network": network,
+                "asset_identifier": asset_identifier,
+                "decimals": decimals,
+                "amount_atomic": atomic_amount,
+                "pay_to": pay_to,
+            }
+            selected_hash = sha256_prefixed(canonical_json(selected_seed))
+            fields = {
+                "schema_version": "ln_church.canonical_payment_requirement.v1",
+                **target,
+                "rail": "x402",
+                "authorization_scheme": "x402",
+                "asset_identifier": asset_identifier,
+                "chain": chain,
+                "network": network,
+                "decimals": decimals,
+                "amount_atomic": atomic_amount,
+                "pay_to": pay_to,
+                "expires_at": str(now + 300),
+                "challenge_id": "ch_" + selected_hash[7:31],
+                "payment_id": "pay_" + selected_hash[7:31],
+                "idempotency_key": idempotency_key,
+                "credential_payload_hash": selected_hash,
+            }
+            requirement = build_canonical_payment_requirement(fields)
+        except (AttributeError, TypeError, ValueError, PaymentContractError):
+            return parsed
+        parsed._signer_requirement = signer_requirement
+        parsed._canonical_requirement = requirement
+        parsed._atomic_amount = atomic_amount
+        parsed.parameters.update(
+            {
+                "challenge_id": requirement["challenge_id"],
+                "payment_id": requirement["payment_id"],
+                "idempotency_key": idempotency_key,
+                "requirement_hash": requirement["requirement_hash"],
+                "_selection_reason": "locally_bound_known_exact",
+            }
+        )
+        return parsed
+
+    def _validate_lightning_challenge_preflight(
+        self, parsed: ParsedChallenge
+    ) -> None:
+        """Validate inspect-time Lightning declarations before any wallet call."""
+        if parsed.scheme not in {"L402", "MPP", "Payment"}:
+            return
+
+        if parsed.scheme == "Payment":
+            request_declared = bool(
+                getattr(parsed, "request_b64_present", False)
+            ) or any(
+                isinstance(key, str) and key.casefold() == "request"
+                for key in parsed.parameters
+            )
+            draft_shape = getattr(parsed, "draft_shape", None)
+            if request_declared and draft_shape != "payment-auth-draft":
+                raise PaymentExecutionError(
+                    "Fail-Closed: invalid-payment-auth-request"
+                )
+            if request_declared and (
+                not isinstance(getattr(parsed, "payment_method", None), str)
+                or parsed.payment_method.casefold() != "lightning"
+            ):
+                raise PaymentExecutionError(
+                    "Fail-Closed: invalid-payment-auth-request"
+                )
+
+        if getattr(parsed, "payment_intent", None) == "session":
+            raise PaymentExecutionError(
+                "Fail-Closed: mpp_session_not_supported_yet"
+            )
+
+        if (
+            parsed.scheme == "Payment"
+            and getattr(parsed, "draft_shape", None) == "payment-auth-draft"
+            and not getattr(self, "allow_legacy_payment_auth_fallback", False)
+        ):
+            raise PaymentExecutionError(
+                "Fail-Closed: unsupported-payment-auth-json"
+            )
+
+        inv_msats = getattr(parsed, "_invoice_msats", None)
+        if inv_msats == -2:
+            raise PaymentExecutionError(
+                "Fail-Closed: Mismatch between MPP declared amount and BOLT11 invoice amount."
+            )
+        if inv_msats == -3:
+            raise PaymentExecutionError(
+                "Fail-Closed: Unparseable declared amount in request."
+            )
+        if inv_msats == -4:
+            raise PaymentExecutionError(
+                "Fail-Closed: Unknown currency or unit declared."
+            )
+        if not isinstance(inv_msats, int) or isinstance(inv_msats, bool) or inv_msats <= 0:
+            raise PaymentExecutionError(
+                "Fail-Closed: Invalid, amountless, or negative BOLT11 invoice."
+            )
+
+        if parsed.scheme == "L402":
+            from .adapters.l402_delegate import _validated_l402_challenge
+
+            _validated_l402_challenge(parsed)
+
+    def _parse_challenge(
+        self, response: httpx.Response, expected_asset: str = "USDC",
+        expected_chain_id: Optional[str] = None, prefer_svm: bool = False,
+        request_url: Optional[str] = None, method: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> ParsedChallenge:
         allowed = getattr(self.policy, "allowed_networks", None) if self.policy else None
         prefer_svm_flag = prefer_svm or self.svm_signer is not None
-        return parse_challenge_from_response(response, expected_asset=expected_asset, expected_chain_id=expected_chain_id, allowed_networks=allowed, prefer_svm=prefer_svm_flag)
+        parsed = parse_challenge_from_response(
+            response,
+            expected_asset=expected_asset,
+            expected_chain_id=expected_chain_id,
+            allowed_networks=allowed,
+            prefer_svm=prefer_svm_flag,
+            now=int(self._clock()),
+            request_url=request_url,
+            request_method=method,
+            request_idempotency_key=idempotency_key,
+        )
+        if request_url and method and idempotency_key:
+            parsed = self._bind_known_legacy_challenge_to_request(
+                parsed,
+                request_url=request_url,
+                method=method,
+                idempotency_key=idempotency_key,
+            )
+        return parsed
 
     def _parse_www_authenticate(self, auth_header: str, source: ChallengeSource) -> ParsedChallenge:
         return parse_www_authenticate(auth_header, source)
 
     def _estimate_usd_decimal(self, parsed: ParsedChallenge) -> Decimal:
         canonical = getattr(parsed, "_canonical_requirement", None)
-        if canonical is not None:
+        if isinstance(canonical, Mapping) and canonical.get("schema_version") == "ln_church.canonical_payment_requirement.v1":
+            canonical_error = None
+            try:
+                value = verify_canonical_payment_requirement(canonical)
+                atomic_amount = getattr(parsed, "_atomic_amount", None)
+                if atomic_amount != value["amount_atomic"]:
+                    raise ValueError("canonical atomic amount mismatch")
+                human_amount = Decimal(value["amount_atomic"]) / (
+                    Decimal(10) ** int(value["decimals"])
+                )
+                asset_identifier = value["asset_identifier"]
+                if asset_identifier == "lightning:sats":
+                    canonical_asset = "SATS"
+                elif (
+                    getattr(parsed, "_signer_requirement", None) is not None
+                    and getattr(parsed._signer_requirement, "asset", None)
+                    in {"USDC", "JPYC"}
+                ):
+                    canonical_asset = str(parsed._signer_requirement.asset)
+                elif asset_identifier.endswith(":usdc"):
+                    canonical_asset = "USDC"
+                elif asset_identifier.endswith(":jpyc"):
+                    canonical_asset = "JPYC"
+                else:
+                    raise ValueError("unknown canonical asset identifier")
+                if parsed.asset != canonical_asset:
+                    raise ValueError("canonical asset mismatch")
+            except (PaymentContractError, InvalidOperation, TypeError, ValueError) as caught_error:
+                canonical_error = sanitize_error_msg(str(caught_error))
+            if canonical_error is not None:
+                raise PaymentExecutionError(
+                    f"Fail-Closed: Invalid canonical amount for policy evaluation. {canonical_error}"
+                ) from None
+        elif canonical is not None:
             atomic_amount = getattr(parsed, "_atomic_amount", None)
             canonical_error = None
             try:
@@ -704,9 +1250,49 @@ class Payment402Client:
         except Exception:
             return
 
-    def _enforce_policy(self, parsed: ParsedChallenge, target_url: str):
+    def _enforce_policy(
+        self, parsed: ParsedChallenge, target_url: str, method: Optional[str] = None,
+        require_canonical: bool = False,
+    ):
+        canonical = getattr(parsed, "_canonical_requirement", None)
+        requirement = None
+        if not isinstance(canonical, Mapping) and require_canonical:
+            raise PaymentExecutionError(
+                "Fail-Closed: Executable challenge has no complete canonical payment requirement."
+            )
+        if isinstance(canonical, Mapping):
+            try:
+                requirement = verify_request_binding(
+                    canonical,
+                    request_url=target_url,
+                    method=(method or str(canonical.get("method", ""))).upper(),
+                )
+                verify_requirement_expiry(requirement, now=int(self._clock()))
+            except (PaymentContractError, ValueError, TypeError) as exc:
+                raise PaymentExecutionError(
+                    f"Fail-Closed: Invalid canonical payment requirement. {sanitize_error_msg(str(exc))}"
+                ) from None
+
+            expected_scheme = {
+                "l402": "L402",
+                "x402": "exact",
+            }.get(requirement["rail"], requirement["authorization_scheme"])
+            if parsed.scheme != expected_scheme:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Selected payment rail contradicts canonical requirement."
+                )
+            if parsed.network != requirement["network"]:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Selected network contradicts canonical requirement."
+                )
+            if getattr(parsed, "_atomic_amount", None) != requirement["amount_atomic"]:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Selected amount contradicts canonical requirement."
+                )
+            parsed._approved_requirement_hash = requirement["requirement_hash"]
+
         if not self.policy:
-            return
+            return requirement["requirement_hash"] if requirement else None
 
         usd_decimal = self._estimate_usd_decimal(parsed)
         if self.policy.max_spend_per_tx_usd == 0.0 and usd_decimal > 0:
@@ -730,12 +1316,204 @@ class Payment402Client:
             if parsed.network not in self.policy.allowed_networks:
                 raise PaymentExecutionError(f"Policy Violation: Network '{parsed.network}' is not in allowed_networks.")
 
+        return requirement["requirement_hash"] if requirement else None
+
+    def _approve_payment_requirement(
+        self,
+        parsed: ParsedChallenge,
+        *,
+        target_url: str,
+        method: str,
+        context: ExecutionContext,
+        fingerprint: str,
+    ) -> None:
+        """Bind policy approval to canonical bytes before state reservation."""
+        try:
+            self._validate_lightning_challenge_preflight(parsed)
+            self._enforce_policy(
+                parsed, target_url, method, require_canonical=True
+            )
+
+            if getattr(parsed, "_invoice_msats", None) is not None:
+                dec_sats = Decimal(str(parsed._invoice_msats)) / Decimal("1000")
+                if (
+                    self.policy.max_spend_per_tx_usd == 0.0
+                    and dec_sats > Decimal("0")
+                ):
+                    raise PaymentExecutionError(
+                        "Policy Violation: Strict 0 USD policy blocks sub-sat invoices."
+                    )
+            # Registration is an atomic replay boundary, not a parsing aid.
+            # Perform it only after canonical validation and policy approval so
+            # rejected challenges cannot poison later valid operations.
+            self._register_payment_identity(context, fingerprint, parsed)
+        except Exception:
+            self._update_payment_state(
+                context, fingerprint, "validation_failed"
+            )
+            raise
+
+    def _recheck_policy_binding_before_payment(
+        self, parsed: ParsedChallenge, *, target_url: str, method: str
+    ) -> Dict[str, Any]:
+        canonical = getattr(parsed, "_canonical_requirement", None)
+        approved_hash = getattr(parsed, "_approved_requirement_hash", None)
+        if not isinstance(canonical, Mapping) or not isinstance(approved_hash, str):
+            raise PaymentExecutionError(
+                "Fail-Closed: Payment requirement was not approved by policy."
+            )
+        try:
+            requirement = verify_request_binding(
+                canonical, request_url=target_url, method=method
+            )
+            verify_requirement_expiry(requirement, now=int(self._clock()))
+        except (PaymentContractError, ValueError, TypeError) as exc:
+            raise PaymentExecutionError(
+                f"Fail-Closed: Canonical payment requirement changed after policy approval. {sanitize_error_msg(str(exc))}"
+            ) from None
+        if requirement["requirement_hash"] != approved_hash:
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical payment requirement changed after policy approval."
+            )
+        if getattr(parsed, "_atomic_amount", None) != requirement["amount_atomic"]:
+            raise PaymentExecutionError(
+                "Fail-Closed: Canonical amount changed after policy approval."
+            )
+        if requirement["rail"] in {"l402", "mpp"}:
+            invoice = parsed.parameters.get("invoice")
+            if (
+                not isinstance(invoice, str)
+                or sha256_prefixed(invoice) != requirement["credential_payload_hash"]
+            ):
+                raise PaymentExecutionError(
+                    "Fail-Closed: Lightning credential payload changed after policy approval."
+                )
+        elif requirement["rail"] == "x402":
+            signer_requirement = getattr(parsed, "_signer_requirement", None)
+            try:
+                selected_seed = {
+                    "scheme": "exact",
+                    "network": str(signer_requirement.network),
+                    "asset_identifier": requirement["asset_identifier"],
+                    "decimals": int(signer_requirement.decimals),
+                    "amount_atomic": str(signer_requirement.atomic_amount),
+                    "pay_to": str(signer_requirement.pay_to),
+                }
+                signer_hash = sha256_prefixed(canonical_json(selected_seed))
+            except (AttributeError, TypeError, ValueError, PaymentContractError):
+                signer_hash = None
+            if signer_hash != requirement["credential_payload_hash"]:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Signer payload changed after policy approval."
+                )
+        return requirement
+
     def _record_session_spend(self, parsed: ParsedChallenge, l402_report: Optional[Any] = None):
         if not self.policy:
             return
         if l402_report and not getattr(l402_report, "payment_performed", True):
             return
         self.policy._session_spent_usd += self._estimate_usd_value(parsed)
+
+    def _new_settlement_receipt(
+        self,
+        parsed: ParsedChallenge,
+        network_name: str,
+        proof_ref: Any,
+        l402_report: Optional[Any],
+        endpoint: str,
+    ) -> SettlementReceipt:
+        requirement = getattr(parsed, "_canonical_requirement", None) or {}
+        payment_id = requirement.get("payment_id") if isinstance(requirement, Mapping) else None
+        requirement_hash = requirement.get("requirement_hash") if isinstance(requirement, Mapping) else None
+        settlement_verified = bool(
+            parsed.scheme == "L402"
+            and payment_id
+            and getattr(l402_report, "payment_hash", None) == payment_id
+        )
+        return SettlementReceipt(
+            receipt_id=payment_id or str(uuid.uuid4()),
+            scheme=parsed.scheme,
+            network=network_name,
+            asset=parsed.asset,
+            settled_amount=parsed.amount,
+            proof_reference=_normalize_receipt_proof_reference(proof_ref),
+            verification_status=(
+                "settlement_verified" if settlement_verified else "unverified"
+            ),
+            settlement_verified=settlement_verified,
+            payment_id=payment_id,
+            requirement_hash=requirement_hash,
+            delegate_source=getattr(l402_report, "delegate_source", "native") if l402_report else "native",
+            payment_hash=getattr(l402_report, "payment_hash", None) if l402_report else None,
+            fee_sats=getattr(l402_report, "fee_sats", None) if l402_report else None,
+            cached_token_used=getattr(l402_report, "cached_token_used", False) if l402_report else False,
+            payment_performed=getattr(l402_report, "payment_performed", True) if l402_report else True,
+            endpoint=endpoint,
+        )
+
+    def _apply_server_receipt_state(
+        self, receipt: Optional[SettlementReceipt], headers: Mapping[str, Any], status_code: int
+    ) -> None:
+        if receipt is None:
+            return
+
+        def settlement_binding(claims: Mapping[str, Any]) -> bool:
+            if (
+                claims.get("payment_id") != receipt.payment_id
+                or claims.get("requirement_hash") != receipt.requirement_hash
+            ):
+                return False
+            checker = self._receipt_settlement_binding_checker
+            return True if checker is None else checker(claims) is True
+
+        state = evaluate_payment_receipt(
+            headers,
+            status_code,
+            signature_verifier=self._receipt_signature_verifier,
+            settlement_binding_checker=settlement_binding,
+        )
+        receipt.present = state.present
+        receipt.server_asserted = state.server_asserted
+        receipt.signature_verified = state.signature_verified
+        # A locally verified preimage remains settlement evidence even when the
+        # HTTP receipt is merely unsigned.  A signed receipt can additionally
+        # establish the same state through the bound claims path.
+        receipt.settlement_verified = receipt.settlement_verified or state.settlement_verified
+        receipt.delivered = state.delivered
+        receipt.receipt_format = state.format
+        receipt.receipt_error = state.error
+        receipt.receipt_token_hash = (
+            sha256_prefixed(state.token) if state.token is not None else None
+        )
+        public_claims: Dict[str, str] = {}
+        if isinstance(state.claims, Mapping):
+            expected_claims = {
+                "payment_id": receipt.payment_id,
+                "requirement_hash": receipt.requirement_hash,
+            }
+            for claim_name in _PUBLIC_RECEIPT_BINDING_CLAIMS:
+                expected = expected_claims[claim_name]
+                if (
+                    isinstance(expected, str)
+                    and state.claims.get(claim_name) == expected
+                ):
+                    # Persist the already-known local value, not the untrusted
+                    # object supplied by the receipt.
+                    public_claims[claim_name] = expected
+        receipt.receipt_claims = public_claims or None
+        if state.signature_verified:
+            receipt.source = AttestationSource.SERVER_JWS
+        elif state.server_asserted:
+            receipt.source = AttestationSource.UNSIGNED_SERVER
+        if receipt.settlement_verified:
+            receipt.verification_status = "settlement_verified"
+        elif state.signature_verified:
+            receipt.verification_status = "signature_verified"
+        elif state.server_asserted:
+            receipt.verification_status = "server_asserted"
+        else:
+            receipt.verification_status = "unverified"
 
     def _validate_exact_canonical_alignment(
         self, parsed: ParsedChallenge, canonical: CanonicalPaymentRequirement,
@@ -876,6 +1654,25 @@ class Payment402Client:
         if parsed.scheme == "auth-capture":
             raise PaymentExecutionError("auth_capture_execution_not_supported: SDK will not execute auth-capture.")
 
+        canonical_v1 = None
+        if getattr(parsed, "_approved_requirement_hash", None):
+            canonical_v1 = self._recheck_policy_binding_before_payment(
+                parsed, target_url=url, method=method.upper()
+            )
+            idempotency_values = [
+                str(value)
+                for key, value in headers.items()
+                if str(key).lower() == "idempotency-key"
+            ]
+            if idempotency_values != [canonical_v1["idempotency_key"]]:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Outgoing idempotency key contradicts canonical requirement."
+                )
+            if canonical_v1["rail"] not in {"l402", "mpp", "x402"}:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Canonical rail is inspect-only in this execution path."
+                )
+
         proof_ref = ""
         network_name = parsed.network or "UNKNOWN"
         l402_report = None
@@ -893,7 +1690,10 @@ class Payment402Client:
             raw_accepted = parsed.parameters.get("_raw_accepted") or {}
             extra = raw_accepted.get("extra") or {}
 
-            canonical_req: CanonicalPaymentRequirement = getattr(parsed, "_canonical_requirement", None)
+            canonical_req: CanonicalPaymentRequirement = (
+                getattr(parsed, "_signer_requirement", None)
+                or getattr(parsed, "_canonical_requirement", None)
+            )
             if not canonical_req:
                 if parsed.scheme == "exact":
                     raise PaymentExecutionError(
@@ -1152,46 +1952,7 @@ class Payment402Client:
             headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
 
         elif parsed.scheme in [SchemeType.l402.value, SchemeType.mpp.value, "Payment"]:
-            if parsed.scheme == "Payment":
-                request_declared = bool(
-                    getattr(parsed, "request_b64_present", False)
-                ) or any(
-                    isinstance(key, str) and key.casefold() == "request"
-                    for key in parsed.parameters
-                )
-                draft_shape = getattr(parsed, "draft_shape", None)
-                if request_declared and draft_shape != "payment-auth-draft":
-                    raise PaymentExecutionError(
-                        "Fail-Closed: invalid-payment-auth-request"
-                    )
-                if request_declared and (
-                    not isinstance(getattr(parsed, "payment_method", None), str)
-                    or parsed.payment_method.casefold() != "lightning"
-                ):
-                    raise PaymentExecutionError(
-                        "Fail-Closed: invalid-payment-auth-request"
-                    )
-
-            if getattr(parsed, "payment_intent", None) == "session":
-                raise PaymentExecutionError("Fail-Closed: mpp_session_not_supported_yet")
-
-            if parsed.scheme == "Payment" and getattr(parsed, "draft_shape", None) == "payment-auth-draft":
-                if not getattr(self, "allow_legacy_payment_auth_fallback", False):
-                    raise PaymentExecutionError("Fail-Closed: unsupported-payment-auth-json")
-
-            inv_msats = getattr(parsed, "_invoice_msats", None)
-            if inv_msats == -2:
-                raise PaymentExecutionError("Fail-Closed: Mismatch between MPP declared amount and BOLT11 invoice amount.")
-            if inv_msats == -3:
-                raise PaymentExecutionError("Fail-Closed: Unparseable declared amount in request.")
-            if inv_msats == -4:
-                raise PaymentExecutionError("Fail-Closed: Unknown currency or unit declared.")
-            if not isinstance(inv_msats, int) or inv_msats <= 0:
-                raise PaymentExecutionError("Fail-Closed: Invalid, amountless, or negative BOLT11 invoice.")
-
-            if parsed.scheme == "L402":
-                from .adapters.l402_delegate import _validated_l402_challenge
-                _validated_l402_challenge(parsed)
+            self._validate_lightning_challenge_preflight(parsed)
 
             if parsed.scheme == "L402":
                 is_get = method.upper() == "GET"
@@ -1216,7 +1977,29 @@ class Payment402Client:
                     l402_report = native_exec.execute_l402(url, method, parsed, headers, payload)
 
                 headers["Authorization"] = l402_report.authorization_value
-                proof_ref = l402_report.preimage or ""
+                authorization = getattr(l402_report, "authorization_value", "")
+                if canonical_v1 is not None:
+                    expected_prefix = f"L402 {parsed.parameters.get('macaroon')}:"
+                    if not isinstance(authorization, str) or not authorization.startswith(expected_prefix):
+                        raise PaymentExecutionError(
+                            "Fail-Closed: L402 executor returned an unbound credential."
+                        )
+                    credential_preimage = authorization[len(expected_prefix):]
+                    if re.fullmatch(r"[a-fA-F0-9]{64}", credential_preimage) is None:
+                        raise PaymentExecutionError(
+                            "Fail-Closed: L402 executor returned an invalid preimage."
+                        )
+                    actual_payment_id = hashlib.sha256(
+                        bytes.fromhex(credential_preimage)
+                    ).hexdigest()
+                    if actual_payment_id != canonical_v1["payment_id"]:
+                        raise PaymentExecutionError(
+                            "Fail-Closed: L402 executor preimage does not match payment identifier."
+                        )
+                    proof_ref = f"sha256:{actual_payment_id}"
+                else:
+                    proof_ref = getattr(l402_report, "preimage", None) or ""
+                headers["Authorization"] = authorization
                 network_name = "Lightning"
 
             else:
@@ -1229,11 +2012,30 @@ class Payment402Client:
                 attempt_tracker.mark_irreversible()
                 proof_ref = self.ln_adapter.pay_invoice(invoice)
 
+                if canonical_v1 is not None:
+                    if not isinstance(proof_ref, str) or re.fullmatch(
+                        r"[a-fA-F0-9]{64}", proof_ref
+                    ) is None:
+                        raise PaymentExecutionError(
+                            "Fail-Closed: Lightning provider returned an invalid preimage."
+                        )
+                    actual_payment_id = hashlib.sha256(
+                        bytes.fromhex(proof_ref)
+                    ).hexdigest()
+                    if actual_payment_id != canonical_v1["payment_id"]:
+                        raise PaymentExecutionError(
+                            "Fail-Closed: Lightning provider preimage does not match payment identifier."
+                        )
+                    credential_preimage = proof_ref
+                    proof_ref = f"sha256:{actual_payment_id}"
+                else:
+                    credential_preimage = proof_ref
+
                 charge_id = parsed.parameters.get("charge")
                 if charge_id:
-                    headers["Authorization"] = f"{parsed.scheme} {charge_id}:{proof_ref}"
+                    headers["Authorization"] = f"{parsed.scheme} {charge_id}:{credential_preimage}"
                 else:
-                    headers["Authorization"] = f"{parsed.scheme} {proof_ref}"
+                    headers["Authorization"] = f"{parsed.scheme} {credential_preimage}"
 
         return proof_ref, network_name, l402_report
 
@@ -1278,12 +2080,22 @@ class Payment402Client:
         if endpoint_path.startswith("http://") or endpoint_path.startswith("https://"):
             return endpoint_path
 
-        base = getattr(self, "base_url", "https://kari.mayim-mayim.com")
+        base = getattr(self, "base_url", "") or "https://kari.mayim-mayim.com"
         return f"{base.rstrip('/')}/{endpoint_path.lstrip('/')}"
 
-    def _resolve_navigation(self, current_url: str, next_url: str, headers: dict, method: str, is_redirect: bool, allowed_hosts: list) -> Tuple[str, dict, bool]:
-        absolute_next = urljoin(current_url, next_url)
-        old_o = urlparse(current_url)
+    def _resolve_navigation(
+        self, current_url: str, next_url: str, headers: dict, method: str,
+        is_redirect: bool, allowed_hosts: list,
+        context: Optional[ExecutionContext] = None,
+        fingerprint: Optional[str] = None,
+    ) -> Tuple[str, dict, bool]:
+        raw_absolute_next = urljoin(current_url, next_url)
+        validated_target = validate_redirect_target(
+            raw_absolute_next, resolver=self._navigation_resolver
+        )
+        absolute_next = validated_target.url
+        old_target = canonicalize_http_target(current_url)
+        old_o = urlparse(old_target.url)
         new_o = urlparse(absolute_next)
 
         if old_o.scheme.lower() == 'https' and new_o.scheme.lower() == 'http':
@@ -1321,13 +2133,104 @@ class Payment402Client:
         # Hints and allow_unsafe_navigate can govern navigation consent, but can
         # never widen the client's local blocked/allowed host policy.
         self._check_local_policy(absolute_next)
+        if context is not None and fingerprint is not None:
+            self._claim_navigation_target(context, fingerprint, absolute_next)
+            with context._payment_state_lock:
+                context._navigation_pins[absolute_next] = validated_target.addresses
         return absolute_next, safe_headers, is_cross_origin
+
+    def _pinned_transport_request(
+        self,
+        context: ExecutionContext,
+        url: str,
+        headers: Mapping[str, Any],
+    ) -> Tuple[str, Dict[str, Any], Optional[str]]:
+        """Return an IP-pinned URL, original Host header, and TLS SNI name.
+
+        Only validated navigation targets have a pin.  Initial user-selected
+        destinations retain the ordinary transport behavior; redirects and
+        HATEOAS destinations never perform a second DNS lookup at connect time.
+        """
+        canonical = canonicalize_http_target(url)
+        self._init_context_state(context)
+        with context._payment_state_lock:
+            addresses = tuple(context._navigation_pins.get(canonical.url, ()))
+        if not addresses:
+            return url, dict(headers), None
+
+        address = addresses[0]
+        display_address = f"[{address}]" if ":" in address else address
+        default_port = 443 if canonical.scheme == "https" else 80
+        authority = (
+            display_address
+            if canonical.port == default_port
+            else f"{display_address}:{canonical.port}"
+        )
+        parsed = urlsplit(canonical.url)
+        pinned_url = urlunsplit(
+            (canonical.scheme, authority, parsed.path, parsed.query, "")
+        )
+
+        safe_headers = {
+            key: value for key, value in dict(headers).items()
+            if not (isinstance(key, str) and key.casefold() == "host")
+        }
+        safe_headers["Host"] = canonical.origin.split("://", 1)[1]
+        # A connection authenticated for one original hostname must not be
+        # pooled under the shared IP URL and reused for a different hostname.
+        safe_headers["Connection"] = "close"
+        return pinned_url, safe_headers, canonical.host
+
+    def _request_sync(
+        self,
+        method: str,
+        url: str,
+        req_kwargs: Dict[str, Any],
+        context: ExecutionContext,
+    ):
+        transport_url, transport_headers, server_hostname = self._pinned_transport_request(
+            context, url, req_kwargs.get("headers", {})
+        )
+        wire_kwargs = dict(req_kwargs)
+        wire_kwargs["headers"] = transport_headers
+        if server_hostname is None or requests.request is not _ORIGINAL_REQUESTS_REQUEST:
+            return requests.request(method, transport_url, **wire_kwargs)
+
+        # Bypass environment proxies for a pinned destination; otherwise the
+        # proxy could perform its own untrusted DNS resolution.  For HTTPS the
+        # adapter verifies the certificate and SNI against the original host.
+        session = requests.Session()
+        session.trust_env = False
+        if transport_url.startswith("https://"):
+            session.mount("https://", _PinnedHTTPSAdapter(server_hostname))
+        try:
+            return session.request(method, transport_url, **wire_kwargs)
+        finally:
+            session.close()
+
+    async def _request_async(
+        self,
+        method: str,
+        url: str,
+        req_kwargs: Dict[str, Any],
+        context: ExecutionContext,
+    ):
+        transport_url, transport_headers, server_hostname = self._pinned_transport_request(
+            context, url, req_kwargs.get("headers", {})
+        )
+        wire_kwargs = dict(req_kwargs)
+        wire_kwargs["headers"] = transport_headers
+        if server_hostname is not None:
+            wire_kwargs["extensions"] = {"sni_hostname": server_hostname}
+        return await self._async_client.request(method, transport_url, **wire_kwargs)
 
     def _prepare_hateoas_navigation(
         self, current_url: str, next_url: str, next_method: str,
         original_headers: dict, suggested_headers: Optional[dict],
         original_payload: dict, suggested_payload: Optional[dict],
         allowed_hosts: list,
+        context: Optional[ExecutionContext] = None,
+        fingerprint: Optional[str] = None,
     ) -> Tuple[str, dict, dict, bool]:
         """Apply one navigation sanitizer shared by sync and async callers."""
         safe_headers = _strip_sensitive_headers(original_headers)
@@ -1337,7 +2240,8 @@ class Payment402Client:
             if _normalize_secret_name(key) not in {"host", "content-length"}
         }
         absolute_next, safe_headers, is_cross_origin = self._resolve_navigation(
-            current_url, next_url, safe_headers, next_method, False, allowed_hosts
+            current_url, next_url, safe_headers, next_method, False, allowed_hosts,
+            context=context, fingerprint=fingerprint,
         )
 
         safe_suggested_payload = _strip_payload_secrets(suggested_payload or {})
@@ -1383,33 +2287,30 @@ class Payment402Client:
 
         headers = dict(headers or {})
 
-        idemp_key = None
-        for k, v in headers.items():
-            if k.lower() == "idempotency-key":
-                idemp_key = v
-                break
-
-        if not idemp_key and _fingerprint is None:
-            idemp_key = getattr(context, "_idempotency_key", None) or str(uuid.uuid4())
-
-        if _fingerprint is None:
-            context._idempotency_key = idemp_key
+        idemp_present, supplied_idemp_key = self._extract_idempotency_key(headers)
         headers = {k: v for k, v in headers.items() if k.lower() != "idempotency-key"}
 
-        fingerprint = _fingerprint or self._compute_fingerprint(
-            method_upper, url, payload, idemp_key
+        logical_idemp_key, idemp_key = self._logical_and_wire_idempotency_key(
+            context,
+            url,
+            supplied_idemp_key,
+            initialize=_fingerprint is None and idemp_present,
         )
+
+        fingerprint = _fingerprint or self._compute_fingerprint(
+            method_upper, url, payload, logical_idemp_key
+        )
+        self._initialize_navigation_state(context, fingerprint, url)
 
         if not any(k.lower() == "user-agent" for k in headers.keys()):
             headers["User-Agent"] = CUSTOM_USER_AGENT
 
-        redirect_hops = 0
         res = None
 
         if self.max_hops == 0 and _current_hop > 0:
             raise PaymentExecutionError("API Error 302: Redirects disabled by max_hops=0")
 
-        while redirect_hops <= self.max_hops:
+        while True:
             if idemp_key:
                 headers["Idempotency-Key"] = idemp_key
             else:
@@ -1426,7 +2327,7 @@ class Payment402Client:
 
             request_error_type = None
             try:
-                res = requests.request(method_upper, url, **req_kwargs)
+                res = self._request_sync(method_upper, url, req_kwargs, context)
             except requests.RequestException as caught_error:
                 request_error_type = caught_error.__class__
             if request_error_type is not None:
@@ -1446,15 +2347,15 @@ class Payment402Client:
                 if not location:
                     break
 
-                previous_url = url
-                url, headers, is_cross_origin = self._resolve_navigation(url, location, headers, method_upper, True, context.hints.get("allowed_hosts", []))
+                url, headers, is_cross_origin = self._resolve_navigation(
+                    url, location, headers, method_upper, True,
+                    context.hints.get("allowed_hosts", []),
+                    context=context, fingerprint=fingerprint,
+                )
                 payload = {} if is_cross_origin else _strip_payload_secrets(payload)
-                if is_cross_origin or (
-                    urlparse(previous_url)._replace(fragment="")
-                    != urlparse(url)._replace(fragment="")
-                ):
-                    idemp_key = None
-                redirect_hops += 1
+                _, idemp_key = self._logical_and_wire_idempotency_key(
+                    context, url
+                )
                 continue
 
             if 200 <= res.status_code < 300:
@@ -1468,26 +2369,12 @@ class Payment402Client:
                     response=resp_data,
                     final_url=url,
                     retry_count=_payment_retry_count,
-                    response_headers=dict(res.headers)
+                    response_headers=_strip_sensitive_headers(res.headers)
                 )
 
-                raw_response = res.headers.get("PAYMENT-RESPONSE")
-                token = None
-                if raw_response and isinstance(raw_response, str):
-                    if not raw_response.startswith('status='):
-                        payload_b64 = _b64url_decode(raw_response)
-                        token = payload_b64.get("receipt") if payload_b64 else raw_response
-                    else:
-                        match = re.search(r'receipt="?([^",]+)"?', raw_response)
-                        token = match.group(1) if match else raw_response
-                else:
-                    candidate = res.headers.get("Payment-Receipt")
-                    token = candidate if isinstance(candidate, str) else None
-
-                if token and _current_receipt:
-                    _current_receipt.receipt_token = str(token)
-                    _current_receipt.source = AttestationSource.SERVER_JWS
-                    _current_receipt.verification_status = "verified"
+                self._apply_server_receipt_state(
+                    _current_receipt, res.headers, res.status_code
+                )
 
                 if outcome_matcher:
                     context.hints["target_url"] = url
@@ -1529,19 +2416,21 @@ class Payment402Client:
                     self._update_payment_state(context, fingerprint, "ambiguous")
                     raise PaymentExecutionError("Ambiguous payment error: Max 402 retries exceeded.")
 
-                parsed = self._parse_challenge(
-                    res,
-                    expected_asset=payload.get("asset", "SATS"),
-                    expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
-                )
+                try:
+                    parsed = self._parse_challenge(
+                        res,
+                        expected_asset=payload.get("asset", "SATS"),
+                        expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None,
+                        request_url=url,
+                        method=method_upper,
+                        idempotency_key=idemp_key,
+                    )
+                except Exception:
+                    self._update_payment_state(
+                        context, fingerprint, "validation_failed"
+                    )
+                    raise
                 self._last_parsed_challenge = parsed
-
-                self._enforce_policy(parsed, url)
-
-                if getattr(parsed, "_invoice_msats", None) is not None:
-                    dec_sats = Decimal(str(parsed._invoice_msats)) / Decimal("1000")
-                    if self.policy.max_spend_per_tx_usd == 0.0 and dec_sats > Decimal("0"):
-                        raise PaymentExecutionError("Policy Violation: Strict 0 USD policy blocks sub-sat invoices.")
 
                 if self.evidence_repo:
                     past_records = self._import_evidence_best_effort(url, context)
@@ -1577,8 +2466,17 @@ class Payment402Client:
                 deferred_error_type = None
                 deferred_error_message = None
                 deferred_error_record = None
+                approval_completed = False
 
                 try:
+                    self._approve_payment_requirement(
+                        parsed,
+                        target_url=url,
+                        method=method_upper,
+                        context=context,
+                        fingerprint=fingerprint,
+                    )
+                    approval_completed = True
                     proof_ref, network_name, l402_report = self._process_payment(
                         parsed, headers, payload, method=method, url=url,
                         _attempt_tracker=attempt_tracker,
@@ -1597,17 +2495,8 @@ class Payment402Client:
                     payment_completed = True
                     delta_usd = self._estimate_usd_value(parsed) if payment_performed else 0.0
 
-                    receipt = SettlementReceipt(
-                        receipt_id=str(uuid.uuid4()),
-                        scheme=parsed.scheme, network=network_name, asset=parsed.asset,
-                        settled_amount=parsed.amount, proof_reference=proof_ref,
-                        verification_status="verified" if network_name == "Lightning" else "self_reported",
-                        delegate_source=getattr(l402_report, "delegate_source", "native") if l402_report else "native",
-                        payment_hash=getattr(l402_report, "payment_hash", None) if l402_report else None,
-                        fee_sats=getattr(l402_report, "fee_sats", None) if l402_report else None,
-                        cached_token_used=getattr(l402_report, "cached_token_used", False) if l402_report else False,
-                        payment_performed=getattr(l402_report, "payment_performed", True) if l402_report else True,
-                        endpoint=url
+                    receipt = self._new_settlement_receipt(
+                        parsed, network_name, proof_ref, l402_report, url
                     )
                     self.last_receipt = receipt
 
@@ -1646,10 +2535,12 @@ class Payment402Client:
                     )
 
                     reserve_delta = 0.0
-                    if attempt_tracker.irreversible_attempt_started and not payment_completed:
+                    if payment_completed:
+                        self._mark_known_settled_ambiguity(context, fingerprint)
+                    elif attempt_tracker.irreversible_attempt_started:
                         reserve_delta = self._reserve_ambiguous_spend(context, fingerprint, parsed)
                         self._update_payment_state(context, fingerprint, "ambiguous")
-                    elif not payment_completed:
+                    else:
                         self._update_payment_state(context, fingerprint, "validation_failed")
 
                     if irreversible_or_paid:
@@ -1659,7 +2550,15 @@ class Payment402Client:
                     else:
                         final_err = "payment_validation_failed_before_irreversible_processing"
                         deferred_error_type = error_type
-                        deferred_error_message = final_err
+                        if (
+                            not approval_completed
+                            and isinstance(caught_error, PaymentExecutionError)
+                        ):
+                            deferred_error_message = sanitize_error_msg(
+                                str(caught_error)
+                            )
+                        else:
+                            deferred_error_message = final_err
 
                     if self.evidence_repo:
                         record_kwargs = {
@@ -1698,7 +2597,7 @@ class Payment402Client:
 
         next_action, source = self._resolve_next_action(error_data, res.headers)
 
-        if self.auto_navigate and next_action and _current_hop < self.max_hops:
+        if self.auto_navigate and next_action:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
 
@@ -1710,8 +2609,14 @@ class Payment402Client:
             if next_url and next_method != "NONE":
                 next_url, merged_headers, merged_payload, is_cross_origin = self._prepare_hateoas_navigation(
                     url, next_url, next_method, headers, next_action.suggested_headers,
-                    payload, next_action.suggested_payload, context.hints.get("allowed_hosts", [])
+                    payload, next_action.suggested_payload,
+                    context.hints.get("allowed_hosts", []),
+                    context=context, fingerprint=fingerprint,
                 )
+                _, next_wire_key = self._logical_and_wire_idempotency_key(
+                    context, next_url
+                )
+                merged_headers["Idempotency-Key"] = next_wire_key
 
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
@@ -1771,22 +2676,20 @@ class Payment402Client:
 
         headers = dict(headers or {})
 
-        idemp_key = None
-        for k, v in headers.items():
-            if k.lower() == "idempotency-key":
-                idemp_key = v
-                break
-
-        if not idemp_key and _fingerprint is None:
-            idemp_key = getattr(context, "_idempotency_key", None) or str(uuid.uuid4())
-
-        if _fingerprint is None:
-            context._idempotency_key = idemp_key
+        idemp_present, supplied_idemp_key = self._extract_idempotency_key(headers)
         headers = {k: v for k, v in headers.items() if k.lower() != "idempotency-key"}
 
-        fingerprint = _fingerprint or self._compute_fingerprint(
-            method_upper, url, payload, idemp_key
+        logical_idemp_key, idemp_key = self._logical_and_wire_idempotency_key(
+            context,
+            url,
+            supplied_idemp_key,
+            initialize=_fingerprint is None and idemp_present,
         )
+
+        fingerprint = _fingerprint or self._compute_fingerprint(
+            method_upper, url, payload, logical_idemp_key
+        )
+        self._initialize_navigation_state(context, fingerprint, url)
 
         if idemp_key:
             headers["Idempotency-Key"] = idemp_key
@@ -1797,13 +2700,12 @@ class Payment402Client:
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(follow_redirects=False)
 
-        redirect_hops = 0
         res = None
 
         if self.max_hops == 0 and _current_hop > 0:
              raise PaymentExecutionError("API Error 302: Redirects disabled by max_hops=0")
 
-        while redirect_hops <= self.max_hops:
+        while True:
             if idemp_key:
                 headers["Idempotency-Key"] = idemp_key
             else:
@@ -1820,7 +2722,7 @@ class Payment402Client:
 
             request_error_type = None
             try:
-                res = await self._async_client.request(method_upper, url, **req_kwargs)
+                res = await self._request_async(method_upper, url, req_kwargs, context)
             except httpx.RequestError as caught_error:
                 request_error_type = caught_error.__class__
             if request_error_type is not None:
@@ -1840,15 +2742,15 @@ class Payment402Client:
                 if not location:
                     break
 
-                previous_url = url
-                url, headers, is_cross_origin = self._resolve_navigation(url, location, headers, method_upper, True, context.hints.get("allowed_hosts", []))
+                url, headers, is_cross_origin = self._resolve_navigation(
+                    url, location, headers, method_upper, True,
+                    context.hints.get("allowed_hosts", []),
+                    context=context, fingerprint=fingerprint,
+                )
                 payload = {} if is_cross_origin else _strip_payload_secrets(payload)
-                if is_cross_origin or (
-                    urlparse(previous_url)._replace(fragment="")
-                    != urlparse(url)._replace(fragment="")
-                ):
-                    idemp_key = None
-                redirect_hops += 1
+                _, idemp_key = self._logical_and_wire_idempotency_key(
+                    context, url
+                )
                 continue
 
             if 200 <= res.status_code < 300:
@@ -1862,26 +2764,12 @@ class Payment402Client:
                     response=resp_data,
                     final_url=url,
                     retry_count=_payment_retry_count,
-                    response_headers=dict(res.headers)
+                    response_headers=_strip_sensitive_headers(res.headers)
                 )
 
-                raw_response = res.headers.get("PAYMENT-RESPONSE")
-                token = None
-                if raw_response and isinstance(raw_response, str):
-                    if not raw_response.startswith('status='):
-                        payload_b64 = _b64url_decode(raw_response)
-                        token = payload_b64.get("receipt") if payload_b64 else raw_response
-                    else:
-                        match = re.search(r'receipt="?([^",]+)"?', raw_response)
-                        token = match.group(1) if match else raw_response
-                else:
-                    candidate = res.headers.get("Payment-Receipt")
-                    token = candidate if isinstance(candidate, str) else None
-
-                if token and _current_receipt:
-                    _current_receipt.receipt_token = str(token)
-                    _current_receipt.source = AttestationSource.SERVER_JWS
-                    _current_receipt.verification_status = "verified"
+                self._apply_server_receipt_state(
+                    _current_receipt, res.headers, res.status_code
+                )
 
                 if outcome_matcher:
                     context.hints["target_url"] = url
@@ -1931,19 +2819,21 @@ class Payment402Client:
                     self._update_payment_state(context, fingerprint, "ambiguous")
                     raise PaymentExecutionError("Ambiguous payment error: Max 402 retries exceeded")
 
-                parsed = self._parse_challenge(
-                    res,
-                    expected_asset=payload.get("asset", "SATS"),
-                    expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None
-                )
+                try:
+                    parsed = self._parse_challenge(
+                        res,
+                        expected_asset=payload.get("asset", "SATS"),
+                        expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None,
+                        request_url=url,
+                        method=method_upper,
+                        idempotency_key=idemp_key,
+                    )
+                except Exception:
+                    self._update_payment_state(
+                        context, fingerprint, "validation_failed"
+                    )
+                    raise
                 self._last_parsed_challenge = parsed
-
-                self._enforce_policy(parsed, url)
-
-                if getattr(parsed, "_invoice_msats", None) is not None:
-                    dec_sats = Decimal(str(parsed._invoice_msats)) / Decimal("1000")
-                    if self.policy.max_spend_per_tx_usd == 0.0 and dec_sats > Decimal("0"):
-                        raise PaymentExecutionError("Policy Violation: Strict 0 USD policy blocks sub-sat invoices.")
 
                 if getattr(self, "evidence_repo", None):
                     past_records = await self._import_evidence_best_effort_async(
@@ -1990,8 +2880,17 @@ class Payment402Client:
                 deferred_error_type = None
                 deferred_error_message = None
                 deferred_error_record = None
+                approval_completed = False
 
                 try:
+                    self._approve_payment_requirement(
+                        parsed,
+                        target_url=url,
+                        method=method_upper,
+                        context=context,
+                        fingerprint=fingerprint,
+                    )
+                    approval_completed = True
                     loop = asyncio.get_running_loop()
                     def _process_wrapper():
                         return self._process_payment(
@@ -2017,17 +2916,8 @@ class Payment402Client:
                     payment_completed = True
                     delta_usd = self._estimate_usd_value(parsed) if payment_performed else 0.0
 
-                    receipt = SettlementReceipt(
-                        receipt_id=str(uuid.uuid4()),
-                        scheme=parsed.scheme, network=network_name, asset=parsed.asset,
-                        settled_amount=parsed.amount, proof_reference=proof_ref,
-                        verification_status="verified" if network_name == "Lightning" else "self_reported",
-                        delegate_source=getattr(l402_report, "delegate_source", "native") if l402_report else "native",
-                        payment_hash=getattr(l402_report, "payment_hash", None) if l402_report else None,
-                        fee_sats=getattr(l402_report, "fee_sats", None) if l402_report else None,
-                        cached_token_used=getattr(l402_report, "cached_token_used", False) if l402_report else False,
-                        payment_performed=getattr(l402_report, "payment_performed", True) if l402_report else True,
-                        endpoint=url
+                    receipt = self._new_settlement_receipt(
+                        parsed, network_name, proof_ref, l402_report, url
                     )
                     self.last_receipt = receipt
 
@@ -2069,10 +2959,12 @@ class Payment402Client:
                     )
 
                     reserve_delta = 0.0
-                    if attempt_tracker.irreversible_attempt_started and not payment_completed:
+                    if payment_completed:
+                        self._mark_known_settled_ambiguity(context, fingerprint)
+                    elif attempt_tracker.irreversible_attempt_started:
                         reserve_delta = self._reserve_ambiguous_spend(context, fingerprint, parsed)
                         self._update_payment_state(context, fingerprint, "ambiguous")
-                    elif not payment_completed:
+                    else:
                         self._update_payment_state(context, fingerprint, "validation_failed")
 
                     if irreversible_or_paid:
@@ -2082,7 +2974,15 @@ class Payment402Client:
                     else:
                         final_err = "payment_validation_failed_before_irreversible_processing"
                         deferred_error_type = error_type
-                        deferred_error_message = final_err
+                        if (
+                            not approval_completed
+                            and isinstance(caught_error, PaymentExecutionError)
+                        ):
+                            deferred_error_message = sanitize_error_msg(
+                                str(caught_error)
+                            )
+                        else:
+                            deferred_error_message = final_err
 
                     if getattr(self, "evidence_repo", None):
                         record_kwargs = {
@@ -2123,7 +3023,7 @@ class Payment402Client:
 
         next_action, source = self._resolve_next_action(error_data, res.headers)
 
-        if self.auto_navigate and next_action and _current_hop < self.max_hops:
+        if self.auto_navigate and next_action:
             next_url = next_action.url
             next_method = (next_action.method or "GET").upper()
 
@@ -2135,8 +3035,14 @@ class Payment402Client:
             if next_url and next_method != "NONE":
                 next_url, merged_headers, merged_payload, is_cross_origin = self._prepare_hateoas_navigation(
                     url, next_url, next_method, headers, next_action.suggested_headers,
-                    payload, next_action.suggested_payload, context.hints.get("allowed_hosts", [])
+                    payload, next_action.suggested_payload,
+                    context.hints.get("allowed_hosts", []),
+                    context=context, fingerprint=fingerprint,
                 )
+                _, next_wire_key = self._logical_and_wire_idempotency_key(
+                    context, next_url
+                )
+                merged_headers["Idempotency-Key"] = next_wire_key
 
                 if "scheme" in merged_payload:
                     merged_payload["scheme"] = _normalize_scheme(merged_payload["scheme"])
@@ -2611,7 +3517,7 @@ class LnChurchClient(Payment402Client):
 
         payment_receipt_present = bool(
             receipt
-            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "present", False)
             and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
         )
 
@@ -2704,7 +3610,7 @@ class LnChurchClient(Payment402Client):
 
         payment_receipt_present = bool(
             receipt
-            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "present", False)
             and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
         )
 
@@ -2836,7 +3742,7 @@ class LnChurchClient(Payment402Client):
 
         payment_receipt_present = bool(
             receipt
-            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "present", False)
             and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
         )
 
@@ -2975,7 +3881,7 @@ class LnChurchClient(Payment402Client):
 
         payment_receipt_present = bool(
             receipt
-            and getattr(receipt, "receipt_token", None)
+            and getattr(receipt, "present", False)
             and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
         )
 

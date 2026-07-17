@@ -1,0 +1,223 @@
+{
+  "fixture_schema_version": "ln_church.agent_server_contract_fixture.v1",
+  "clock_unix_seconds": 1700000100,
+  "request": {
+    "url": "https://provider.test/api/agent/benchmark/ping",
+    "method": "GET",
+    "headers": {
+      "Idempotency-Key": "idem_contract_001"
+    }
+  },
+  "payment": {
+    "mock_preimage": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "WWW-Authenticate": "L402 macaroon=\"MDAyM2xvY2F0aW9uIGh0dHBzOi8vcHJvdmlkZXIudGVzdAowMDI0aWRlbnRpZmllciBjaF9jb250cmFjdF9sNDAyXzAwMQowMDU2Y2lkIHBheW1lbnRfaGFzaD02MzBkY2QyOTY2YzQzMzY2OTExMjU0NDhiYmIyNWI0ZmY0MTJhNDljNzMyZGIyYzhhYmMxYjg1ODFiZDcxMGRkCjAwMTJjaWQgYW1vdW50PTEwCjAwNDZjaWQgbG5jLnNjaGVtYV92ZXJzaW9uPWxuX2NodXJjaC5jYW5vbmljYWxfcGF5bWVudF9yZXF1aXJlbWVudC52MQowMDFkY2lkIGxuYy51cmxfc2NoZW1lPWh0dHBzCjAwMWZjaWQgbG5jLmhvc3Q9cHJvdmlkZXIudGVzdAowMDE1Y2lkIGxuYy5wb3J0PTQ0MwowMDI5Y2lkIGxuYy5vcmlnaW49aHR0cHM6Ly9wcm92aWRlci50ZXN0CjAwMTdjaWQgbG5jLm1ldGhvZD1HRVQKMDA0OGNpZCBsbmMucmVzb3VyY2VfdXJsPWh0dHBzOi8vcHJvdmlkZXIudGVzdC9hcGkvYWdlbnQvYmVuY2htYXJrL3BpbmcKMDAxNmNpZCBsbmMucmFpbD1sNDAyCjAwMjZjaWQgbG5jLmF1dGhvcml6YXRpb25fc2NoZW1lPUw0MDIKMDAyY2NpZCBsbmMuYXNzZXRfaWRlbnRpZmllcj1saWdodG5pbmc6c2F0cwowMDFhY2lkIGxuYy5jaGFpbj1iaXRjb2luCjAwMjRjaWQgbG5jLm5ldHdvcms9Yml0Y29pbi1tYWlubmV0CjAwMTdjaWQgbG5jLmRlY2ltYWxzPTMKMDAyMGNpZCBsbmMuYW1vdW50X2F0b21pYz0xMDAwMAowMDU2Y2lkIGxuYy5wYXlfdG89MDI3OWJlNjY3ZWY5ZGNiYmFjNTVhMDYyOTVjZTg3MGIwNzAyOWJmY2RiMmRjZTI4ZDk1OWYyODE1YjE2ZjgxNzk4CjAwMjJjaWQgbG5jLmV4cGlyZXNfYXQ9MTcwMDAwMzYwMAowMDJlY2lkIGxuYy5jaGFsbGVuZ2VfaWQ9Y2hfY29udHJhY3RfbDQwMl8wMDEKMDA1OGNpZCBsbmMucGF5bWVudF9pZD02MzBkY2QyOTY2YzQzMzY2OTExMjU0NDhiYmIyNWI0ZmY0MTJhNDljNzMyZGIyYzhhYmMxYjg1ODFiZDcxMGRkCjAwMmVjaWQgbG5jLmlkZW1wb3RlbmN5X2tleT1pZGVtX2NvbnRyYWN0XzAwMQowMDZjY2lkIGxuYy5jcmVkZW50aWFsX3BheWxvYWRfaGFzaD1zaGEyNTY6ZTY0NjM1NjY3ZjYwNzVmYzAzMGM3YjU5NWY2ZjhjNDQ2YTc3ZDM1N2E1ZGQ1ZTQyMDU1N2M2Yzc4OTgyYmUzOAowMDY1Y2lkIGxuYy5yZXF1aXJlbWVudF9oYXNoPXNoYTI1NjpkNTdlYTk1ZGUyOWY5MTlmOWQzZTI5Mzg3M2ZhZjRlYmE0ZmQ3MTZhMmFiNmI3ODhmY2IwZjBmMjhmMWFjZjMzCjAwMmZzaWduYXR1cmUgXgD7JSEaLEyqJfuGaUngmRnVxgowKI2nQvKdnR962m8K\", invoice=\"lnbc100n1pj48ugqpp5vvxu62txcsekdygj23ythvjmfl6p9fyuwvkm9j9tcxu9sx7hzrwssp5yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qdp4f38zqsmgw4exx6pq2qcz6v3qvdex7umnypex2ur0ypnxj7r5w4ex2xqrrsswdwdhxkn2f9qfg75qjex6e209yy3243zuwwesqacp8j7wxg5jjjzhnj6zm4hqwwl5wkm2y9tf9030wfdaq73u5ve7hnr3l6jucl77vsp6hc7lq\", id=\"ch_contract_l402_001\", requirement_hash=\"sha256:d57ea95de29f919f9d3e293873faf4eba4fd716a2ab6b788fcb0f0f28f1acf33\"",
+      "PAYMENT-REQUIRED": "network=\"bitcoin-mainnet\", amount_atomic=\"10000\", decimals=\"3\", asset=\"lightning:sats\", id=\"ch_contract_l402_001\", requirement_hash=\"sha256:d57ea95de29f919f9d3e293873faf4eba4fd716a2ab6b788fcb0f0f28f1acf33\"",
+      "x-402-payment-required": "amount_atomic=10000; asset=lightning:sats; network=bitcoin-mainnet; requirement_hash=sha256:d57ea95de29f919f9d3e293873faf4eba4fd716a2ab6b788fcb0f0f28f1acf33",
+      "Idempotency-Key": "idem_contract_001",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "schema_version": "ln_church.paid_surface_challenge.v1",
+      "error": "Payment Required",
+      "surface": {
+        "surface_id": "benchmark:ping:v1",
+        "resource": "/api/agent/benchmark/ping",
+        "action_type": "benchmark_ping",
+        "payment_intent": "benchmark",
+        "settlement_rail": "l402",
+        "access_path": "direct_settlement",
+        "deterministic": true,
+        "description": "Deterministic paid GET endpoint for validating agent-side HTTP 402 runtime behavior.",
+        "expected_client_behavior": {
+          "action": "pay_and_verify",
+          "reason": "This endpoint is a deterministic paid benchmark. Agents should pay once, execute once, and verify the execution receipt."
+        },
+        "evidence_schema": {
+          "schema_version": "ln_church.execution_receipt.v1",
+          "required": [
+            "trace_id",
+            "payment_status",
+            "execution_status",
+            "verification_status",
+            "timestamp"
+          ],
+          "optional": [
+            "surface_id",
+            "resource",
+            "action_type",
+            "proof_reference",
+            "recorded_hash"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "required": [
+            "status",
+            "kind",
+            "scenario",
+            "result",
+            "deterministic",
+            "execution_receipt"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "scenario": {
+              "type": "string"
+            },
+            "result": {
+              "type": "string"
+            },
+            "deterministic": {
+              "type": "boolean"
+            },
+            "execution_receipt": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "accepted_payments": [
+        {
+          "amount": 10,
+          "asset": "SATS",
+          "settlement_rail": "l402",
+          "access_path": "direct_settlement",
+          "canonical_requirement": {
+            "schema_version": "ln_church.canonical_payment_requirement.v1",
+            "url_scheme": "https",
+            "host": "provider.test",
+            "port": 443,
+            "origin": "https://provider.test",
+            "method": "GET",
+            "resource_url": "https://provider.test/api/agent/benchmark/ping",
+            "rail": "l402",
+            "authorization_scheme": "L402",
+            "asset_identifier": "lightning:sats",
+            "chain": "bitcoin",
+            "network": "bitcoin-mainnet",
+            "decimals": 3,
+            "amount_atomic": "10000",
+            "pay_to": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "expires_at": "1700003600",
+            "challenge_id": "ch_contract_l402_001",
+            "payment_id": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+            "idempotency_key": "idem_contract_001",
+            "credential_payload_hash": "sha256:e64635667f6075fc030c7b595f6f8c446a77d357a5dd5e420557c6c78982be38",
+            "requirement_hash": "sha256:d57ea95de29f919f9d3e293873faf4eba4fd716a2ab6b788fcb0f0f28f1acf33"
+          },
+          "credential_challenge": {
+            "type": "l402",
+            "authorization_scheme": "L402",
+            "invoice": "lnbc100n1pj48ugqpp5vvxu62txcsekdygj23ythvjmfl6p9fyuwvkm9j9tcxu9sx7hzrwssp5yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qdp4f38zqsmgw4exx6pq2qcz6v3qvdex7umnypex2ur0ypnxj7r5w4ex2xqrrsswdwdhxkn2f9qfg75qjex6e209yy3243zuwwesqacp8j7wxg5jjjzhnj6zm4hqwwl5wkm2y9tf9030wfdaq73u5ve7hnr3l6jucl77vsp6hc7lq",
+            "macaroon": "MDAyM2xvY2F0aW9uIGh0dHBzOi8vcHJvdmlkZXIudGVzdAowMDI0aWRlbnRpZmllciBjaF9jb250cmFjdF9sNDAyXzAwMQowMDU2Y2lkIHBheW1lbnRfaGFzaD02MzBkY2QyOTY2YzQzMzY2OTExMjU0NDhiYmIyNWI0ZmY0MTJhNDljNzMyZGIyYzhhYmMxYjg1ODFiZDcxMGRkCjAwMTJjaWQgYW1vdW50PTEwCjAwNDZjaWQgbG5jLnNjaGVtYV92ZXJzaW9uPWxuX2NodXJjaC5jYW5vbmljYWxfcGF5bWVudF9yZXF1aXJlbWVudC52MQowMDFkY2lkIGxuYy51cmxfc2NoZW1lPWh0dHBzCjAwMWZjaWQgbG5jLmhvc3Q9cHJvdmlkZXIudGVzdAowMDE1Y2lkIGxuYy5wb3J0PTQ0MwowMDI5Y2lkIGxuYy5vcmlnaW49aHR0cHM6Ly9wcm92aWRlci50ZXN0CjAwMTdjaWQgbG5jLm1ldGhvZD1HRVQKMDA0OGNpZCBsbmMucmVzb3VyY2VfdXJsPWh0dHBzOi8vcHJvdmlkZXIudGVzdC9hcGkvYWdlbnQvYmVuY2htYXJrL3BpbmcKMDAxNmNpZCBsbmMucmFpbD1sNDAyCjAwMjZjaWQgbG5jLmF1dGhvcml6YXRpb25fc2NoZW1lPUw0MDIKMDAyY2NpZCBsbmMuYXNzZXRfaWRlbnRpZmllcj1saWdodG5pbmc6c2F0cwowMDFhY2lkIGxuYy5jaGFpbj1iaXRjb2luCjAwMjRjaWQgbG5jLm5ldHdvcms9Yml0Y29pbi1tYWlubmV0CjAwMTdjaWQgbG5jLmRlY2ltYWxzPTMKMDAyMGNpZCBsbmMuYW1vdW50X2F0b21pYz0xMDAwMAowMDU2Y2lkIGxuYy5wYXlfdG89MDI3OWJlNjY3ZWY5ZGNiYmFjNTVhMDYyOTVjZTg3MGIwNzAyOWJmY2RiMmRjZTI4ZDk1OWYyODE1YjE2ZjgxNzk4CjAwMjJjaWQgbG5jLmV4cGlyZXNfYXQ9MTcwMDAwMzYwMAowMDJlY2lkIGxuYy5jaGFsbGVuZ2VfaWQ9Y2hfY29udHJhY3RfbDQwMl8wMDEKMDA1OGNpZCBsbmMucGF5bWVudF9pZD02MzBkY2QyOTY2YzQzMzY2OTExMjU0NDhiYmIyNWI0ZmY0MTJhNDljNzMyZGIyYzhhYmMxYjg1ODFiZDcxMGRkCjAwMmVjaWQgbG5jLmlkZW1wb3RlbmN5X2tleT1pZGVtX2NvbnRyYWN0XzAwMQowMDZjY2lkIGxuYy5jcmVkZW50aWFsX3BheWxvYWRfaGFzaD1zaGEyNTY6ZTY0NjM1NjY3ZjYwNzVmYzAzMGM3YjU5NWY2ZjhjNDQ2YTc3ZDM1N2E1ZGQ1ZTQyMDU1N2M2Yzc4OTgyYmUzOAowMDY1Y2lkIGxuYy5yZXF1aXJlbWVudF9oYXNoPXNoYTI1NjpkNTdlYTk1ZGUyOWY5MTlmOWQzZTI5Mzg3M2ZhZjRlYmE0ZmQ3MTZhMmFiNmI3ODhmY2IwZjBmMjhmMWFjZjMzCjAwMmZzaWduYXR1cmUgXgD7JSEaLEyqJfuGaUngmRnVxgowKI2nQvKdnR962m8K"
+          }
+        },
+        {
+          "amount": 1,
+          "asset": "FAUCET_CREDIT",
+          "settlement_rail": "faucet",
+          "access_path": "faucet",
+          "canonical_requirement": {
+            "schema_version": "ln_church.canonical_payment_requirement.v1",
+            "url_scheme": "https",
+            "host": "provider.test",
+            "port": 443,
+            "origin": "https://provider.test",
+            "method": "GET",
+            "resource_url": "https://provider.test/api/agent/benchmark/ping",
+            "rail": "faucet",
+            "authorization_scheme": "Faucet",
+            "asset_identifier": "ln-church:faucet-credit",
+            "chain": "none",
+            "network": "none",
+            "decimals": 0,
+            "amount_atomic": "1",
+            "pay_to": "https://provider.test",
+            "expires_at": "1700000400",
+            "challenge_id": "ch_access_7dd748e31848f88d2fb56cd4",
+            "payment_id": "access_7dd748e31848f88d2fb56cd4",
+            "idempotency_key": "idem_contract_001",
+            "credential_payload_hash": "sha256:bcdc56bbbaf366e20b8d2d69d3668fe25330a46ba5feec36c15523551d34f105",
+            "requirement_hash": "sha256:b4e8cd5bbbeae08bcb20791cb05b5754c3a2fea1408acff51a6fa197f4d2f731"
+          }
+        },
+        {
+          "amount": 1,
+          "asset": "GRANT_CREDIT",
+          "settlement_rail": "none",
+          "access_path": "sponsored_grant",
+          "canonical_requirement": {
+            "schema_version": "ln_church.canonical_payment_requirement.v1",
+            "url_scheme": "https",
+            "host": "provider.test",
+            "port": 443,
+            "origin": "https://provider.test",
+            "method": "GET",
+            "resource_url": "https://provider.test/api/agent/benchmark/ping",
+            "rail": "none",
+            "authorization_scheme": "Grant",
+            "asset_identifier": "ln-church:grant-credit",
+            "chain": "none",
+            "network": "none",
+            "decimals": 0,
+            "amount_atomic": "1",
+            "pay_to": "https://provider.test",
+            "expires_at": "1700000400",
+            "challenge_id": "ch_access_940f36026af7bb08cc4018b2",
+            "payment_id": "access_940f36026af7bb08cc4018b2",
+            "idempotency_key": "idem_contract_001",
+            "credential_payload_hash": "sha256:3b48eb6fed75c055762b98a547d5d17fab1e630328f28c951f822b831b929b19",
+            "requirement_hash": "sha256:82505225d70458ed7146792af35fdcdf76e515ce0328f7711e42306c55190b6f"
+          }
+        }
+      ],
+      "expected_client_behavior": {
+        "action": "pay_and_verify",
+        "reason": "This endpoint is a deterministic paid benchmark. Agents should pay once, execute once, and verify the execution receipt."
+      },
+      "evidence": {
+        "receipt_required": true,
+        "schema_version": "ln_church.execution_receipt.v1",
+        "required": [
+          "trace_id",
+          "payment_status",
+          "execution_status",
+          "verification_status",
+          "timestamp"
+        ],
+        "optional": [
+          "surface_id",
+          "resource",
+          "action_type",
+          "proof_reference",
+          "recorded_hash"
+        ]
+      },
+      "instruction_for_agents": {
+        "guide": "Select one accepted payment option, submit a valid payment proof, execute once, then verify the execution receipt.",
+        "next_request_schema": {
+          "Authorization": "L402 {credential_challenge.macaroon}:{paid_invoice_preimage} | Faucet {token} | Grant {jws}",
+          "Idempotency-Key": "idem_contract_001",
+          "paymentOverride": {
+            "type": "grant",
+            "proof": "{JWS_GRANT_TOKEN}",
+            "asset": "GRANT_CREDIT"
+          }
+        }
+      },
+      "legacy": {
+        "compatible_challenge_headers": true,
+        "legacy_hateoas_available": true
+      }
+    }
+  }
+}

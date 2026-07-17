@@ -1,10 +1,16 @@
 # ln_church_agent/adapters/l402_delegate.py
 
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Mapping, Tuple
+import hashlib
+import re
 from ..crypto.protocols import L402Executor, LightningProvider
 from ..crypto.lightning import decode_bolt11_amount_msats
 from ..models import ParsedChallenge, L402ExecutionReport
 from ..exceptions import PaymentExecutionError
+from ..payment_contract import (
+    PaymentContractError,
+    validate_l402_macaroon_structure,
+)
 
 
 def _validated_l402_challenge(parsed: ParsedChallenge) -> Tuple[str, str]:
@@ -16,8 +22,8 @@ def _validated_l402_challenge(parsed: ParsedChallenge) -> Tuple[str, str]:
     normalized_macaroon = macaroon.strip()
     if (
         normalized_macaroon != macaroon
-        or len(normalized_macaroon) < 10
         or normalized_macaroon.startswith("<")
+        or re.fullmatch(r"[A-Za-z0-9+/_=-]+", normalized_macaroon) is None
         or normalized_macaroon.lower() in {"dummy", "missing", "none", "null", "placeholder"}
     ):
         raise PaymentExecutionError("Fail-Closed: Invalid or missing Invoice/Macaroon.")
@@ -36,8 +42,25 @@ def _validated_l402_challenge(parsed: ParsedChallenge) -> Tuple[str, str]:
         raise PaymentExecutionError("Fail-Closed: Canonical amount does not match BOLT11 invoice.")
 
     canonical_requirement = getattr(parsed, "_canonical_requirement", None)
-    if canonical_requirement is not None and canonical_requirement.atomic_amount != str(decoded_msats):
+    if (
+        isinstance(canonical_requirement, Mapping)
+        and parsed.parameters.get("_selection_reason")
+        == "canonical_paid_surface_v1"
+    ):
+        try:
+            validate_l402_macaroon_structure(
+                macaroon, canonical_requirement=canonical_requirement
+            )
+        except PaymentContractError:
+            raise PaymentExecutionError(
+                "Fail-Closed: L402 macaroon is not executable by the canonical Server verifier."
+            ) from None
+    if isinstance(canonical_requirement, Mapping) and canonical_requirement.get("amount_atomic") != str(decoded_msats):
         raise PaymentExecutionError("Fail-Closed: Canonical requirement does not match BOLT11 invoice.")
+    if canonical_requirement is not None and not isinstance(canonical_requirement, Mapping):
+        legacy_atomic = getattr(canonical_requirement, "atomic_amount", None)
+        if legacy_atomic is not None and legacy_atomic != str(decoded_msats):
+            raise PaymentExecutionError("Fail-Closed: Canonical requirement does not match BOLT11 invoice.")
 
     return invoice, macaroon
 
@@ -54,11 +77,23 @@ class NativeL402Executor(L402Executor):
 
         # Wallet is called ONLY after validation
         preimage = self.ln_adapter.pay_invoice(invoice)
+        payment_hash = None
+        if isinstance(getattr(parsed, "_canonical_requirement", None), Mapping):
+            if not isinstance(preimage, str) or re.fullmatch(r"[a-fA-F0-9]{64}", preimage) is None:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Lightning provider returned an invalid preimage."
+                )
+            payment_hash = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
+            if payment_hash != parsed.parameters.get("payment_id"):
+                raise PaymentExecutionError(
+                    "Fail-Closed: Lightning provider preimage does not match payment identifier."
+                )
 
         return L402ExecutionReport(
             delegate_source="native",
             authorization_value=f"L402 {mac}:{preimage}",
             preimage=preimage,
+            payment_hash=payment_hash,
             payment_performed=True,
             cached_token_used=False,
             endpoint=url
@@ -96,6 +131,17 @@ class LightningLabsL402Executor(L402Executor):
 
         # 2. キャッシュミス: 外部SDKが内部で決済を実行する挙動
         preimage = self.ln_adapter.pay_invoice(invoice)
+        payment_hash = None
+        if isinstance(getattr(parsed, "_canonical_requirement", None), Mapping):
+            if not isinstance(preimage, str) or re.fullmatch(r"[a-fA-F0-9]{64}", preimage) is None:
+                raise PaymentExecutionError(
+                    "Fail-Closed: Lightning provider returned an invalid preimage."
+                )
+            payment_hash = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
+            if payment_hash != parsed.parameters.get("payment_id"):
+                raise PaymentExecutionError(
+                    "Fail-Closed: Lightning provider preimage does not match payment identifier."
+                )
         auth_val = f"L402 {mac}:{preimage}"
 
         # 3. 外部SDKが内部キャッシュに保存
@@ -105,6 +151,7 @@ class LightningLabsL402Executor(L402Executor):
             delegate_source="lightninglabs-delegated",
             authorization_value=auth_val,
             preimage=preimage,
+            payment_hash=payment_hash,
             payment_performed=True,
             cached_token_used=False,
             endpoint=url

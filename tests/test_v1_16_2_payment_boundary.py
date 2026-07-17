@@ -2,6 +2,7 @@ import asyncio
 import base64
 import builtins
 import copy
+import hashlib
 import inspect
 import json
 import time
@@ -59,19 +60,23 @@ MAINNET_SVM = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
 DEVNET_SVM = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
 MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+TEST_PREIMAGE = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 
 def _signed_invoice(msats):
     tags = Tags(
         [
-            Tag(TagChar.payment_hash, "11" * 32),
+            Tag(
+                TagChar.payment_hash,
+                hashlib.sha256(bytes.fromhex(TEST_PREIMAGE)).hexdigest(),
+            ),
             Tag(TagChar.payment_secret, "22" * 32),
             Tag(TagChar.description, "v1.16.2 payment boundary"),
         ]
     )
     invoice = Bolt11(
         currency="bc",
-        date=1_700_000_000,
+        date=int(time.time()),
         amount_msat=MilliSatoshi(msats) if msats is not None else None,
         tags=tags,
     )
@@ -254,6 +259,8 @@ def test_l402_parser_sets_private_canonical_requirement_and_atomic_amount():
         (_signed_invoice(1000), ""),
         (_signed_invoice(1000), "placeholder"),
         (_signed_invoice(1000), "<macaroon>"),
+        (_signed_invoice(1000), "macaroon:split"),
+        (_signed_invoice(1000), "macaroon split"),
     ],
     ids=[
         "missing-invoice",
@@ -265,6 +272,8 @@ def test_l402_parser_sets_private_canonical_requirement_and_atomic_amount():
         "empty-macaroon",
         "placeholder-macaroon",
         "angle-placeholder-macaroon",
+        "colon-macaroon",
+        "internal-whitespace-macaroon",
     ],
 )
 @pytest.mark.parametrize("executor_type", [NativeL402Executor, LightningLabsL402Executor])
@@ -288,7 +297,7 @@ def test_invalid_l402_never_calls_wallet(invoice, macaroon, executor_type):
 @pytest.mark.parametrize("executor_type", [NativeL402Executor, LightningLabsL402Executor])
 def test_valid_l402_calls_wallet_once_after_real_decode(executor_type):
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     parsed = parse_www_authenticate(
         f'L402 macaroon="{MACAROON}", invoice="{_signed_invoice(1000)}"'
     )
@@ -371,12 +380,13 @@ def test_l402_delegate_allowlist_uses_strict_netloc(
     allowlist, expected_delegate_calls, expected_wallet_calls
 ):
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     delegate = MagicMock()
     delegate.execute_l402.return_value = L402ExecutionReport(
         delegate_source="lightninglabs-delegated",
-        authorization_value="L402 delegated-auth",
-        preimage="preimage",
+        authorization_value=f"L402 {MACAROON}:{TEST_PREIMAGE}",
+        preimage=TEST_PREIMAGE,
+        payment_hash=hashlib.sha256(bytes.fromhex(TEST_PREIMAGE)).hexdigest(),
         payment_performed=True,
         endpoint="https://buyer.test:8443/start",
     )
@@ -659,7 +669,7 @@ def test_complete_payment_draft_opt_in_preserves_legacy_execution(async_mode):
     )
     paid = _transport_response(200, {"status": "paid"})
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     delegate = MagicMock()
     signer = _RejectIfCalledSigner()
     evidence = _CaptureEvidence()
@@ -705,7 +715,7 @@ def test_complete_payment_draft_opt_in_preserves_legacy_execution(async_mode):
     assert signer.atomic_calls == 0
     assert transport.call_count == 2
     assert transport.call_args_list[1].kwargs["headers"]["Authorization"] == (
-        "Payment preimage"
+        f"Payment {TEST_PREIMAGE}"
     )
     assert set(context._payment_states.values()) == {"completed"}
     assert context._ambiguous_reservations == {}
@@ -731,7 +741,7 @@ def test_payment_request_guard_preserves_legacy_lightning_rails(
     )
     paid = _transport_response(200, {"status": "paid"})
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     context = ExecutionContext()
     client = Payment402Client(
         ln_adapter=wallet,
@@ -804,7 +814,7 @@ def test_mpp_unknown_currency_without_amount_stops_before_wallet(shape):
 @pytest.mark.parametrize("shape", ["flat", "json", "json-details"])
 def test_mpp_sat_alias_positive_flow_reaches_wallet_once(shape):
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
     invoice = _signed_invoice(1000)
     response = _transport_response(
@@ -1007,7 +1017,7 @@ def test_mpp_case_variant_fields_and_invoice_only_fallback_pay_once(shape):
             "MeThOdDeTaIlS": {"InVoIcE": invoice}
         }))
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
 
     with patch(
@@ -1055,7 +1065,9 @@ def test_exact_parser_private_canonical_flows_to_real_signer_and_verifier():
     assert result.response == {"status": "paid"}
     assert parsed._canonical_requirement is not None
     assert parsed._atomic_amount == "1000000"
-    assert parsed._canonical_requirement.atomic_amount == "1000000"
+    assert parsed._canonical_requirement["amount_atomic"] == "1000000"
+    assert parsed._canonical_requirement["decimals"] == 6
+    assert parsed._signer_requirement.atomic_amount == "1000000"
     signer_call.assert_called_once_with(
         asset="USDC",
         atomic_amount_str="1000000",
@@ -1165,7 +1177,10 @@ def test_exact_without_accepts_fails_closed_before_signer():
     }
 
     with patch("ln_church_agent.client.requests.request", return_value=_exact_402(payload)):
-        with pytest.raises(PaymentExecutionError, match="no canonical"):
+        with pytest.raises(
+            PaymentExecutionError,
+            match="no complete canonical",
+        ):
             client.execute_detailed("GET", "https://buyer.test/start")
 
     assert signer.atomic_calls == 0
@@ -1185,7 +1200,10 @@ def test_unknown_network_or_token_never_falls_back_to_chain_137(accepted):
     payload = _exact_payload(accepted_overrides=accepted)
 
     with patch("ln_church_agent.client.requests.request", return_value=_exact_402(payload)):
-        with pytest.raises(PaymentExecutionError, match="Fail-Closed"):
+        with pytest.raises(
+            PaymentExecutionError,
+            match="Fail-Closed",
+        ):
             client.execute_detailed("GET", "https://buyer.test/start")
 
     assert signer.atomic_calls == 0
@@ -2176,7 +2194,6 @@ SENSITIVE_HEADERS = {
     "MPP-Token": "mpp-secret",
     "Macaroon": "macaroon-secret",
     "Preimage": "preimage-secret",
-    "Idempotency-Key": "original-idempotency",
     "X-Internal-Secret": "internal-secret",
     "X-LN-Result-Handle": "result-handle-secret",
     "X-LN-Request-Hash": "request-hash-secret",
@@ -2977,7 +2994,7 @@ def test_cross_origin_hateoas_post_uses_only_sanitized_suggested_json(async_mode
 
 def test_paid_retry_second_402_stops_before_second_wallet_call():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
 
     with patch(
@@ -2992,7 +3009,7 @@ def test_paid_retry_second_402_stops_before_second_wallet_call():
 
 def test_hateoas_new_path_keeps_top_level_fingerprint_and_wallet_call_count_one():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet, auto_navigate=True)
     after_payment = _transport_response(
         400,
@@ -3023,17 +3040,17 @@ def test_hateoas_new_path_keeps_top_level_fingerprint_and_wallet_call_count_one(
 
     wallet.pay_invoice.assert_called_once()
     assert transport.call_count == 3
-    assert transport.call_args_list[2].args[1] == "https://buyer.test/next"
-    assert not any(
-        key.lower() == "idempotency-key"
-        for key in transport.call_args_list[2].kwargs["headers"]
+    assert transport.call_args_list[2].args[1] == "https://93.184.216.34/next"
+    assert transport.call_args_list[2].kwargs["headers"]["Host"] == "buyer.test"
+    assert transport.call_args_list[2].kwargs["headers"]["Idempotency-Key"] == (
+        "purchase-1"
     )
 
 
 def test_async_hateoas_new_path_keeps_explicit_operation_fingerprint():
     async def run():
         wallet = MagicMock()
-        wallet.pay_invoice.return_value = "preimage"
+        wallet.pay_invoice.return_value = TEST_PREIMAGE
         client = Payment402Client(ln_adapter=wallet, auto_navigate=True)
         after_payment = _transport_response(
             400,
@@ -3065,11 +3082,10 @@ def test_async_hateoas_new_path_keeps_explicit_operation_fingerprint():
         wallet.pay_invoice.assert_called_once()
         assert client._async_client.request.call_count == 3
         third_call = client._async_client.request.call_args_list[2]
-        assert third_call.args[1] == "https://buyer.test/next"
-        assert not any(
-            key.lower() == "idempotency-key"
-            for key in third_call.kwargs["headers"]
-        )
+        assert third_call.args[1] == "https://93.184.216.34/next"
+        assert third_call.kwargs["headers"]["Host"] == "buyer.test"
+        assert third_call.kwargs["extensions"]["sni_hostname"] == "buyer.test"
+        assert third_call.kwargs["headers"]["Idempotency-Key"] == "purchase-1"
 
     asyncio.run(run())
 
@@ -3082,8 +3098,13 @@ class _CachedCredentialExecutor:
         self.calls += 1
         return L402ExecutionReport(
             delegate_source="lightninglabs",
-            authorization_value="L402 cached-credential",
-            preimage=None,
+            authorization_value=(
+                f"L402 {parsed.parameters['macaroon']}:{TEST_PREIMAGE}"
+            ),
+            preimage=TEST_PREIMAGE,
+            payment_hash=hashlib.sha256(
+                bytes.fromhex(TEST_PREIMAGE)
+            ).hexdigest(),
             payment_performed=False,
             cached_token_used=True,
             endpoint=url,
@@ -3118,7 +3139,7 @@ def test_credential_reused_is_terminal_before_irreversible_reentry():
     with patch(
         "ln_church_agent.client.requests.request", return_value=_l402_402()
     ):
-        with pytest.raises(PaymentExecutionError, match="credential_reused"):
+        with pytest.raises(PaymentExecutionError, match="state is ambiguous"):
             client.execute_detailed(
                 "GET", "https://buyer.test/start", context=context
             )
@@ -3342,7 +3363,7 @@ def test_result_unknown_primary_error_survives_evidence_export_failure(async_mod
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
 def test_paid_success_is_not_replaced_by_evidence_export_failure(async_mode):
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     repo = _FailingEvidence()
     context = ExecutionContext()
     client = Payment402Client(ln_adapter=wallet, evidence_repo=repo)
@@ -3440,7 +3461,7 @@ def test_cached_credential_has_zero_session_spend_evidence_delta_and_reserve():
 
 def test_fresh_contexts_allow_two_real_purchases():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
 
     with patch(
@@ -3466,7 +3487,7 @@ def test_fresh_contexts_allow_two_real_purchases():
 
 def test_sync_hateoas_ambiguous_flow_has_one_irreversible_call():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet, auto_navigate=True)
     next_action = _transport_response(
         400,
@@ -3492,7 +3513,7 @@ def test_sync_hateoas_ambiguous_flow_has_one_irreversible_call():
 def test_async_hateoas_ambiguous_flow_has_one_irreversible_call():
     async def run():
         wallet = MagicMock()
-        wallet.pay_invoice.return_value = "preimage"
+        wallet.pay_invoice.return_value = TEST_PREIMAGE
         client = Payment402Client(ln_adapter=wallet, auto_navigate=True)
         client._async_client = MagicMock()
         client._async_client.request = AsyncMock(
@@ -3626,7 +3647,7 @@ def test_pre_irreversible_nonstandard_exception_constructor_preserves_type():
 def test_paid_retry_transport_loss_is_secret_free_without_double_reserve():
     secret = "DUMMY_PAID_RETRY_TRANSPORT_SECRET"
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
     context = ExecutionContext()
 
@@ -3652,7 +3673,7 @@ def test_async_paid_retry_transport_loss_is_secret_free_without_double_reserve()
     async def run():
         secret = "DUMMY_ASYNC_PAID_RETRY_SECRET_617c"
         wallet = MagicMock()
-        wallet.pay_invoice.return_value = "preimage"
+        wallet.pay_invoice.return_value = TEST_PREIMAGE
         evidence = _CaptureEvidence()
         client = Payment402Client(
             ln_adapter=wallet, evidence_repo=evidence
@@ -3744,7 +3765,7 @@ def test_async_irreversible_wallet_error_reserves_once_and_blocks_reentry():
 
 def test_same_context_same_explicit_idempotency_key_rejects_second_purchase():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
     context = ExecutionContext()
 
@@ -3775,9 +3796,9 @@ def test_same_context_same_explicit_idempotency_key_rejects_second_purchase():
     assert transport.call_count == 3
 
 
-def test_same_context_different_explicit_idempotency_key_allows_new_purchase():
+def test_same_context_different_idempotency_rejects_reused_payment_identity():
     wallet = MagicMock()
-    wallet.pay_invoice.return_value = "preimage"
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
     client = Payment402Client(ln_adapter=wallet)
     context = ExecutionContext()
 
@@ -3796,17 +3817,20 @@ def test_same_context_different_explicit_idempotency_key_allows_new_purchase():
             headers={"Idempotency-Key": "purchase-1"},
             context=context,
         )
-        second = client.execute_detailed(
-            "GET",
-            "https://buyer.test/start",
-            headers={"Idempotency-Key": "purchase-2"},
-            context=context,
-        )
+        with pytest.raises(
+            PaymentExecutionError,
+            match="Payment identity was reused",
+        ):
+            client.execute_detailed(
+                "GET",
+                "https://buyer.test/start",
+                headers={"Idempotency-Key": "purchase-2"},
+                context=context,
+            )
 
     assert first.response == {"purchase": 1}
-    assert second.response == {"purchase": 2}
-    assert wallet.pay_invoice.call_count == 2
-    assert transport.call_count == 4
+    wallet.pay_invoice.assert_called_once()
+    assert transport.call_count == 3
 
 
 @pytest.mark.parametrize(

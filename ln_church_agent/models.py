@@ -16,6 +16,7 @@ class ChallengeSource(str, Enum):
 
 class AttestationSource(str, Enum):
     SERVER_JWS = "server_attested"
+    UNSIGNED_SERVER = "server_asserted_unsigned"
     CLIENT_REPORTED = "self_reported"
 
 class SettlementOption(BaseModel):
@@ -52,8 +53,8 @@ class TrustDecision(BaseModel):
 
 class L402ExecutionReport(BaseModel):
     delegate_source: str = "native"
-    authorization_value: str
-    preimage: Optional[str] = None
+    authorization_value: str = Field(repr=False)
+    preimage: Optional[str] = Field(default=None, repr=False)
     payment_hash: Optional[str] = None
     fee_sats: Optional[int] = None
     amount_sats: Optional[int] = None
@@ -166,8 +167,16 @@ class ExecutionContext(BaseModel):
     _session_budget_restored: bool = PrivateAttr(default=False)
     _payment_executed: bool = PrivateAttr(default=False)
     _idempotency_key: Optional[str] = PrivateAttr(default=None)
+    _logical_operation_id: Optional[str] = PrivateAttr(default=None)
+    _origin_idempotency_keys: Dict[str, str] = PrivateAttr(default_factory=dict)
     _payment_states: Dict[str, str] = PrivateAttr(default_factory=dict)
+    _payment_identities: Dict[str, str] = PrivateAttr(default_factory=dict)
     _ambiguous_reservations: Dict[str, Decimal] = PrivateAttr(default_factory=dict)
+    _known_settled_ambiguities: set = PrivateAttr(default_factory=set)
+    _navigation_urls: set = PrivateAttr(default_factory=set)
+    _navigation_hops: int = PrivateAttr(default=0)
+    _navigation_states: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _navigation_pins: Dict[str, Any] = PrivateAttr(default_factory=dict)
     _payment_state_lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
 
     def model_post_init(self, __context: Any) -> None:
@@ -181,6 +190,11 @@ class ExecutionContext(BaseModel):
     def set_payment_state(self, fingerprint: str, state: str):
         with self._payment_state_lock:
             self._payment_states[fingerprint] = state
+
+    def list_payment_states(self) -> Dict[str, str]:
+        """Return a snapshot suitable for ambiguity/status recovery tooling."""
+        with self._payment_state_lock:
+            return dict(self._payment_states)
 
 class ParsedChallenge(BaseModel):
     scheme: str
@@ -198,6 +212,8 @@ class ParsedChallenge(BaseModel):
     _invoice_msats: Optional[int] = PrivateAttr(default=None)
     _atomic_amount: Optional[str] = PrivateAttr(default=None)
     _canonical_requirement: Optional[Any] = PrivateAttr(default=None)
+    _signer_requirement: Optional[Any] = PrivateAttr(default=None)
+    _approved_requirement_hash: Optional[str] = PrivateAttr(default=None)
 
 class CanonicalPaymentRequirement(BaseModel):
     """P0-B: PolicyとSignerが合意するための正規化された支払要件"""
@@ -264,16 +280,40 @@ class SettlementReceipt(BaseModel):
     settled_amount: float
     asset: str
     network: str
-    proof_reference: str
-    receipt_token: Optional[str] = None
-    verification_status: str = "verified"
+    proof_reference: Optional[str]
+    # Never retain the raw PAYMENT-RESPONSE / Payment-Receipt bearer-like
+    # value.  Persist only its one-way digest and parsed claims/state.
+    receipt_token_hash: Optional[str] = None
+    receipt_claims: Optional[Dict[str, str]] = None
+    verification_status: str = "unverified"
     source: AttestationSource = AttestationSource.CLIENT_REPORTED
+    present: bool = False
+    server_asserted: bool = False
+    signature_verified: bool = False
+    settlement_verified: bool = False
+    delivered: bool = False
+    receipt_format: Optional[str] = None
+    receipt_error: Optional[str] = None
+    payment_id: Optional[str] = None
+    requirement_hash: Optional[str] = None
     delegate_source: str = "native"
     payment_hash: Optional[str] = None
     fee_sats: Optional[int] = None
     cached_token_used: bool = False
     payment_performed: bool = True
     endpoint: Optional[str] = None
+
+    @property
+    def receipt_token(self) -> None:
+        """Deprecated compatibility accessor; raw receipt tokens are discarded.
+
+        P0-2 intentionally no longer stores or serializes the bearer-like raw
+        ``PAYMENT-RESPONSE`` value.  Existing callers may continue reading this
+        attribute while migrating to ``receipt_token_hash`` and the explicit
+        receipt-state fields.
+        """
+
+        return None
 
 class AssetType(str, Enum):
     JPYC = "JPYC"

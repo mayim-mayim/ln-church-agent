@@ -1,6 +1,6 @@
 import requests
 import time
-from typing import Optional
+from typing import Dict, Optional
 from decimal import Decimal
 from .protocols import LightningProvider
 
@@ -105,3 +105,37 @@ def decode_bolt11_amount_msats(invoice: str) -> int:
     if amount_msat is None or int(amount_msat) <= 0:
         raise ValueError("Fail-Closed: Amountless, zero, or negative invoices are strictly prohibited.")
     return int(amount_msat)
+
+
+def decode_bolt11_payment_metadata(invoice: str) -> Dict[str, str]:
+    """Decode all signed BOLT11 fields used by the canonical payment boundary."""
+    # Keep every syntactic/signature/amount check in one place.
+    amount_msat = decode_bolt11_amount_msats(invoice)
+    try:
+        import bolt11
+        decoded = bolt11.decode(invoice)
+        network = {
+            "bc": "bitcoin-mainnet",
+            "tb": "bitcoin-testnet",
+            "bcrt": "bitcoin-regtest",
+        }.get(str(decoded.currency))
+        payment_hash = str(decoded.payment_hash)
+        payee = str(decoded.payee)
+        created_at = int(decoded.date)
+        expiry_delta = int(decoded.expiry)
+    except Exception:
+        raise ValueError(
+            "Fail-Closed: BOLT11 canonical metadata decoding failed."
+        ) from None
+
+    if network is None:
+        raise ValueError("Fail-Closed: Unknown BOLT11 network.")
+    if not payment_hash or not payee or expiry_delta <= 0:
+        raise ValueError("Fail-Closed: Incomplete BOLT11 canonical metadata.")
+    return {
+        "amount_atomic": str(amount_msat),
+        "payment_hash": payment_hash,
+        "payee": payee,
+        "network": network,
+        "expires_at": str(created_at + expiry_delta),
+    }

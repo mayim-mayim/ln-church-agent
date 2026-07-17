@@ -106,8 +106,8 @@ def test_6_payment_draft_execution_guard(MockLNProvider):
     # 支払いが実行されていないことを確認
     mock_ln_adapter.pay_invoice.assert_not_called()
 
-def test_7_payment_receipt_presence():
-    """Test 7: payment_receipt_present がサーバーからのトークン有無で判定されること（run_mpp_charge_sandbox_harnessロジック）"""
+def test_7_payment_receipt_presence_without_retaining_raw_token():
+    """Receipt presence is state-based and raw receipt tokens are discarded."""
     client = Payment402Client()
     # このテストはクライアントのメソッドに組み込まれたロジックを直接検証するのではなく、
     # 概念として「サーバーレシートなし」なら False になることを意図したものです。
@@ -125,22 +125,29 @@ def test_7_payment_receipt_presence():
     # 内部ロジックと同じ評価
     is_present_false = bool(
         receipt_without_server_token
-        and getattr(receipt_without_server_token, "receipt_token", None)
+        and getattr(receipt_without_server_token, "present", False)
         and getattr(receipt_without_server_token, "source", None) == AttestationSource.SERVER_JWS
     )
     assert is_present_false is False
     
     receipt_with_server_token = SettlementReceipt(
         receipt_id="123", scheme="L402", network="Lightning", asset="SATS", settled_amount=10.0,
-        proof_reference="preimage123", receipt_token="jws.token.here", source=AttestationSource.SERVER_JWS
+        proof_reference="preimage123", present=True,
+        receipt_token="legacy-raw-receipt-secret",
+        receipt_token_hash="sha256:" + "a" * 64,
+        source=AttestationSource.SERVER_JWS
     )
     
     is_present_true = bool(
         receipt_with_server_token
-        and getattr(receipt_with_server_token, "receipt_token", None)
+        and getattr(receipt_with_server_token, "present", False)
         and getattr(receipt_with_server_token, "source", None) == AttestationSource.SERVER_JWS
     )
     assert is_present_true is True
+    assert receipt_with_server_token.receipt_token is None
+    assert "receipt_token" not in type(receipt_with_server_token).model_fields
+    assert "legacy-raw-receipt-secret" not in receipt_with_server_token.model_dump_json()
+    assert "legacy-raw-receipt-secret" not in repr(receipt_with_server_token)
 
 def test_8_request_is_json_list():
     """Test 8: request が valid JSON だが dict ではない(listなど)場合に落ちないこと"""

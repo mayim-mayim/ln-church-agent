@@ -1,13 +1,26 @@
 import base64
 import json
 import re
+import time
 import httpx
 from typing import Any, Dict, Optional, Tuple
 from decimal import Decimal, InvalidOperation
 
 from .models import ParsedChallenge, ChallengeSource, SchemeType, CanonicalPaymentRequirement
 from .exceptions import PaymentChallengeError
-from .crypto.lightning import decode_bolt11_amount_msats
+from .crypto.lightning import (
+    decode_bolt11_amount_msats,
+    decode_bolt11_payment_metadata,
+)
+from .payment_contract import (
+    PaymentContractError,
+    sha256_prefixed,
+    verify_canonical_payment_requirement,
+    validate_l402_macaroon_structure,
+    verify_l402_metadata,
+    verify_request_binding,
+    verify_requirement_expiry,
+)
 
 ALLOWED_CURRENCIES = {"SATS", "USDC", "JPYC"}
 
@@ -551,14 +564,316 @@ def _normalize_network(net_str: str) -> str:
             return f"solana:{parts[1]}"
     return net_str.lower()
 
+
+def _response_request_binding(response: Any) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    request = getattr(response, "request", None)
+    if request is None:
+        return None, None, None
+    request_url = getattr(request, "url", None)
+    request_method = getattr(request, "method", None)
+    request_headers = getattr(request, "headers", {}) or {}
+    idempotency_key = None
+    try:
+        for key, value in request_headers.items():
+            if str(key).lower() == "idempotency-key":
+                idempotency_key = str(value)
+                break
+    except Exception:
+        pass
+    return (
+        str(request_url) if request_url is not None else None,
+        str(request_method) if request_method is not None else None,
+        idempotency_key,
+    )
+
+
+def _canonical_display_amount(requirement: Dict[str, Any]) -> Decimal:
+    return Decimal(requirement["amount_atomic"]) / (
+        Decimal(10) ** int(requirement["decimals"])
+    )
+
+
+def _validate_paid_surface_display_fields(
+    option: Dict[str, Any], requirement: Dict[str, Any]
+) -> None:
+    """Legacy display fields are optional but can never contradict canonical."""
+    mismatches = []
+    comparisons = {
+        "settlement_rail": requirement["rail"],
+        "rail": requirement["rail"],
+        "authorization_scheme": requirement["authorization_scheme"],
+        "network": requirement["network"],
+        "decimals": requirement["decimals"],
+        "amount_atomic": requirement["amount_atomic"],
+        "pay_to": requirement["pay_to"],
+        "payTo": requirement["pay_to"],
+    }
+    for field, expected in comparisons.items():
+        if field in option and option[field] != expected:
+            mismatches.append(field)
+
+    if "asset" in option:
+        displayed_asset = option["asset"]
+        expected_asset = "SATS" if requirement["asset_identifier"] == "lightning:sats" else None
+        if expected_asset is None or displayed_asset != expected_asset:
+            mismatches.append("asset")
+    if "amount" in option:
+        raw_amount = option["amount"]
+        if isinstance(raw_amount, bool) or isinstance(raw_amount, float):
+            mismatches.append("amount")
+        else:
+            try:
+                display_amount = Decimal(str(raw_amount))
+            except InvalidOperation:
+                mismatches.append("amount")
+            else:
+                if display_amount != _canonical_display_amount(requirement):
+                    mismatches.append("amount")
+    if mismatches:
+        raise PaymentContractError(
+            "Paid-surface display fields contradict canonical requirement: "
+            + ", ".join(sorted(set(mismatches)))
+        )
+
+
+def _parse_paid_surface_challenge(
+    response: Any,
+    body: Dict[str, Any],
+    *,
+    allowed_networks: Optional[list],
+    now: int,
+    logical_request_url: Optional[str] = None,
+    logical_request_method: Optional[str] = None,
+    logical_idempotency_key: Optional[str] = None,
+) -> ParsedChallenge:
+    options = body.get("accepted_payments")
+    if not isinstance(options, list) or not options:
+        raise PaymentChallengeError(
+            "Fail-Closed: paid-surface challenge has no accepted payment options."
+        )
+
+    response_url, response_method, response_idempotency_key = (
+        _response_request_binding(response)
+    )
+    request_url = logical_request_url or response_url
+    request_method = logical_request_method or response_method
+    request_idempotency_key = (
+        logical_idempotency_key
+        if logical_idempotency_key is not None
+        else response_idempotency_key
+    )
+    if not request_url or not request_method:
+        raise PaymentChallengeError(
+            "Fail-Closed: paid-surface challenge is missing its actual request binding."
+        )
+
+    normalized_allowed = None
+    if allowed_networks is not None:
+        normalized_allowed = {str(value).lower() for value in allowed_networks}
+
+    executable_seen = False
+    last_error = None
+    for option in options:
+        if not isinstance(option, dict):
+            last_error = "payment option is not an object"
+            continue
+        raw_requirement = option.get("canonical_requirement")
+        credential = option.get("credential_challenge")
+        if raw_requirement is None or credential is None:
+            continue
+        executable_seen = True
+        try:
+            requirement = verify_canonical_payment_requirement(raw_requirement)
+            verify_request_binding(
+                requirement, request_url=request_url, method=request_method
+            )
+            verify_requirement_expiry(requirement, now=now)
+            if (
+                request_idempotency_key is None
+                or requirement["idempotency_key"] != request_idempotency_key
+            ):
+                raise PaymentContractError(
+                    "Canonical idempotency key does not match the actual request."
+                )
+            if normalized_allowed is not None and requirement["network"].lower() not in normalized_allowed:
+                continue
+            _validate_paid_surface_display_fields(option, requirement)
+
+            if requirement["rail"] != "l402":
+                raise PaymentContractError(
+                    "Selected canonical payment rail is not executable by this path."
+                )
+            if not isinstance(credential, dict) or set(credential) != {
+                "type", "authorization_scheme", "invoice", "macaroon"
+            }:
+                raise PaymentContractError(
+                    "L402 credential_challenge has an invalid shape."
+                )
+            if credential.get("type") != "l402" or credential.get("authorization_scheme") != "L402":
+                raise PaymentContractError(
+                    "L402 credential_challenge scheme is invalid."
+                )
+            invoice = credential.get("invoice")
+            macaroon = credential.get("macaroon")
+            if (
+                not isinstance(invoice, str)
+                or not invoice
+                or invoice.startswith("<")
+                or sha256_prefixed(invoice) != requirement["credential_payload_hash"]
+            ):
+                raise PaymentContractError(
+                    "L402 invoice does not match credential_payload_hash."
+                )
+            if (
+                not isinstance(macaroon, str)
+                or macaroon != macaroon.strip()
+                or macaroon.startswith("<")
+                or re.fullmatch(r"[A-Za-z0-9+/_=-]+", macaroon) is None
+            ):
+                raise PaymentContractError("L402 macaroon is invalid.")
+            validate_l402_macaroon_structure(
+                macaroon, canonical_requirement=requirement
+            )
+
+            metadata = decode_bolt11_payment_metadata(invoice)
+            verify_l402_metadata(requirement, metadata, now=now)
+
+            auth_header = response.headers.get("WWW-Authenticate", "")
+            if auth_header:
+                parts = auth_header.strip().split(None, 1)
+                if len(parts) != 2 or parts[0] != "L402":
+                    raise PaymentContractError(
+                        "WWW-Authenticate contradicts canonical L402 challenge."
+                    )
+                auth_params, valid = _parse_http_auth_params(parts[1])
+                if (
+                    not valid
+                    or set(auth_params) != {
+                        "invoice", "macaroon", "id", "requirement_hash"
+                    }
+                    or auth_params.get("invoice") != invoice
+                    or auth_params.get("macaroon") != macaroon
+                    or auth_params.get("id") != requirement["challenge_id"]
+                    or auth_params.get("requirement_hash") != requirement["requirement_hash"]
+                ):
+                    raise PaymentContractError(
+                        "WWW-Authenticate does not match the body L402 challenge."
+                    )
+
+            payment_required = response.headers.get("PAYMENT-REQUIRED")
+            if payment_required:
+                legacy_params, valid = _parse_http_auth_params(payment_required)
+                expected_legacy = {
+                    "network": requirement["network"],
+                    "amount_atomic": requirement["amount_atomic"],
+                    "decimals": str(requirement["decimals"]),
+                    "asset": requirement["asset_identifier"],
+                    "id": requirement["challenge_id"],
+                    "requirement_hash": requirement["requirement_hash"],
+                }
+                if not valid or legacy_params != expected_legacy:
+                    raise PaymentContractError(
+                        "PAYMENT-REQUIRED contradicts canonical L402 challenge."
+                    )
+            x402_payment_required = response.headers.get("x-402-payment-required")
+            if x402_payment_required is not None:
+                expected_x402 = (
+                    f"amount_atomic={requirement['amount_atomic']}; "
+                    f"asset={requirement['asset_identifier']}; "
+                    f"network={requirement['network']}; "
+                    f"requirement_hash={requirement['requirement_hash']}"
+                )
+                if x402_payment_required != expected_x402:
+                    raise PaymentContractError(
+                        "x-402-payment-required contradicts canonical L402 challenge."
+                    )
+            returned_idempotency = response.headers.get("Idempotency-Key")
+            if (
+                returned_idempotency is not None
+                and returned_idempotency != requirement["idempotency_key"]
+            ):
+                raise PaymentContractError(
+                    "Response idempotency key contradicts canonical requirement."
+                )
+
+            parsed = ParsedChallenge(
+                scheme="L402",
+                network=requirement["network"],
+                amount=float(_canonical_display_amount(requirement)),
+                asset="SATS",
+                parameters={
+                    "invoice": invoice,
+                    "macaroon": macaroon,
+                    "challenge_id": requirement["challenge_id"],
+                    "payment_id": requirement["payment_id"],
+                    "idempotency_key": requirement["idempotency_key"],
+                    "requirement_hash": requirement["requirement_hash"],
+                    "_selection_reason": "canonical_paid_surface_v1",
+                    "_raw_accepted": option,
+                },
+                source=ChallengeSource.BODY_CHALLENGE,
+                raw_header=auth_header or None,
+                draft_shape="ln_church.paid_surface_challenge.v1",
+                payment_method="lightning",
+                payment_intent=str(
+                    (body.get("surface") or {}).get("payment_intent", "charge")
+                ),
+            )
+            parsed._invoice_msats = int(requirement["amount_atomic"])
+            parsed._atomic_amount = requirement["amount_atomic"]
+            parsed._canonical_requirement = requirement
+            return parsed
+        except (PaymentContractError, ValueError, TypeError) as exc:
+            last_error = str(exc)
+
+    if not executable_seen:
+        # Preserve inspectability of the deployed legacy shape, but deliberately
+        # leave it without a canonical requirement so execution fails closed.
+        first = options[0] if isinstance(options[0], dict) else {}
+        return ParsedChallenge(
+            scheme=str(first.get("settlement_rail", "unknown")),
+            network="unknown",
+            amount=_safe_float(first.get("amount", 0)),
+            asset=str(first.get("asset", "unknown")),
+            parameters={"_selection_reason": "missing_canonical_requirement"},
+            source=ChallengeSource.BODY_CHALLENGE,
+            draft_shape="ln_church.paid_surface_challenge.v1-inspect-only",
+        )
+    raise PaymentChallengeError(
+        "Fail-Closed: no executable canonical paid-surface option"
+        + (f" ({last_error})" if last_error else ".")
+    )
+
 def parse_challenge_from_response(
     response: httpx.Response,
     expected_asset: str = "USDC",
     expected_chain_id: Optional[str] = None,
     allowed_networks: Optional[list] = None,
-    prefer_svm: bool = False
+    prefer_svm: bool = False,
+    now: Optional[int] = None,
+    request_url: Optional[str] = None,
+    request_method: Optional[str] = None,
+    request_idempotency_key: Optional[str] = None,
 ) -> ParsedChallenge:
     h = response.headers
+
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    if (
+        isinstance(body, dict)
+        and body.get("schema_version") == "ln_church.paid_surface_challenge.v1"
+    ):
+        return _parse_paid_surface_challenge(
+            response,
+            body,
+            allowed_networks=allowed_networks,
+            now=int(time.time()) if now is None else now,
+            logical_request_url=request_url,
+            logical_request_method=request_method,
+            logical_idempotency_key=request_idempotency_key,
+        )
 
     auth_h = h.get("WWW-Authenticate", "")
     pay_req = h.get("payment-required") or h.get("x-payment-required") or h.get("PAYMENT-REQUIRED")

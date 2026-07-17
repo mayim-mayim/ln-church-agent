@@ -1,0 +1,35 @@
+{
+  "clock_seconds": 1700000100,
+  "preimage": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "invoice": "lnbc100n1pj48ugqpp5vvxu62txcsekdygj23ythvjmfl6p9fyuwvkm9j9tcxu9sx7hzrwssp5yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qdp4f38zqsmgw4exx6pq2qcz6v3qvdex7umnypex2ur0ypnxj7r5w4ex2xqrrsswdwdhxkn2f9qfg75qjex6e209yy3243zuwwesqacp8j7wxg5jjjzhnj6zm4hqwwl5wkm2y9tf9030wfdaq73u5ve7hnr3l6jucl77vsp6hc7lq",
+  "l402_metadata": {
+    "amount_atomic": "10000",
+    "payment_hash": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+    "payee": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "network": "bitcoin-mainnet",
+    "expires_at": "1700003600"
+  },
+  "canonical_requirement": {
+    "schema_version": "ln_church.canonical_payment_requirement.v1",
+    "url_scheme": "https",
+    "host": "provider.test",
+    "port": 443,
+    "origin": "https://provider.test",
+    "method": "GET",
+    "resource_url": "https://provider.test/api/agent/benchmark/ping",
+    "rail": "l402",
+    "authorization_scheme": "L402",
+    "asset_identifier": "lightning:sats",
+    "chain": "bitcoin",
+    "network": "bitcoin-mainnet",
+    "decimals": 3,
+    "amount_atomic": "10000",
+    "pay_to": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "expires_at": "1700003600",
+    "challenge_id": "ch_contract_l402_001",
+    "payment_id": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+    "idempotency_key": "idem_contract_001",
+    "credential_payload_hash": "sha256:e64635667f6075fc030c7b595f6f8c446a77d357a5dd5e420557c6c78982be38",
+    "requirement_hash": "sha256:d57ea95de29f919f9d3e293873faf4eba4fd716a2ab6b788fcb0f0f28f1acf33"
+  }
+}

@@ -1,9 +1,15 @@
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from ln_church_agent.models import ExecutionContext, TrustDecision, PaymentEvidenceRecord, EvidenceRepository
 from ln_church_agent.client import Payment402Client
 from ln_church_agent.exceptions import CounterpartyTrustError
+from _p0_2_fixture import (
+    configure_contract_clock,
+    contract_response,
+    load_contract_fixture,
+    success_response,
+)
 
 class MockMemoryRepo(EvidenceRepository):
     def __init__(self):
@@ -54,23 +60,26 @@ def test_evidence_import_assists_trust():
             return TrustDecision(is_trusted=True)
         return TrustDecision(is_trusted=False, reason="No history")
 
-    client = Payment402Client(base_url="http://mock", trust_evaluators=[assist_evaluator], evidence_repo=repo)
+    fixture = load_contract_fixture()
+    client = configure_contract_clock(
+        Payment402Client(
+            trust_evaluators=[assist_evaluator], evidence_repo=repo
+        ),
+        fixture,
+    )
     
     with patch("requests.request") as mock_req:
-        resp_402 = MagicMock()
-        resp_402.status_code = 402
-        resp_402.headers = {"WWW-Authenticate": 'L402 macaroon="m", invoice="i"'}
-        resp_402.json.return_value = {"challenge": {"scheme": "L402", "amount": 10, "asset": "SATS"}, "instruction_for_agents": {}}
-        
-        resp_200 = MagicMock()
-        resp_200.status_code = 200
-        resp_200.content = b'{}'
-        resp_200.json.return_value = {}
+        resp_402 = contract_response(fixture)
+        resp_200 = success_response(fixture, {})
         
         mock_req.side_effect = [resp_402, resp_200]
 
         with patch.object(client, "_process_payment", return_value=("proof", "Lightning", None)):
-            result = client.execute_detailed("POST", "/test")
+            result = client.execute_detailed(
+                fixture["request"]["method"],
+                fixture["request"]["url"],
+                headers=fixture["request"]["headers"],
+            )
             # 評価を通過して200まで到達していればOK
             assert result.response == {}
             # 成功時も Export されているか
@@ -93,21 +102,21 @@ def test_evidence_export_async_is_awaited():
         repo = AsyncMockRepo()
         client = Payment402Client(base_url="http://mock", evidence_repo=repo)
         
-        with patch("httpx.AsyncClient.request") as mock_req:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.headers = {}
-            # ★修正: レスポンス自体に Sandbox Evidence と判定される条件を入れる
-            mock_resp.json.return_value = {
-                "status": "success",
-                "meta": {"kind": "sandbox_result", "run_id": "test_async_123"}
-            }
-            mock_req.return_value = mock_resp
-            
-            # 200 OK のみの実行（初回リクエストで証跡が含まれているためExportが発火する）
-            await client.execute_detailed_async("POST", "/test")
-            
-            assert len(repo.exported) == 1
-            assert repo.awaited is True
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {}
+        # ★修正: レスポンス自体に Sandbox Evidence と判定される条件を入れる
+        mock_resp.json.return_value = {
+            "status": "success",
+            "meta": {"kind": "sandbox_result", "run_id": "test_async_123"}
+        }
+        client._async_client = MagicMock()
+        client._async_client.request = AsyncMock(return_value=mock_resp)
+
+        # 200 OK のみの実行（初回リクエストで証跡が含まれているためExportが発火する）
+        await client.execute_detailed_async("POST", "/test")
+
+        assert len(repo.exported) == 1
+        assert repo.awaited is True
 
     asyncio.run(run_test())
