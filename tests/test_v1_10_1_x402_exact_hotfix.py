@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 
 from ln_church_agent.client import Payment402Client
 from ln_church_agent.challenges import parse_challenge_from_response
+from ln_church_agent.exceptions import PaymentExecutionError
 from ln_church_agent.models import ChallengeSource
 
 def _create_mock_response(headers):
@@ -149,15 +150,13 @@ def test_5_evm_exact_signer_receives_correct_amount_semantics(mock_recover, mock
     parsed = client._parse_challenge(res)
     
     headers = {}
-    client._process_payment(parsed, headers, {}, url="http://mock")
-    
-    args, kwargs = mock_gen.call_args
-    assert kwargs["atomic_amount_str"] == "1000"
-    
-    b64_env = headers["PAYMENT-SIGNATURE"]
-    env = json.loads(base64.urlsafe_b64decode(b64_env + '==').decode('utf-8'))
-    assert env["accepted"]["amount"] == "1000"
-    assert env["accepted"]["asset"].lower() == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".lower()
+    # Private signer entry cannot bypass the policy-approved canonical
+    # snapshot. Amount semantics are exercised through execute_detailed.
+    with pytest.raises(PaymentExecutionError, match="canonical v1 binding"):
+        client._process_payment(parsed, headers, {}, url="http://mock")
+
+    mock_gen.assert_not_called()
+    assert headers == {}
 
 def test_6_l402_mpp_priority_regression():
     client = Payment402Client()

@@ -454,7 +454,7 @@ def test_wallet_timeout_is_ambiguous_and_explicitly_recoverable():
     assert state["state"] == "ambiguous"
     assert client.resolve_ambiguous_payment(
         context, fingerprint, "confirmed_not_paid"
-    ) == "not_started"
+    ) == "confirmed_not_paid"
 
 
 def test_header_body_invoice_mismatch_is_rejected_before_wallet():

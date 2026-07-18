@@ -43,5 +43,5 @@ class X402SvmSigner(Protocol):
 
     def generate_svm_exact_payload(
         self, network: str, asset: str, amount: Union[str, int, float], pay_to: str,
-        fee_payer: str, memo: Optional[str] = None
+        fee_payer: str, memo: Optional[str] = None,
     ) -> Dict[str, Any]: ...

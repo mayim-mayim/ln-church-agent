@@ -10,7 +10,7 @@ This matrix defines the strict boundaries of what the `ln-church-agent` SDK can 
 | **Payment draft challenge** | settlement_rail | `execution_runtime` | False | True | `depends_on_payment_method` | Yes | No | False | False |
 | **x402 V1 EVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
 | **x402 V2 exact EVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
-| **x402 V2 exact SVM** | settlement_rail | `execution_runtime` | True | True | `evm_or_svm_signer` | Yes | No | False | False |
+| **x402 V2 exact SVM** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
 | **x402 exact post-settlement diagnostic endpoint** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
 | **x402 batch-settlement** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
 | **x402 auth-capture** | settlement_rail | `inspect_only` | False | False | `none` | False | No | False | False |
@@ -27,6 +27,12 @@ This matrix defines the strict boundaries of what the `ln-church-agent` SDK can 
 | **AWS AgentCore payments** | managed_platform | `inspect_only` | False | False | `none` | False | No | False | False |
 | **x402 Bazaar / Discovery** | discovery | `inspect_only` | False | False | `none` | False | No | False | False |
 | **OpenAPI multi-offer discovery**| discovery | `inspect_only` | False | False | `none` | False | No | False | False |
+
+### Canonical SVM exact boundary
+
+The high-level sync and async canonical SVM exact auto-payment lane is intentionally fail-closed. A Solana recent blockhash expires by block height, and the runtime cannot mechanically prove that this lifetime ends at or before the canonical Unix `expires_at`. It therefore halts before the signer, RPC lookup, or paid HTTP retry and recommends `stop_safely`.
+
+The low-level SVM transaction builder remains available for payload construction and validation only; it does not make the high-level canonical auto-payment lane executable. Its x402-compatible instruction order is `CU limit → CU price → TransferChecked → exactly one Memo`. Without `extra.memo`, the Memo is 16 random bytes encoded as 32 lowercase hex characters. With `extra.memo`, it is the supplied UTF-8 value. Values over 256 UTF-8 bytes are rejected. Interoperability was independently exercised against the x402 Python 2.16.0 facilitator verifier with `extra.memo` both absent and present.
 
 
 ### Semantic Glossary

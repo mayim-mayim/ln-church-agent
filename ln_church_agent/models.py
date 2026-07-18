@@ -148,6 +148,12 @@ class PaymentEvidenceRecord(BaseModel):
     error_message: Optional[str] = None
     navigation_source: Optional[str] = None
     session_spend_delta_usd: Optional[float] = None
+    # Durable session-budget journal.  ``session_spend_delta_usd`` remains the
+    # backwards-compatible confirmed-spend projection; a reservation must not
+    # be written there because an unknown settlement is not confirmed spend.
+    session_budget_event: Optional[str] = None
+    session_budget_operation_id: Optional[str] = None
+    session_budget_amount_usd: Optional[float] = None
     delegate_source: str = "native"
     payment_hash: Optional[str] = None
     fee_sats: Optional[int] = None
@@ -171,6 +177,7 @@ class ExecutionContext(BaseModel):
     _origin_idempotency_keys: Dict[str, str] = PrivateAttr(default_factory=dict)
     _payment_states: Dict[str, str] = PrivateAttr(default_factory=dict)
     _payment_identities: Dict[str, str] = PrivateAttr(default_factory=dict)
+    _budget_reservations: Dict[str, Decimal] = PrivateAttr(default_factory=dict)
     _ambiguous_reservations: Dict[str, Decimal] = PrivateAttr(default_factory=dict)
     _known_settled_ambiguities: set = PrivateAttr(default_factory=set)
     _navigation_urls: set = PrivateAttr(default_factory=set)
@@ -275,6 +282,58 @@ class PaymentPolicy:
     allowed_hosts: Optional[List[str]] = None
     blocked_hosts: List[str] = field(default_factory=list)
     _session_spent_usd: float = field(default=0.0, repr=False)
+    # One policy instance represents one session-spend ledger.  The lock is
+    # deliberately owned by the policy (rather than an ExecutionContext) so
+    # concurrent logical operations using separate contexts cannot both pass
+    # the same remaining-budget check.
+    def __post_init__(self) -> None:
+        # Keep the runtime lock outside dataclass fields: dataclasses.asdict()
+        # deep-copies fields and an RLock is intentionally not serializable.
+        self._session_spend_lock = threading.RLock()
+        self._session_reserved_usd = 0.0
+        self._session_ledger_version = 0
+        self._budget_session_id = None
+        self._restored_session_ids = set()
+        self._restored_session_reservations = {}
+        self._session_budget_operation_journal = {}
+        self._session_budget_operation_versions = {}
+
+    def __deepcopy__(self, memo):
+        """Copy policy configuration/ledger while creating a fresh lock."""
+        copied = type(self)(
+            allowed_schemes=list(self.allowed_schemes),
+            allowed_assets=list(self.allowed_assets),
+            allowed_networks=(
+                None
+                if self.allowed_networks is None
+                else list(self.allowed_networks)
+            ),
+            max_spend_per_tx_usd=self.max_spend_per_tx_usd,
+            max_spend_per_session_usd=self.max_spend_per_session_usd,
+            allowed_hosts=(
+                None if self.allowed_hosts is None else list(self.allowed_hosts)
+            ),
+            blocked_hosts=list(self.blocked_hosts),
+            _session_spent_usd=self._session_spent_usd,
+        )
+        copied._session_reserved_usd = self._session_reserved_usd
+        copied._session_ledger_version = self._session_ledger_version
+        copied._budget_session_id = self._budget_session_id
+        copied._restored_session_ids = set(self._restored_session_ids)
+        copied._restored_session_reservations = {
+            session_id: dict(reservations)
+            for session_id, reservations in self._restored_session_reservations.items()
+        }
+        copied._session_budget_operation_journal = {
+            session_id: dict(events)
+            for session_id, events in self._session_budget_operation_journal.items()
+        }
+        copied._session_budget_operation_versions = {
+            session_id: dict(versions)
+            for session_id, versions in self._session_budget_operation_versions.items()
+        }
+        memo[id(self)] = copied
+        return copied
 
 class SettlementReceipt(BaseModel):
     receipt_id: str

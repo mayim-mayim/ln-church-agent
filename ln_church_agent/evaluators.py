@@ -4,6 +4,7 @@ from typing import Optional, Callable, Literal
 from ln_church_agent.models import (
     TrustDecision, OutcomeSummary, TrustEvidence, ExecutionContext, SettlementReceipt
 )
+from ln_church_agent.redaction import redact_remote_metadata, redact_url_query
 
 class RemoteTrustEvaluator:
     """
@@ -24,7 +25,7 @@ class RemoteTrustEvaluator:
 
     def __call__(self, evidence: TrustEvidence, context: ExecutionContext) -> TrustDecision:
         payload = {
-            "target_url": evidence.url,
+            "target_url": redact_url_query(evidence.url),
             "challenge": {
                 "scheme": evidence.challenge.scheme,
                 "network": evidence.challenge.network,
@@ -34,8 +35,10 @@ class RemoteTrustEvaluator:
             "context": {
                 "intent_label": context.intent_label,
                 "session_id": context.session_id,
-                "agent_id": context.hints.get("agent_id", "unknown"),
-                "hints": evidence.agent_hints
+                "agent_id": redact_remote_metadata(
+                    context.hints.get("agent_id", "unknown")
+                ),
+                "hints": redact_remote_metadata(evidence.agent_hints)
             }
         }
 
@@ -147,7 +150,9 @@ class RemoteOutcomeMatcher:
             }
 
         payload = {
-            "target_url": context.hints.get("target_url", "unknown"),
+            "target_url": redact_url_query(
+                context.hints.get("target_url", "unknown")
+            ),
             "intent_label": context.intent_label,
             "settlement": {
                 "receipt_id": receipt.receipt_id if receipt else None,
@@ -161,7 +166,9 @@ class RemoteOutcomeMatcher:
                 "body_preview": preview
             },
             "context": {
-                "agent_id": context.hints.get("agent_id", "unknown")
+                "agent_id": redact_remote_metadata(
+                    context.hints.get("agent_id", "unknown")
+                )
             }
         }
 

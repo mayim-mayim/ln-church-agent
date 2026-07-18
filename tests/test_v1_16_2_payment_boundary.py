@@ -5,8 +5,12 @@ import copy
 import hashlib
 import inspect
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -29,23 +33,32 @@ from ln_church_agent.client import LnChurchClient, Payment402Client
 from ln_church_agent.crypto.evm import (
     LocalKeyAdapter,
     build_eip3009_typed_data,
+    derive_eip3009_requirement_nonce,
     validate_eip3009_payload,
 )
 from ln_church_agent.crypto.lightning import decode_bolt11_amount_msats
 from ln_church_agent.crypto.protocols import EVMSigner
+from ln_church_agent.payment_contract import sha256_prefixed
 from ln_church_agent.exceptions import (
+    CounterpartyTrustError,
     InvoiceParseError,
     NavigationGuardrailError,
     PaymentExecutionError,
+)
+from ln_church_agent.evaluators import (
+    RemoteOutcomeMatcher,
+    RemoteTrustEvaluator,
 )
 from ln_church_agent.models import (
     ChallengeSource,
     EvidenceRepository,
     ExecutionContext,
     L402ExecutionReport,
+    OutcomeSummary,
     ParsedChallenge,
     PaymentEvidenceRecord,
     PaymentPolicy,
+    TrustDecision,
 )
 
 
@@ -145,21 +158,44 @@ def _l402_402(msats=1000, invoice=None, macaroon=MACAROON, url="https://buyer.te
 class _CaptureEvidence(EvidenceRepository):
     def __init__(self):
         self.records = []
+        self.export_contexts = []
+        self.import_urls = []
+        self.import_contexts = []
+        self.session_import_contexts = []
 
     def export_evidence(self, record, context):
         self.records.append(record)
+        self.export_contexts.append(context)
 
     async def export_evidence_async(self, record, context):
         self.records.append(record)
+        self.export_contexts.append(context)
 
     def import_evidence(self, target_url, context):
+        self.import_urls.append(target_url)
+        self.import_contexts.append(context)
         return []
 
     def import_session_evidence(self, context):
+        self.session_import_contexts.append(context)
         return []
 
     async def import_session_evidence_async(self, context):
+        self.session_import_contexts.append(context)
         return []
+
+
+class _PersistentEvidence(_CaptureEvidence):
+    """In-memory restart boundary for durable budget-journal tests."""
+
+    def import_session_evidence(self, context):
+        return [
+            record for record in self.records
+            if record.session_id == context.session_id
+        ]
+
+    async def import_session_evidence_async(self, context):
+        return self.import_session_evidence(context)
 
 
 class _FailingEvidence(_CaptureEvidence):
@@ -1068,13 +1104,31 @@ def test_exact_parser_private_canonical_flows_to_real_signer_and_verifier():
     assert parsed._canonical_requirement["amount_atomic"] == "1000000"
     assert parsed._canonical_requirement["decimals"] == 6
     assert parsed._signer_requirement.atomic_amount == "1000000"
-    signer_call.assert_called_once_with(
-        asset="USDC",
-        atomic_amount_str="1000000",
-        treasury_address=DESTINATION,
-        chain_id=8453,
-        token_address=BASE_USDC,
+    signer_call.assert_called_once()
+    signer_kwargs = signer_call.call_args.kwargs
+    assert {
+        key: signer_kwargs[key]
+        for key in (
+            "asset", "atomic_amount_str", "treasury_address", "chain_id",
+            "token_address",
+        )
+    } == {
+        "asset": "USDC",
+        "atomic_amount_str": "1000000",
+        "treasury_address": DESTINATION,
+        "chain_id": 8453,
+        "token_address": BASE_USDC,
+    }
+    assert signer_kwargs["valid_before"] == int(
+        parsed._canonical_requirement["expires_at"]
     )
+    assert signer_kwargs["requirement_hash"] == (
+        parsed._canonical_requirement["requirement_hash"]
+    )
+    assert signer_kwargs["idempotency_key"] == (
+        parsed._canonical_requirement["idempotency_key"]
+    )
+    assert signer_kwargs["now"] < signer_kwargs["valid_before"]
     sent_headers = transport.call_args_list[1].kwargs["headers"]
     signed_envelope = json.loads(
         base64.urlsafe_b64decode(
@@ -1493,7 +1547,7 @@ def test_eip3009_wrong_signed_domain_is_rejected(field, value):
         )
 
 
-def test_legacy_evm_signer_remains_compatible_for_exact_representable_amount():
+def test_legacy_evm_signer_without_canonical_binding_fails_closed():
     backing = LocalKeyAdapter(EVM_PRIVATE_KEY)
 
     class LegacySigner:
@@ -1513,14 +1567,23 @@ def test_legacy_evm_signer_remains_compatible_for_exact_representable_amount():
             raise AssertionError("wrong rail")
 
     client = Payment402Client(evm_signer=LegacySigner())
+    context = ExecutionContext()
     with patch(
         "ln_church_agent.client.requests.request",
         side_effect=[_exact_402(), _transport_response(200, {"status": "paid"})],
-    ):
-        result = client.execute_detailed("GET", "https://buyer.test/start")
+    ) as transport:
+        with pytest.raises(
+            PaymentExecutionError,
+            match="Legacy EVM signer",
+        ):
+            client.execute_detailed(
+                "GET", "https://buyer.test/start", context=context
+            )
 
-    assert result.response == {"status": "paid"}
-    assert result.settlement_receipt.payment_performed is True
+    assert transport.call_count == 1
+    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert context._ambiguous_reservations == {}
+    assert client.policy._session_spent_usd == 0
 
 
 def test_v1_16_1_evm_protocol_does_not_require_eip3009_generation():
@@ -1588,11 +1651,12 @@ def _svm_transaction(
     mint=MAINNET_USDC_MINT,
     fee_payer=None,
     unexpected_instruction=False,
-    compute_limit=None,
-    compute_price=None,
+    compute_limit=200_000,
+    compute_price=1,
     duplicate_compute=False,
     duplicate_compute_price=False,
     malformed_compute=False,
+    memo=None,
 ):
     from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
     from solders.hash import Hash
@@ -1654,6 +1718,19 @@ def _svm_transaction(
             )
         )
     )
+    # The normative x402 SVM client layout always has exactly one Memo after
+    # TransferChecked.  Without an extra.memo challenge, the value is a
+    # 16-byte random nonce encoded as 32 lowercase hex characters.
+    memo_value = memo if memo is not None else "00" * 16
+    instructions.append(
+        Instruction(
+            Pubkey.from_string(
+                "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+            ),
+            memo_value.encode("utf-8"),
+            [],
+        )
+    )
     message = MessageV0.try_compile(
         payer.pubkey(), instructions, [], Hash.default()
     )
@@ -1694,7 +1771,7 @@ def test_real_svm_transfer_checked_transaction_is_accepted():
 
 @pytest.mark.parametrize(
     "compute_limit,compute_price",
-    [(None, None), (200_000, 1), (200_000, 1_000_000)],
+    [(200_000, 1), (200_000, 1_000_000)],
 )
 def test_svm_compute_budget_within_fixed_bounds_is_accepted(
     compute_limit, compute_price
@@ -1772,8 +1849,8 @@ def test_builtin_svm_adapter_emits_exact_bounded_compute_pair():
     [
         {"compute_limit": 200_001, "compute_price": 1},
         {"compute_limit": 200_000, "compute_price": 1_000_001},
-        {"compute_limit": 200_000},
-        {"compute_price": 1},
+        {"compute_limit": 200_000, "compute_price": None},
+        {"compute_limit": None, "compute_price": 1},
         {
             "compute_limit": 200_000,
             "compute_price": 1,
@@ -1892,55 +1969,114 @@ def test_real_svm_transaction_mutation_is_rejected(case):
         )
 
 
-def test_client_accepts_real_svm_payload_only_after_full_instruction_validation():
+@pytest.mark.parametrize(
+    "challenge_memo",
+    [None, "provider-challenge-memo"],
+    ids=["extra-memo-absent", "extra-memo-present"],
+)
+@pytest.mark.parametrize(
+    "credential_state",
+    ["absent", "configured"],
+    ids=["without-svm-credentials", "with-svm-credentials"],
+)
+def test_client_fails_closed_canonical_svm_before_signer_or_paid_retry(
+    challenge_memo, credential_state,
+):
+    from ln_church_agent.capabilities import get_capability_matrix
     from solders.keypair import Keypair
+
+    capability = next(
+        row
+        for row in get_capability_matrix()
+        if row["id"] == "x402_v2_exact_svm"
+    )
+    assert capability["execution_behavior"] == "halt"
+    assert capability["default_recommended_action"] == "stop_safely"
+    assert capability["requires_private_key"] is False
+    assert capability["requires_payment_credential"] is False
+    assert capability["can_execute_payment"] is False
+    assert capability["can_execute_protected_action"] is False
 
     sender = Keypair()
     destination = Keypair()
-    transaction_payload = _svm_transaction(
-        sender=sender, destination_owner=destination
-    )
-
     class StaticSvmSigner:
         address = str(sender.pubkey())
 
         def __init__(self):
-            self.calls = []
+            self.calls = 0
 
         def generate_svm_exact_payload(self, **kwargs):
-            self.calls.append(kwargs)
-            return transaction_payload
+            self.calls += 1
+            raise AssertionError("SVM signer must not run in canonical mode")
 
     signer = StaticSvmSigner()
+    context = ExecutionContext()
     client = Payment402Client()
-    client.svm_signer = signer
+    extra = {}
+    if credential_state == "configured":
+        client.svm_signer = signer
+        extra["feePayer"] = str(sender.pubkey())
+    if challenge_memo is not None:
+        extra["memo"] = challenge_memo
     requirement = _exact_payload(
         accepted_overrides={
             "network": MAINNET_SVM,
             "asset": MAINNET_USDC_MINT,
             "payTo": str(destination.pubkey()),
-            "extra": {"feePayer": str(sender.pubkey())},
+            "extra": extra,
         }
     )
 
+    initial_ledger_version = client.policy._session_ledger_version
     with patch(
         "ln_church_agent.client.requests.request",
-        side_effect=[_exact_402(requirement), _transport_response(200, {"status": "paid"})],
-    ) as transport:
-        result = client.execute_detailed("GET", "https://buyer.test/start")
+        side_effect=[
+            _exact_402(requirement),
+            _transport_response(200, {"unexpected": True}),
+        ],
+    ) as transport, patch.object(
+        client,
+        "_reserve_session_budget",
+        wraps=client._reserve_session_budget,
+    ) as reserve_budget, patch.object(
+        client,
+        "_release_session_budget",
+        wraps=client._release_session_budget,
+    ) as release_budget, patch.object(
+        client,
+        "_confirm_session_budget",
+        wraps=client._confirm_session_budget,
+    ) as confirm_budget, patch.object(
+        client,
+        "_process_payment",
+        wraps=client._process_payment,
+    ) as process_payment, patch(
+        "solana.rpc.api.Client.get_latest_blockhash"
+    ) as svm_rpc:
+        with pytest.raises(
+            PaymentExecutionError,
+            match="recent-blockhash validity.*canonical expires_at",
+        ) as caught:
+            client.execute_detailed(
+                "GET", "https://buyer.test/start", context=context
+            )
 
-    assert result.response == {"status": "paid"}
-    assert signer.calls == [
-        {
-            "network": MAINNET_SVM,
-            "asset": MAINNET_USDC_MINT,
-            "amount": "1000000",
-            "pay_to": str(destination.pubkey()),
-            "fee_payer": str(sender.pubkey()),
-            "memo": None,
-        }
-    ]
-    assert "PAYMENT-SIGNATURE" in transport.call_args_list[1].kwargs["headers"]
+    assert signer.calls == 0
+    reserve_budget.assert_not_called()
+    release_budget.assert_not_called()
+    confirm_budget.assert_not_called()
+    process_payment.assert_not_called()
+    svm_rpc.assert_not_called()
+    assert transport.call_count == 1
+    assert "Ambiguous" not in str(caught.value)
+    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert context._ambiguous_reservations == {}
+    assert context._budget_reservations == {}
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == 0
+    assert client.policy._session_budget_operation_journal == {}
+    assert client.policy._session_budget_operation_versions == {}
+    assert client.policy._session_ledger_version == initial_ledger_version
 
 
 def test_client_rejects_invalid_custom_evm_signer_output_before_paid_retry():
@@ -2003,20 +2139,12 @@ def test_client_rejects_invalid_custom_evm_signer_output_before_paid_retry():
     assert retry_transport.call_count == 1
 
 
-def test_client_rejects_high_compute_custom_svm_output_before_paid_retry():
+def test_client_fails_closed_svm_before_custom_signer_output_or_reserve():
     from solders.keypair import Keypair
 
     sender = Keypair()
     destination = Keypair()
-    high_compute_payload = _svm_transaction(
-        sender=sender,
-        destination_owner=destination,
-        fee_payer=sender,
-        compute_limit=1_400_000,
-        compute_price=5_000_000_000,
-    )
-
-    class HighComputeSvmSigner:
+    class UntrustedSvmSigner:
         address = str(sender.pubkey())
 
         def __init__(self):
@@ -2024,9 +2152,9 @@ def test_client_rejects_high_compute_custom_svm_output_before_paid_retry():
 
         def generate_svm_exact_payload(self, **kwargs):
             self.calls += 1
-            return high_compute_payload
+            raise AssertionError("custom SVM signer must not run")
 
-    signer = HighComputeSvmSigner()
+    signer = UntrustedSvmSigner()
     evidence = _CaptureEvidence()
     context = ExecutionContext()
     client = Payment402Client(evidence_repo=evidence)
@@ -2040,25 +2168,21 @@ def test_client_rejects_high_compute_custom_svm_output_before_paid_retry():
         }
     )
 
-    from ln_church_agent.crypto.solana_svm import validate_svm_exact_payload as real_validator
-
     with patch(
         "ln_church_agent.client.requests.request",
         side_effect=[
             _exact_402(requirement),
             _transport_response(200, {"unexpected": True}),
         ],
-    ) as transport, patch(
-        "ln_church_agent.client.validate_svm_exact_payload",
-        wraps=real_validator,
-    ) as validator:
-        with pytest.raises(PaymentExecutionError) as caught:
+    ) as transport:
+        with pytest.raises(
+            PaymentExecutionError, match="canonical SVM exact auto-payment"
+        ) as caught:
             client.execute_detailed(
                 "GET", "https://buyer.test/start", context=context
             )
 
-    assert signer.calls == 1
-    validator.assert_called_once()
+    assert signer.calls == 0
     assert transport.call_count == 1
     assert "Ambiguous" not in str(caught.value)
     assert list(_exception_chain(caught.value)) == [caught.value]
@@ -2075,7 +2199,7 @@ def test_client_rejects_high_compute_custom_svm_output_before_paid_retry():
             client.execute_detailed(
                 "GET", "https://buyer.test/start", context=context
             )
-    assert signer.calls == 2
+    assert signer.calls == 0
     assert retry_transport.call_count == 1
 
 
@@ -2141,20 +2265,19 @@ def test_async_client_rejects_invalid_evm_signer_output_without_reserve():
     asyncio.run(run())
 
 
-def test_async_client_rejects_high_compute_svm_output_without_reserve():
+@pytest.mark.parametrize(
+    "credential_state",
+    ["absent", "configured"],
+    ids=["without-svm-credentials", "with-svm-credentials"],
+)
+def test_async_client_fails_closed_svm_before_signer_or_reserve(
+    credential_state,
+):
     from solders.keypair import Keypair
 
     sender = Keypair()
     destination = Keypair()
-    high_compute_payload = _svm_transaction(
-        sender=sender,
-        destination_owner=destination,
-        fee_payer=sender,
-        compute_limit=1_400_000,
-        compute_price=5_000_000_000,
-    )
-
-    class HighComputeSvmSigner:
+    class UntrustedSvmSigner:
         address = str(sender.pubkey())
 
         def __init__(self):
@@ -2162,20 +2285,22 @@ def test_async_client_rejects_high_compute_svm_output_without_reserve():
 
         def generate_svm_exact_payload(self, **kwargs):
             self.calls += 1
-            return high_compute_payload
+            raise AssertionError("custom SVM signer must not run")
 
     async def run():
-        signer = HighComputeSvmSigner()
-        evidence = _CaptureEvidence()
+        signer = UntrustedSvmSigner()
         context = ExecutionContext()
-        client = Payment402Client(evidence_repo=evidence)
-        client.svm_signer = signer
+        client = Payment402Client()
+        extra = {}
+        if credential_state == "configured":
+            client.svm_signer = signer
+            extra["feePayer"] = str(sender.pubkey())
         requirement = _exact_payload(
             accepted_overrides={
                 "network": MAINNET_SVM,
                 "asset": MAINNET_USDC_MINT,
                 "payTo": str(destination.pubkey()),
-                "extra": {"feePayer": str(sender.pubkey())},
+                "extra": extra,
             }
         )
         client._async_client = MagicMock()
@@ -2186,24 +2311,178 @@ def test_async_client_rejects_high_compute_svm_output_without_reserve():
             ]
         )
 
-        with pytest.raises(PaymentExecutionError) as caught:
-            await client.execute_detailed_async(
-                "GET", "https://buyer.test/start", context=context
-            )
+        initial_ledger_version = client.policy._session_ledger_version
+        with patch.object(
+            client,
+            "_reserve_session_budget",
+            wraps=client._reserve_session_budget,
+        ) as reserve_budget, patch.object(
+            client,
+            "_release_session_budget",
+            wraps=client._release_session_budget,
+        ) as release_budget, patch.object(
+            client,
+            "_confirm_session_budget",
+            wraps=client._confirm_session_budget,
+        ) as confirm_budget, patch.object(
+            client,
+            "_process_payment",
+            wraps=client._process_payment,
+        ) as process_payment, patch(
+            "solana.rpc.api.Client.get_latest_blockhash"
+        ) as svm_rpc:
+            with pytest.raises(
+                PaymentExecutionError, match="canonical SVM exact auto-payment"
+            ) as caught:
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start", context=context
+                )
 
-        assert signer.calls == 1
+        assert signer.calls == 0
+        reserve_budget.assert_not_called()
+        release_budget.assert_not_called()
+        confirm_budget.assert_not_called()
+        process_payment.assert_not_called()
+        svm_rpc.assert_not_called()
         assert client._async_client.request.call_count == 1
         assert "Ambiguous" not in str(caught.value)
         assert list(_exception_chain(caught.value)) == [caught.value]
         assert set(context._payment_states.values()) == {"validation_failed"}
         assert context._ambiguous_reservations == {}
+        assert context._budget_reservations == {}
         assert client.policy._session_spent_usd == 0
-        assert all(
-            record.session_spend_delta_usd in (None, 0)
-            for record in evidence.records
-        )
+        assert client.policy._session_reserved_usd == 0
+        assert client.policy._session_budget_operation_journal == {}
+        assert client.policy._session_budget_operation_versions == {}
+        assert client.policy._session_ledger_version == initial_ledger_version
 
     asyncio.run(run())
+
+
+def test_async_disabled_svm_never_occupies_budget_needed_by_other_operation():
+    """A halted SVM lane must not transiently block a valid shared-session buy."""
+    from solders.keypair import Keypair
+
+    destination = Keypair()
+    policy = PaymentPolicy(
+        max_spend_per_tx_usd=2.0,
+        max_spend_per_session_usd=1.2,
+    )
+    svm_client = Payment402Client(policy=policy)
+    wallet = MagicMock()
+    wallet.pay_invoice.return_value = TEST_PREIMAGE
+    l402_client = Payment402Client(policy=policy, ln_adapter=wallet)
+    svm_context = ExecutionContext(session_id="shared-svm-preflight-session")
+    l402_context = ExecutionContext(session_id="shared-svm-preflight-session")
+
+    svm_requirement = _exact_payload(
+        accepted_overrides={
+            "network": MAINNET_SVM,
+            "asset": MAINNET_USDC_MINT,
+            "payTo": str(destination.pubkey()),
+            "extra": {},
+        }
+    )
+    svm_client._async_client = MagicMock()
+    svm_client._async_client.request = AsyncMock(
+        return_value=_exact_402(svm_requirement)
+    )
+    l402_client._async_client = MagicMock()
+    l402_client._async_client.request = AsyncMock(
+        side_effect=[
+            _l402_402(msats=1_000_000),
+            _transport_response(200, {"result": "other-operation-paid"}),
+        ]
+    )
+
+    # This blocker makes the pre-fix reserve -> process window deterministic.
+    # The fixed high-level SVM path must never reach it.
+    process_entered = threading.Event()
+    allow_process_to_finish = threading.Event()
+    original_process = svm_client._process_payment
+
+    def blocking_process(*args, **kwargs):
+        process_entered.set()
+        assert allow_process_to_finish.wait(timeout=5)
+        return original_process(*args, **kwargs)
+
+    async def run():
+        with patch.object(
+            svm_client,
+            "_reserve_session_budget",
+            wraps=svm_client._reserve_session_budget,
+        ) as reserve_budget, patch.object(
+            svm_client,
+            "_release_session_budget",
+            wraps=svm_client._release_session_budget,
+        ) as release_budget, patch.object(
+            svm_client,
+            "_confirm_session_budget",
+            wraps=svm_client._confirm_session_budget,
+        ) as confirm_budget, patch.object(
+            svm_client,
+            "_process_payment",
+            side_effect=blocking_process,
+        ) as process_payment:
+            svm_task = asyncio.create_task(
+                svm_client.execute_detailed_async(
+                    "GET",
+                    "https://buyer.test/start",
+                    headers={"Idempotency-Key": "disabled-svm-operation"},
+                    context=svm_context,
+                )
+            )
+            for _ in range(200):
+                if svm_task.done() or process_entered.is_set():
+                    break
+                await asyncio.sleep(0.005)
+
+            other_result = None
+            other_error = None
+            try:
+                other_result = await l402_client.execute_detailed_async(
+                    "GET",
+                    "https://buyer.test/start",
+                    headers={"Idempotency-Key": "valid-l402-operation"},
+                    context=l402_context,
+                )
+            except Exception as caught:
+                other_error = caught
+            finally:
+                allow_process_to_finish.set()
+
+            with pytest.raises(
+                PaymentExecutionError,
+                match="canonical SVM exact auto-payment",
+            ):
+                await svm_task
+            if other_error is not None:
+                raise other_error
+
+            reserve_budget.assert_not_called()
+            release_budget.assert_not_called()
+            confirm_budget.assert_not_called()
+            process_payment.assert_not_called()
+            assert other_result is not None
+            return other_result
+
+    result = asyncio.run(run())
+
+    assert result.response == {"result": "other-operation-paid"}
+    wallet.pay_invoice.assert_called_once()
+    assert svm_client._async_client.request.call_count == 1
+    assert l402_client._async_client.request.call_count == 2
+    assert policy._session_reserved_usd == 0
+    assert policy._session_spent_usd == pytest.approx(0.65)
+    assert svm_context._budget_reservations == {}
+    assert svm_context._ambiguous_reservations == {}
+    svm_operation = next(iter(svm_context._payment_states))
+    budget_journal = policy._session_budget_operation_journal[
+        "shared-svm-preflight-session"
+    ]
+    assert svm_operation not in budget_journal
+    assert len(budget_journal) == 1
+    assert next(iter(budget_journal.values()))[0] == "confirmed"
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -2298,6 +2577,9 @@ SENSITIVE_HEADERS = {
     "X-Access-Token": "access-token-secret",
     "X_Access_Token": "underscore-access-token-secret",
     "Private-Key": "private-key-secret",
+    "Signature": "sig-secret",
+    "sIgNaTuRe-InPuT": "sig-input-secret",
+    "DPoP": "dpop-secret",
 }
 
 
@@ -2375,7 +2657,9 @@ def test_cross_origin_redirect_strips_real_second_request_headers_and_params():
     second_call = transport.call_args_list[1]
     _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
     assert second_call.kwargs["headers"]["X-Safe"] == "keep"
-    assert second_call.kwargs["params"] == {}
+    assert second_call.kwargs["params"] is None
+    assert second_call.kwargs["headers"]["Host"] == "dest.test"
+    assert urlparse(second_call.args[1]).path == "/next"
 
 
 def test_same_origin_new_path_rotates_payment_credentials_before_second_request():
@@ -2401,7 +2685,7 @@ def test_same_origin_new_path_rotates_payment_credentials_before_second_request(
     second_headers = second_call.kwargs["headers"]
     _assert_sensitive_header_families_absent(second_headers)
     assert second_headers["X-Safe"] == "keep"
-    assert second_call.kwargs["params"] == {
+    expected_params = {
         "safe": "keep",
         "business_data": "private-original-value",
         "nested": [
@@ -2409,6 +2693,13 @@ def test_same_origin_new_path_rotates_payment_credentials_before_second_request(
             {"visible": "keep-visible"},
         ],
     }
+    assert second_call.kwargs["params"] is None
+    expected_wire = client._final_wire_url(
+        "GET", "https://source.test/other?step=2", expected_params
+    )
+    assert second_call.args[1] == expected_wire.replace(
+        "https://source.test", "https://93.184.216.34"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2462,7 +2753,10 @@ def test_origin_comparison_uses_effective_port_without_weakening_strict_policy(
     assert result.response == {"status": "ok"}
     second_call = transport.call_args_list[1]
     _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
-    assert second_call.kwargs["params"] == expected_params
+    assert second_call.kwargs["params"] is None
+    expected_wire = client._final_wire_url("GET", destination, expected_params)
+    assert urlparse(second_call.args[1]).path == urlparse(expected_wire).path
+    assert urlparse(second_call.args[1]).query == urlparse(expected_wire).query
 
 
 def test_hateoas_strips_original_and_suggested_nested_secrets_at_transport():
@@ -2505,7 +2799,7 @@ def test_hateoas_strips_original_and_suggested_nested_secrets_at_transport():
     _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
     assert second_call.kwargs["headers"]["X-Safe"] == "keep"
     assert second_call.kwargs["headers"]["X-Suggested-Safe"] == "keep-suggested"
-    assert second_call.kwargs["params"] == {
+    expected_params = {
         "safe": "keep",
         "business_data": "private-original-value",
         "nested": [
@@ -2514,6 +2808,13 @@ def test_hateoas_strips_original_and_suggested_nested_secrets_at_transport():
         ],
         "suggested": [{}, {"safeSuggested": "keep"}],
     }
+    assert second_call.kwargs["params"] is None
+    expected_wire = client._final_wire_url(
+        "GET", "https://source.test/next", expected_params
+    )
+    assert second_call.args[1] == expected_wire.replace(
+        "https://source.test", "https://93.184.216.34"
+    )
 
 
 def test_cross_origin_hateoas_drops_original_payload_and_uses_sanitized_suggestion():
@@ -2565,10 +2866,17 @@ def test_cross_origin_hateoas_drops_original_payload_and_uses_sanitized_suggesti
     _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
     assert second_call.kwargs["headers"]["X-Original-Safe"] == "keep"
     assert second_call.kwargs["headers"]["X-Suggested-Safe"] == "keep"
-    assert second_call.kwargs["params"] == {
+    expected_params = {
         "safe_suggested": "keep",
         "nested": [{"visible": "keep"}],
     }
+    assert second_call.kwargs["params"] is None
+    expected_wire = client._final_wire_url(
+        "GET", "https://dest.test/next", expected_params
+    )
+    assert second_call.args[1] == expected_wire.replace(
+        "https://dest.test", "https://93.184.216.34"
+    )
 
 
 def test_external_observation_redacts_nested_secrets_but_preserves_public_evidence():
@@ -2963,9 +3271,14 @@ def test_async_hateoas_uses_same_transport_level_secret_sanitizer():
         _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
         assert second_call.kwargs["headers"]["X-Safe"] == "keep"
         assert second_call.kwargs["headers"]["X-Original-Safe"] == "keep"
-        assert second_call.kwargs["params"] == {
-            "nested": [{"visible": "keep"}]
-        }
+        expected_params = {"nested": [{"visible": "keep"}]}
+        assert second_call.kwargs["params"] is None
+        expected_wire = client._final_wire_url(
+            "GET", "https://dest.test/next", expected_params
+        )
+        assert second_call.args[1] == expected_wire.replace(
+            "https://dest.test", "https://93.184.216.34"
+        )
 
     asyncio.run(run())
 
@@ -3001,7 +3314,9 @@ def test_cross_origin_redirect_async_drops_all_original_headers_and_payload():
         assert result.response == {"status": "ok"}
         _assert_sensitive_header_families_absent(second_call.kwargs["headers"])
         assert second_call.kwargs["headers"]["X-Safe"] == "keep"
-        assert second_call.kwargs["params"] == {}
+        assert second_call.kwargs["params"] is None
+        assert second_call.kwargs["headers"]["Host"] == "dest.test"
+        assert urlparse(second_call.args[1]).path == "/next"
         assert second_call.kwargs["json"] is None
 
     asyncio.run(run())
@@ -3227,7 +3542,7 @@ def test_credential_reused_is_terminal_before_irreversible_reentry():
         "ln_church_agent.client.requests.request",
         side_effect=[_l402_402(), _l402_402()],
     ):
-        with pytest.raises(PaymentExecutionError, match="ambiguous_payment_result"):
+        with pytest.raises(PaymentExecutionError, match="credential_delivery_failed"):
             client.execute_detailed(
                 "GET", "https://buyer.test/start", context=context
             )
@@ -3236,7 +3551,7 @@ def test_credential_reused_is_terminal_before_irreversible_reentry():
     with patch(
         "ln_church_agent.client.requests.request", return_value=_l402_402()
     ):
-        with pytest.raises(PaymentExecutionError, match="state is ambiguous"):
+        with pytest.raises(PaymentExecutionError, match="state is credential_reused"):
             client.execute_detailed(
                 "GET", "https://buyer.test/start", context=context
             )
@@ -3290,9 +3605,14 @@ def test_ambiguous_wallet_timeout_reserves_exact_canonical_amount_once():
 
     assert "ambiguous_payment_result" in str(caught.value)
     assert wallet.pay_invoice.call_count == 1
-    assert policy._session_spent_usd == pytest.approx(0.65)
+    assert policy._session_spent_usd == 0
+    assert policy._session_reserved_usd == pytest.approx(0.65)
     assert list(context._ambiguous_reservations.values()) == [Decimal("0.650000")]
-    assert [record.session_spend_delta_usd for record in evidence.records] == [0.65]
+    assert [record.session_spend_delta_usd for record in evidence.records] == [0.0]
+    assert [record.session_budget_event for record in evidence.records] == [
+        "reserved"
+    ]
+    assert evidence.records[0].session_budget_amount_usd == pytest.approx(0.65)
 
     with patch(
         "ln_church_agent.client.requests.request",
@@ -3304,7 +3624,8 @@ def test_ambiguous_wallet_timeout_reserves_exact_canonical_amount_once():
             )
 
     assert wallet.pay_invoice.call_count == 1
-    assert policy._session_spent_usd == pytest.approx(0.65)
+    assert policy._session_spent_usd == 0
+    assert policy._session_reserved_usd == pytest.approx(0.65)
     assert len(context._ambiguous_reservations) == 1
 
 
@@ -3454,7 +3775,8 @@ def test_result_unknown_primary_error_survives_evidence_export_failure(async_mod
     assert list(context._ambiguous_reservations.values()) == [
         Decimal("0.650000")
     ]
-    assert policy._session_spent_usd == pytest.approx(0.65)
+    assert policy._session_spent_usd == 0
+    assert policy._session_reserved_usd == pytest.approx(0.65)
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -3839,7 +4161,8 @@ def test_async_irreversible_wallet_error_reserves_once_and_blocks_reentry():
         assert secret not in "".join(
             record.model_dump_json() for record in evidence.records
         )
-        assert policy._session_spent_usd == pytest.approx(0.65)
+        assert policy._session_spent_usd == 0
+        assert policy._session_reserved_usd == pytest.approx(0.65)
         assert list(context._ambiguous_reservations.values()) == [
             Decimal("0.650000")
         ]
@@ -3854,7 +4177,8 @@ def test_async_irreversible_wallet_error_reserves_once_and_blocks_reentry():
             )
 
         wallet.pay_invoice.assert_called_once()
-        assert policy._session_spent_usd == pytest.approx(0.65)
+        assert policy._session_spent_usd == 0
+        assert policy._session_reserved_usd == pytest.approx(0.65)
         assert len(context._ambiguous_reservations) == 1
 
     asyncio.run(run())
@@ -3954,3 +4278,1364 @@ def test_one_msat_with_independent_zero_budget_stops_before_wallet(
     wallet.pay_invoice.assert_not_called()
     assert policy._session_spent_usd == 0
     assert transport.call_count == 1
+
+
+def test_audit_evm_signature_is_expiry_and_requirement_bound():
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[_exact_402(), _transport_response(200, {"status": "paid"})],
+    ) as transport:
+        result = client.execute_detailed(
+            "GET",
+            "https://buyer.test/start",
+            headers={"Idempotency-Key": "audit-expiry-binding"},
+        )
+
+    requirement = client._last_parsed_challenge._canonical_requirement
+    envelope = json.loads(
+        base64.urlsafe_b64decode(
+            transport.call_args_list[1].kwargs["headers"]["PAYMENT-SIGNATURE"]
+            + "=="
+        )
+    )
+    authorization = envelope["payload"]["authorization"]
+    assert int(authorization["validBefore"]) <= int(requirement["expires_at"])
+    assert authorization["nonce"] == derive_eip3009_requirement_nonce(
+        requirement["requirement_hash"], requirement["idempotency_key"]
+    )
+    binding = envelope["extensions"]["lnChurchCanonicalBinding"]
+    assert binding["requirementHash"] == requirement["requirement_hash"]
+    assert binding["expiresAt"] == requirement["expires_at"]
+    assert result.settlement_receipt.payment_performed is True
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["expiry", "nonce"],
+    ids=["canonical-expiry-overrun", "alternate-requirement-nonce"],
+)
+def test_audit_rejects_validly_signed_evm_output_outside_canonical_bounds(tamper):
+    """A pluggable signer cannot widen or replace the approved authorization."""
+    backing = LocalKeyAdapter(EVM_PRIVATE_KEY)
+
+    class RebindingSigner:
+        address = backing.address
+
+        def generate_eip3009_payload_atomic(self, **kwargs):
+            altered = dict(kwargs)
+            if tamper == "expiry":
+                altered["valid_before"] = int(kwargs["valid_before"]) + 1
+            else:
+                altered["idempotency_key"] = (
+                    str(kwargs["idempotency_key"]) + "-different-operation"
+                )
+            return backing.generate_eip3009_payload_atomic(**altered)
+
+    client = Payment402Client(evm_signer=RebindingSigner())
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[_exact_402(), _transport_response(200, {"unexpected": True})],
+    ) as transport:
+        with pytest.raises(
+            PaymentExecutionError,
+            match=(
+                "outlives the canonical requirement"
+                if tamper == "expiry"
+                else "nonce is not bound to the canonical requirement"
+            ),
+        ):
+            client.execute_detailed("GET", "https://buyer.test/start")
+
+    assert transport.call_count == 1
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == 0
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_exact_transport_unknown_is_reserved_and_recoverable(async_mode):
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    context = ExecutionContext()
+
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                side_effect=[
+                    _exact_402(),
+                    httpx.ReadTimeout(
+                        "lost",
+                        request=httpx.Request("GET", "https://buyer.test/start"),
+                    ),
+                ]
+            )
+            with pytest.raises(PaymentExecutionError, match="settlement_unknown"):
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start", context=context
+                )
+
+        asyncio.run(run())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[_exact_402(), requests.ReadTimeout("lost")],
+        ):
+            with pytest.raises(PaymentExecutionError, match="settlement_unknown"):
+                client.execute_detailed(
+                    "GET", "https://buyer.test/start", context=context
+                )
+
+    fingerprint, state = next(
+        iter(client.get_payment_operation_states(context).items())
+    )
+    assert state["state"] == "settlement_unknown"
+    assert client.last_receipt.payment_performed is False
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == pytest.approx(1.0)
+    assert context._ambiguous_reservations[fingerprint] == Decimal("1.0")
+    assert client.resolve_ambiguous_payment(
+        context, fingerprint, "confirmed_not_paid"
+    ) == "confirmed_not_paid"
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == 0
+    assert context._ambiguous_reservations == {}
+
+    if async_mode:
+        async def retry():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                side_effect=[
+                    _exact_402(),
+                    _transport_response(200, {"status": "paid-after-check"}),
+                ]
+            )
+            return await client.execute_detailed_async(
+                "GET", "https://buyer.test/start", context=context
+            )
+
+        retry_result = asyncio.run(retry())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[
+                _exact_402(),
+                _transport_response(200, {"status": "paid-after-check"}),
+            ],
+        ):
+            retry_result = client.execute_detailed(
+                "GET", "https://buyer.test/start", context=context
+            )
+    assert retry_result.response == {"status": "paid-after-check"}
+    assert set(context._payment_states.values()) == {"completed"}
+    assert client.policy._session_spent_usd == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_unknown_budget_journal_survives_restart_and_release(async_mode):
+    evidence = _PersistentEvidence()
+    session_id = "durable-settlement-unknown"
+    operation_headers = {"Idempotency-Key": "durable-operation"}
+    client = Payment402Client(
+        private_key=EVM_PRIVATE_KEY,
+        policy=PaymentPolicy(max_spend_per_session_usd=1.5),
+        evidence_repo=evidence,
+    )
+    context = ExecutionContext(session_id=session_id)
+
+    if async_mode:
+        async def lose_response():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                side_effect=[
+                    _exact_402(),
+                    httpx.ReadTimeout(
+                        "lost",
+                        request=httpx.Request(
+                            "GET", "https://buyer.test/start"
+                        ),
+                    ),
+                ]
+            )
+            with pytest.raises(
+                PaymentExecutionError, match="settlement_unknown"
+            ):
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start",
+                    headers=operation_headers, context=context
+                )
+
+        asyncio.run(lose_response())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[_exact_402(), requests.ReadTimeout("lost")],
+        ):
+            with pytest.raises(
+                PaymentExecutionError, match="settlement_unknown"
+            ):
+                client.execute_detailed(
+                    "GET", "https://buyer.test/start",
+                    headers=operation_headers, context=context
+                )
+
+    reserved = [
+        record for record in evidence.records
+        if record.session_budget_event == "reserved"
+    ]
+    assert len(reserved) == 1
+    assert reserved[0].session_spend_delta_usd == 0
+    assert reserved[0].session_budget_amount_usd == pytest.approx(1.0)
+    operation_id = reserved[0].session_budget_operation_id
+
+    restarted = Payment402Client(
+        private_key=EVM_PRIVATE_KEY,
+        policy=PaymentPolicy(max_spend_per_session_usd=1.5),
+        evidence_repo=evidence,
+    )
+    restarted_context = ExecutionContext(session_id=session_id)
+    if async_mode:
+        asyncio.run(
+            restarted._restore_session_spend_from_evidence_async(
+                restarted_context
+            )
+        )
+    else:
+        restarted._restore_session_spend_from_evidence(restarted_context)
+
+    assert restarted.policy._session_spent_usd == 0
+    assert restarted.policy._session_reserved_usd == pytest.approx(1.0)
+    assert restarted_context.get_payment_state(operation_id) == "settlement_unknown"
+    with pytest.raises(PaymentExecutionError, match="including reservations"):
+        restarted._reserve_session_budget(
+            restarted_context, "different-operation", "1.0"
+        )
+
+    if async_mode:
+        assert asyncio.run(
+            restarted.resolve_ambiguous_payment_async(
+                restarted_context, operation_id, "confirmed_not_paid"
+            )
+        ) == "confirmed_not_paid"
+    else:
+        assert restarted.resolve_ambiguous_payment(
+            restarted_context, operation_id, "confirmed_not_paid"
+        ) == "confirmed_not_paid"
+
+    assert [
+        record.session_budget_event for record in evidence.records
+        if record.session_budget_event
+    ] == ["reserved", "released"]
+
+    # The same logical operation may be retried after confirmed_not_paid.  A
+    # second lost response must create a new reservation even though an older
+    # release exists in the journal.
+    if async_mode:
+        async def lose_retry_response():
+            restarted._async_client = MagicMock()
+            restarted._async_client.request = AsyncMock(
+                side_effect=[
+                    _exact_402(),
+                    httpx.ReadTimeout(
+                        "lost-again",
+                        request=httpx.Request(
+                            "GET", "https://buyer.test/start"
+                        ),
+                    ),
+                ]
+            )
+            with pytest.raises(
+                PaymentExecutionError, match="settlement_unknown"
+            ):
+                await restarted.execute_detailed_async(
+                    "GET", "https://buyer.test/start",
+                    headers=operation_headers, context=restarted_context,
+                )
+
+        asyncio.run(lose_retry_response())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[_exact_402(), requests.ReadTimeout("lost-again")],
+        ):
+            with pytest.raises(
+                PaymentExecutionError, match="settlement_unknown"
+            ):
+                restarted.execute_detailed(
+                    "GET", "https://buyer.test/start",
+                    headers=operation_headers, context=restarted_context,
+                )
+
+    assert [
+        record.session_budget_event for record in evidence.records
+        if record.session_budget_event
+    ] == ["reserved", "released", "reserved"]
+
+    second_restart = Payment402Client(
+        policy=PaymentPolicy(max_spend_per_session_usd=1.5),
+        evidence_repo=evidence,
+    )
+    second_context = ExecutionContext(session_id=session_id)
+    if async_mode:
+        asyncio.run(
+            second_restart._restore_session_spend_from_evidence_async(
+                second_context
+            )
+        )
+        assert asyncio.run(
+            second_restart.resolve_ambiguous_payment_async(
+                second_context, operation_id, "confirmed_not_paid"
+            )
+        ) == "confirmed_not_paid"
+    else:
+        second_restart._restore_session_spend_from_evidence(second_context)
+        assert second_restart.resolve_ambiguous_payment(
+            second_context, operation_id, "confirmed_not_paid"
+        ) == "confirmed_not_paid"
+    assert second_restart.policy._session_spent_usd == 0
+    assert second_restart.policy._session_reserved_usd == 0
+
+    final_client = Payment402Client(
+        policy=PaymentPolicy(max_spend_per_session_usd=1.5),
+        evidence_repo=evidence,
+    )
+    final_context = ExecutionContext(session_id=session_id)
+    if async_mode:
+        asyncio.run(
+            final_client._restore_session_spend_from_evidence_async(
+                final_context
+            )
+        )
+    else:
+        final_client._restore_session_spend_from_evidence(final_context)
+    assert final_client.policy._session_spent_usd == 0
+    assert final_client.policy._session_reserved_usd == 0
+    assert final_context.list_payment_states() == {}
+
+
+def test_audit_get_query_is_materialized_once_before_x402_approval():
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    query = {"q": "a/b", "page": "1"}
+    wire_url = client._final_wire_url(
+        "GET", "https://buyer.test/start?existing=%2f", query
+    )
+    challenge = _exact_payload()
+    challenge["resource"]["url"] = wire_url
+    challenge["resource"]["method"] = "GET"
+
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[
+            _exact_402(challenge, url=wire_url),
+            _transport_response(200, {"status": "paid"}, url=wire_url),
+        ],
+    ) as transport:
+        result = client.execute_detailed(
+            "GET", "https://buyer.test/start?existing=%2f", payload=query
+        )
+
+    assert wire_url.endswith("existing=%2F&q=a%2Fb&page=1")
+    assert transport.call_args_list[0].args[1] == wire_url
+    assert transport.call_args_list[1].args[1] == wire_url
+    assert transport.call_args_list[0].kwargs["params"] is None
+    assert transport.call_args_list[1].kwargs["params"] is None
+    assert client._last_parsed_challenge._canonical_requirement[
+        "resource_url"
+    ] == wire_url
+    assert result.final_url == wire_url
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("transport_fails", [False, True], ids=["success", "failure"])
+def test_audit_evidence_redacts_secret_wire_query_at_export_boundary(
+    async_mode, transport_fails
+):
+    evidence = _CaptureEvidence()
+    client = Payment402Client(
+        private_key=EVM_PRIVATE_KEY, evidence_repo=evidence
+    )
+    query = {
+        "q": "public-search",
+        "api_key": "plain-api-secret",
+        "access_token": "plain-access-secret",
+        "password": "plain-password-secret",
+        "sig": "plain-short-signature",
+        "jwt": "plain-jwt-secret",
+        "auth": "plain-auth-secret",
+        "code": "plain-oauth-code",
+        "state": "plain-oauth-state",
+        "key": "plain-short-key",
+        "X-Amz-Signature": "plain-amz-signature",
+        "X-Goog-Signature": "plain-goog-signature",
+        "X-Goog-Credential": "plain-goog-credential",
+        "X-Amz-Security-Token": "plain-amz-security-token",
+    }
+    wire_url = client._final_wire_url(
+        "GET", "https://buyer.test/start", query
+    )
+    redacted_wire_url = client._final_wire_url(
+        "GET", "https://buyer.test/start",
+        {key: "REDACTED" for key in query},
+    )
+    context = ExecutionContext(
+        hints={
+            "target_url": wire_url,
+            "api_key": "plain-hint-api-key",
+            "nested": {"reset_code": "plain-reset-code"},
+        }
+    )
+    context._idempotency_key = "plain-private-idempotency-key"
+    context._logical_operation_id = "plain-private-logical-operation"
+    context._origin_idempotency_keys = {
+        "https://buyer.test": "plain-private-origin-key"
+    }
+    context._navigation_states = {
+        "operation": {"visited": {wire_url}, "hops": 0}
+    }
+    challenge = _exact_payload()
+    challenge["resource"]["url"] = wire_url
+    challenge["resource"]["method"] = "GET"
+
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            second = (
+                httpx.ReadTimeout(
+                    "lost",
+                    request=httpx.Request("GET", wire_url),
+                )
+                if transport_fails else
+                _transport_response(200, {"status": "paid"}, url=wire_url)
+            )
+            client._async_client.request = AsyncMock(
+                side_effect=[_exact_402(challenge, url=wire_url), second]
+            )
+            if transport_fails:
+                with pytest.raises(
+                    PaymentExecutionError, match="settlement_unknown"
+                ):
+                    await client.execute_detailed_async(
+                        "GET", "https://buyer.test/start",
+                        payload=query,
+                        context=context,
+                    )
+            else:
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start", payload=query,
+                    context=context,
+                )
+            return client._async_client.request
+
+        transport = asyncio.run(run())
+    else:
+        second = (
+            requests.ReadTimeout("lost")
+            if transport_fails else
+            _transport_response(200, {"status": "paid"}, url=wire_url)
+        )
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[_exact_402(challenge, url=wire_url), second],
+        ) as transport:
+            if transport_fails:
+                with pytest.raises(
+                    PaymentExecutionError, match="settlement_unknown"
+                ):
+                    client.execute_detailed(
+                        "GET", "https://buyer.test/start", payload=query,
+                        context=context,
+                    )
+            else:
+                client.execute_detailed(
+                    "GET", "https://buyer.test/start", payload=query,
+                    context=context,
+                )
+
+    assert all(secret in wire_url for secret in query.values())
+    assert transport.call_args_list[0].args[1] == wire_url
+    assert transport.call_args_list[1].args[1] == wire_url
+    assert (
+        client._last_parsed_challenge._canonical_requirement["resource_url"]
+        == wire_url
+    )
+    assert evidence.records
+    for record in evidence.records:
+        assert record.target_url == redacted_wire_url
+        exported_query = parse_qs(urlparse(record.target_url).query)
+        assert exported_query == {
+            "api_key": ["REDACTED"],
+            "access_token": ["REDACTED"],
+            "password": ["REDACTED"],
+            "sig": ["REDACTED"],
+            "jwt": ["REDACTED"],
+            "auth": ["REDACTED"],
+            "code": ["REDACTED"],
+            "state": ["REDACTED"],
+            "key": ["REDACTED"],
+            "X-Amz-Signature": ["REDACTED"],
+            "X-Goog-Signature": ["REDACTED"],
+            "X-Goog-Credential": ["REDACTED"],
+            "X-Amz-Security-Token": ["REDACTED"],
+            "q": ["REDACTED"],
+        }
+    assert evidence.import_urls
+    for imported_url in evidence.import_urls:
+        assert imported_url == redacted_wire_url
+        assert set(
+            value
+            for values in parse_qs(urlparse(imported_url).query).values()
+            for value in values
+        ) == {"REDACTED"}
+    repo_contexts = (
+        evidence.session_import_contexts
+        + evidence.import_contexts
+        + evidence.export_contexts
+    )
+    assert repo_contexts
+    for repo_context in repo_contexts:
+        assert repo_context is not context
+        serialized_context = json.dumps(repo_context.model_dump(mode="json"))
+        assert "plain-" not in serialized_context
+        assert repo_context.hints["api_key"] == "REDACTED"
+        assert repo_context.hints["nested"]["reset_code"] == "REDACTED"
+        assert repo_context._navigation_states == {}
+        assert repo_context._origin_idempotency_keys == {}
+        assert repo_context._idempotency_key is None
+        assert repo_context._logical_operation_id is None
+    assert context.hints["target_url"] == wire_url
+    assert context.hints["api_key"] == "plain-hint-api-key"
+    assert context._idempotency_key is not None
+    serialized = json.dumps(
+        [record.model_dump(mode="json") for record in evidence.records]
+    )
+    assert "plain-api-secret" not in serialized
+    assert "plain-access-secret" not in serialized
+    assert "plain-password-secret" not in serialized
+    assert "public-search" not in serialized
+    assert "plain-short-signature" not in serialized
+    assert "plain-jwt-secret" not in serialized
+    assert "plain-auth-secret" not in serialized
+    assert "plain-oauth-code" not in serialized
+    assert "plain-oauth-state" not in serialized
+    assert "plain-short-key" not in serialized
+    assert "plain-amz-signature" not in serialized
+    assert "plain-goog-signature" not in serialized
+    assert "plain-goog-credential" not in serialized
+    assert "plain-amz-security-token" not in serialized
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_local_trust_echo_is_raw_locally_but_sanitized_at_boundaries(
+    async_mode,
+):
+    evidence_repo = _CaptureEvidence()
+    query = {
+        "api_key": "trust-echo-api-secret",
+        "q": "trust-echo-private-query",
+    }
+    probe = Payment402Client()
+    wire_url = probe._final_wire_url(
+        "GET", "https://buyer.test/start", query
+    )
+    challenge = _exact_payload()
+    challenge["resource"]["url"] = wire_url
+    challenge["resource"]["method"] = "GET"
+    raw_reason = (
+        f"blocked {wire_url}; api_key=standalone-trust-secret"
+    )
+    local_decision = TrustDecision(
+        is_trusted=False,
+        reason=raw_reason,
+    )
+    local_seen = []
+
+    def local_evaluator(trust_evidence, context):
+        local_seen.append(
+            (trust_evidence.url, context.hints["target_url"])
+        )
+        return local_decision
+
+    client = Payment402Client(
+        evidence_repo=evidence_repo,
+        trust_evaluators=[local_evaluator],
+    )
+    context = ExecutionContext(hints={"target_url": wire_url})
+
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                return_value=_exact_402(challenge, url=wire_url)
+            )
+            with pytest.raises(CounterpartyTrustError) as caught:
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start",
+                    payload=query, context=context,
+                )
+            return caught.value, client._async_client.request
+
+        public_error, transport = asyncio.run(run())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            return_value=_exact_402(challenge, url=wire_url),
+        ) as transport:
+            with pytest.raises(CounterpartyTrustError) as caught:
+                client.execute_detailed(
+                    "GET", "https://buyer.test/start",
+                    payload=query, context=context,
+                )
+        public_error = caught.value
+
+    assert transport.call_args.args[1] == wire_url
+    assert local_seen == [(wire_url, wire_url)]
+    assert local_decision.reason == raw_reason
+    public_message = str(public_error)
+    assert "trust-echo-api-secret" not in public_message
+    assert "trust-echo-private-query" not in public_message
+    assert "standalone-trust-secret" not in public_message
+    assert "api_key=REDACTED" in public_message
+    assert "q=REDACTED" in public_message
+    assert "api_key=[REDACTED]" in public_message
+
+    assert len(evidence_repo.records) == 1
+    exported = evidence_repo.records[0]
+    assert isinstance(exported.trust_decision, TrustDecision)
+    assert exported.trust_decision is not local_decision
+    exported_query = parse_qs(urlparse(exported.target_url).query)
+    assert exported_query == {
+        "api_key": ["REDACTED"],
+        "q": ["REDACTED"],
+    }
+    exported_json = json.dumps(exported.model_dump(mode="json"))
+    assert "trust-echo-api-secret" not in exported_json
+    assert "trust-echo-private-query" not in exported_json
+    assert "standalone-trust-secret" not in exported_json
+    assert "api_key=REDACTED" in exported.trust_decision.reason
+    assert "q=REDACTED" in exported.trust_decision.reason
+    assert "api_key=[REDACTED]" in exported.error_message
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_local_outcome_echo_is_raw_for_caller_but_sanitized_for_repo(
+    async_mode,
+):
+    evidence_repo = _CaptureEvidence()
+    query = {
+        "api_key": "outcome-echo-api-secret",
+        "q": "outcome-echo-private-query",
+    }
+    probe = Payment402Client()
+    wire_url = probe._final_wire_url(
+        "GET", "https://buyer.test/start", query
+    )
+    raw_message = (
+        f"completed {wire_url}; token=standalone-outcome-secret"
+    )
+    local_outcome = OutcomeSummary(
+        is_success=True,
+        observed_state=f"verified at {wire_url}",
+        message=raw_message,
+        external_evidence={
+            "echo": f"proof at {wire_url}",
+            "api_key": "nested-outcome-secret",
+            "nested": {
+                "url": wire_url,
+                "public_hint": "safe-advisory-value",
+            },
+        },
+    )
+    local_seen = []
+
+    def local_matcher(response, receipt, context):
+        local_seen.append(context.hints["target_url"])
+        return local_outcome
+
+    context = ExecutionContext()
+    response = _transport_response(
+        200,
+        {"status": "ok", "access_path": "sponsored_grant"},
+        url=wire_url,
+    )
+    client = Payment402Client(evidence_repo=evidence_repo)
+
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                return_value=response
+            )
+            result = await client.execute_detailed_async(
+                "GET", "https://buyer.test/start", payload=query,
+                context=context, outcome_matcher=local_matcher,
+            )
+            return result, client._async_client.request
+
+        result, transport = asyncio.run(run())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            return_value=response,
+        ) as transport:
+            result = client.execute_detailed(
+                "GET", "https://buyer.test/start", payload=query,
+                context=context, outcome_matcher=local_matcher,
+            )
+
+    assert transport.call_args.args[1] == wire_url
+    assert local_seen == [wire_url]
+    assert result.final_url == wire_url
+    assert result.outcome is local_outcome
+    assert result.outcome.message == raw_message
+    assert result.outcome.external_evidence["echo"] == (
+        f"proof at {wire_url}"
+    )
+    assert (
+        result.outcome.external_evidence["api_key"]
+        == "nested-outcome-secret"
+    )
+
+    assert len(evidence_repo.records) == 1
+    exported = evidence_repo.records[0]
+    assert isinstance(exported.outcome, OutcomeSummary)
+    assert exported.outcome is not local_outcome
+    exported_query = parse_qs(urlparse(exported.target_url).query)
+    assert exported_query == {
+        "api_key": ["REDACTED"],
+        "q": ["REDACTED"],
+    }
+    exported_json = json.dumps(exported.model_dump(mode="json"))
+    assert "outcome-echo-api-secret" not in exported_json
+    assert "outcome-echo-private-query" not in exported_json
+    assert "standalone-outcome-secret" not in exported_json
+    assert "nested-outcome-secret" not in exported_json
+    assert "api_key=REDACTED" in exported.outcome.message
+    assert "q=REDACTED" in exported.outcome.message
+    assert "token=[REDACTED]" in exported.outcome.message
+    assert exported.outcome.external_evidence["api_key"] == "REDACTED"
+    assert (
+        exported.outcome.external_evidence["nested"]["public_hint"]
+        == "safe-advisory-value"
+    )
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_remote_trust_redacts_query_and_hint_copy_only(async_mode):
+    query = {
+        "api_key": "remote-trust-api-secret",
+        "X-Amz-Signature": "remote-trust-presigned-secret",
+        "q": "remote-trust-private-query",
+    }
+    probe = Payment402Client()
+    wire_url = probe._final_wire_url(
+        "GET", "https://buyer.test/start", query
+    )
+    challenge = _exact_payload()
+    challenge["resource"]["url"] = wire_url
+    challenge["resource"]["method"] = "GET"
+    local_seen = []
+
+    def local_evaluator(evidence, context):
+        local_seen.append((evidence.url, context.hints["target_url"]))
+        return TrustDecision(is_trusted=True, reason="local raw check")
+
+    remote = RemoteTrustEvaluator(endpoint_url="https://advisor.test/trust")
+    client = Payment402Client(trust_evaluators=[local_evaluator, remote])
+    context = ExecutionContext(
+        hints={
+            "target_url": wire_url,
+            "agent_id": "public-agent-123",
+            "public_hint": "public-advisory-value",
+            "allowed_hosts": ["public.example"],
+            "api_key": "remote-hint-api-secret",
+            "nested": {"reset_code": "remote-hint-reset-code"},
+        }
+    )
+    remote_response = MagicMock()
+    remote_response.ok = True
+    remote_response.json.return_value = {
+        "recommendation": "deny",
+        "reason": "test stop before signing",
+    }
+
+    with patch(
+        "ln_church_agent.evaluators.requests.post",
+        return_value=remote_response,
+    ) as remote_post:
+        if async_mode:
+            async def run():
+                client._async_client = MagicMock()
+                client._async_client.request = AsyncMock(
+                    return_value=_exact_402(challenge, url=wire_url)
+                )
+                with pytest.raises(CounterpartyTrustError):
+                    await client.execute_detailed_async(
+                        "GET", "https://buyer.test/start",
+                        payload=query, context=context,
+                    )
+                return client._async_client.request
+
+            transport = asyncio.run(run())
+        else:
+            with patch(
+                "ln_church_agent.client.requests.request",
+                return_value=_exact_402(challenge, url=wire_url),
+            ) as transport:
+                with pytest.raises(CounterpartyTrustError):
+                    client.execute_detailed(
+                        "GET", "https://buyer.test/start",
+                        payload=query, context=context,
+                    )
+
+    assert transport.call_args.args[1] == wire_url
+    assert local_seen == [(wire_url, wire_url)]
+    remote_payload = remote_post.call_args.kwargs["json"]
+    assert set(
+        value
+        for values in parse_qs(
+            urlparse(remote_payload["target_url"]).query
+        ).values()
+        for value in values
+    ) == {"REDACTED"}
+    assert remote_payload["context"]["hints"]["api_key"] == "REDACTED"
+    assert (
+        remote_payload["context"]["hints"]["nested"]["reset_code"]
+        == "REDACTED"
+    )
+    assert remote_payload["context"]["agent_id"] == "public-agent-123"
+    assert (
+        remote_payload["context"]["hints"]["public_hint"]
+        == "public-advisory-value"
+    )
+    assert remote_payload["context"]["hints"]["allowed_hosts"] == [
+        "public.example"
+    ]
+    assert "remote-trust-" not in json.dumps(remote_payload)
+    assert context.hints["target_url"] == wire_url
+    assert context.hints["api_key"] == "remote-hint-api-secret"
+    assert (
+        client._last_parsed_challenge._canonical_requirement["resource_url"]
+        == wire_url
+    )
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_remote_outcome_redacts_query_but_local_and_result_stay_raw(
+    async_mode,
+):
+    query = {
+        "api_key": "remote-outcome-api-secret",
+        "X-Goog-Signature": "remote-outcome-presigned-secret",
+        "q": "remote-outcome-private-query",
+    }
+    probe = Payment402Client()
+    wire_url = probe._final_wire_url(
+        "GET", "https://buyer.test/start", query
+    )
+    local_seen = []
+
+    def local_matcher(response, receipt, context):
+        local_seen.append(context.hints["target_url"])
+        return OutcomeSummary(
+            is_success=True,
+            observed_state="local-raw-verified",
+            message="local",
+        )
+
+    matcher = RemoteOutcomeMatcher(
+        endpoint_url="https://advisor.test/outcome",
+        local_fallback_matcher=local_matcher,
+    )
+    context = ExecutionContext(
+        hints={
+            "agent_id": "public-outcome-agent",
+            "api_key": "local-only-secret",
+        }
+    )
+    response = _transport_response(
+        200, {"status": "ok"}, url=wire_url
+    )
+    remote_response = MagicMock()
+    remote_response.ok = True
+    remote_response.json.return_value = {
+        "recommended_success": True,
+        "observed_state": "remote",
+    }
+
+    with patch(
+        "ln_church_agent.evaluators.requests.post",
+        return_value=remote_response,
+    ) as remote_post:
+        if async_mode:
+            async def run():
+                client = Payment402Client()
+                client._async_client = MagicMock()
+                client._async_client.request = AsyncMock(
+                    return_value=response
+                )
+                result = await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start", payload=query,
+                    context=context, outcome_matcher=matcher,
+                )
+                return result, client._async_client.request
+
+            result, transport = asyncio.run(run())
+        else:
+            client = Payment402Client()
+            with patch(
+                "ln_church_agent.client.requests.request",
+                return_value=response,
+            ) as transport:
+                result = client.execute_detailed(
+                    "GET", "https://buyer.test/start", payload=query,
+                    context=context, outcome_matcher=matcher,
+                )
+
+    assert transport.call_args.args[1] == wire_url
+    assert result.final_url == wire_url
+    assert local_seen == [wire_url]
+    assert context.hints["target_url"] == wire_url
+    remote_payload = remote_post.call_args.kwargs["json"]
+    assert remote_payload["context"]["agent_id"] == "public-outcome-agent"
+    assert set(
+        value
+        for values in parse_qs(
+            urlparse(remote_payload["target_url"]).query
+        ).values()
+        for value in values
+    ) == {"REDACTED"}
+    assert "remote-outcome-" not in json.dumps(remote_payload)
+
+
+def test_audit_get_query_resource_mismatch_stops_before_signing():
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    with patch(
+        "ln_church_agent.client.requests.request",
+        return_value=_exact_402(),
+    ) as transport, patch.object(
+        client.evm_signer, "generate_eip3009_payload_atomic"
+    ) as signer:
+        with pytest.raises(PaymentExecutionError, match="resource.url"):
+            client.execute_detailed(
+                "GET", "https://buyer.test/start", payload={"q": "different"}
+            )
+    assert transport.call_count == 1
+    signer.assert_not_called()
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == 0
+
+
+def test_audit_receipt_identity_changes_with_logical_operation():
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=[
+            _exact_402(),
+            _transport_response(200, {"operation": 1}),
+            _exact_402(),
+            _transport_response(200, {"operation": 2}),
+        ],
+    ):
+        first = client.execute_detailed(
+            "GET",
+            "https://buyer.test/start",
+            headers={"Idempotency-Key": "logical-operation-1"},
+            context=ExecutionContext(),
+        )
+        second = client.execute_detailed(
+            "GET",
+            "https://buyer.test/start",
+            headers={"Idempotency-Key": "logical-operation-2"},
+            context=ExecutionContext(),
+        )
+
+    assert first.settlement_receipt.receipt_id != second.settlement_receipt.receipt_id
+    assert (
+        first.settlement_receipt.proof_reference
+        != second.settlement_receipt.proof_reference
+    )
+
+
+def test_audit_parallel_budget_check_and_reserve_is_atomic_across_contexts():
+    policy = PaymentPolicy(max_spend_per_session_usd=1.5)
+    client = Payment402Client(policy=policy)
+    barrier = threading.Barrier(2)
+
+    def reserve(index):
+        context = ExecutionContext(session_id="shared-session")
+        barrier.wait(timeout=5)
+        try:
+            client._reserve_session_budget(context, f"operation-{index}", "1")
+        except PaymentExecutionError:
+            return context, False
+        return context, True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, (1, 2)))
+
+    assert sum(success for _context, success in results) == 1
+    assert policy._session_spent_usd == 0
+    assert policy._session_reserved_usd == pytest.approx(1.0)
+    winner_context, _ = next(item for item in results if item[1])
+    fingerprint = next(iter(winner_context._budget_reservations))
+    client._confirm_session_budget(winner_context, fingerprint)
+    assert policy._session_spent_usd == pytest.approx(1.0)
+    assert policy._session_reserved_usd == 0
+
+
+def test_audit_policy_lock_is_out_of_band_for_asdict_and_deepcopy():
+    policy = PaymentPolicy(max_spend_per_session_usd=2.0)
+    serialized = asdict(policy)
+    cloned = copy.deepcopy(policy)
+    assert "_session_spend_lock" not in serialized
+    assert "_restored_session_ids" not in serialized
+    json.dumps(serialized)
+    assert cloned._session_spend_lock is not policy._session_spend_lock
+    assert cloned.max_spend_per_session_usd == 2.0
+
+
+def test_audit_restore_merges_distinct_concurrent_confirmation():
+    entered = threading.Event()
+    release_import = threading.Event()
+
+    class BlockingRepo(EvidenceRepository):
+        def import_session_evidence(self, context):
+            entered.set()
+            assert release_import.wait(timeout=5)
+            return [
+                PaymentEvidenceRecord(
+                    session_id=context.session_id,
+                    correlation_id="historical",
+                    target_url="https://buyer.test/history",
+                    method="GET",
+                    session_spend_delta_usd=4.0,
+                    receipt_summary={"receipt_id": "historical-receipt"},
+                )
+            ]
+
+    policy = PaymentPolicy(max_spend_per_session_usd=10.0)
+    client = Payment402Client(policy=policy, evidence_repo=BlockingRepo())
+    restoring = ExecutionContext(session_id="shared-session")
+    concurrent = ExecutionContext(session_id="shared-session")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(client._restore_session_spend_from_evidence, restoring)
+        assert entered.wait(timeout=5)
+        client._reserve_session_budget(concurrent, "concurrent", "3")
+        client._confirm_session_budget(concurrent, "concurrent")
+        release_import.set()
+        future.result(timeout=5)
+
+    assert policy._session_spent_usd == pytest.approx(7.0)
+    assert policy._session_reserved_usd == 0
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "event_state", ["confirmed", "reserved"],
+    ids=["confirmed", "reserved"],
+)
+def test_audit_restore_deduplicates_same_concurrent_operation(
+    async_mode, event_state
+):
+    entered = threading.Event()
+    release_import = threading.Event()
+
+    class BlockingJournalRepo(EvidenceRepository):
+        def __init__(self):
+            self.records = []
+
+        def _records_after_concurrent_export(self):
+            entered.set()
+            assert release_import.wait(timeout=5)
+            return list(self.records)
+
+        def import_session_evidence(self, context):
+            return self._records_after_concurrent_export()
+
+        async def import_session_evidence_async(self, context):
+            return self._records_after_concurrent_export()
+
+    operation_id = "same-concurrent-operation"
+    repo = BlockingJournalRepo()
+    policy = PaymentPolicy(max_spend_per_session_usd=10.0)
+    client = Payment402Client(policy=policy, evidence_repo=repo)
+    restoring = ExecutionContext(session_id="shared-overlap-session")
+    concurrent = ExecutionContext(session_id="shared-overlap-session")
+
+    def restore():
+        if async_mode:
+            asyncio.run(
+                client._restore_session_spend_from_evidence_async(restoring)
+            )
+        else:
+            client._restore_session_spend_from_evidence(restoring)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(restore)
+        assert entered.wait(timeout=5)
+        client._reserve_session_budget(concurrent, operation_id, "3")
+        if event_state == "confirmed":
+            client._confirm_session_budget(concurrent, operation_id)
+        else:
+            client._mark_session_budget_unknown(concurrent, operation_id)
+        repo.records = [
+            PaymentEvidenceRecord(
+                session_id=restoring.session_id,
+                correlation_id="concurrent-export",
+                target_url="https://buyer.test/start",
+                method="GET",
+                session_spend_delta_usd=(
+                    3.0 if event_state == "confirmed" else 0.0
+                ),
+                session_budget_event=event_state,
+                session_budget_operation_id=operation_id,
+                session_budget_amount_usd=3.0,
+            )
+        ]
+        release_import.set()
+        future.result(timeout=5)
+
+    if event_state == "confirmed":
+        assert policy._session_spent_usd == pytest.approx(3.0)
+        assert policy._session_reserved_usd == 0
+    else:
+        assert policy._session_spent_usd == 0
+        assert policy._session_reserved_usd == pytest.approx(3.0)
+        assert restoring._ambiguous_reservations[operation_id] == Decimal("3.0")
+        assert restoring.get_payment_state(operation_id) == "settlement_unknown"
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_restore_uses_operation_version_across_reserved_aba(async_mode):
+    entered = threading.Event()
+    release_import = threading.Event()
+
+    class AbaRepo(EvidenceRepository):
+        def _import(self):
+            entered.set()
+            assert release_import.wait(timeout=5)
+            return [
+                PaymentEvidenceRecord(
+                    session_id="aba-session",
+                    correlation_id="stale-middle-snapshot",
+                    target_url="https://buyer.test/start",
+                    method="GET",
+                    session_spend_delta_usd=0.0,
+                    session_budget_event="released",
+                    session_budget_operation_id="aba-operation",
+                    session_budget_amount_usd=3.0,
+                )
+            ]
+
+        def import_session_evidence(self, context):
+            return self._import()
+
+        async def import_session_evidence_async(self, context):
+            return self._import()
+
+    policy = PaymentPolicy(max_spend_per_session_usd=10.0)
+    client = Payment402Client(policy=policy, evidence_repo=AbaRepo())
+    owner = ExecutionContext(session_id="aba-session")
+    restoring = ExecutionContext(session_id="aba-session")
+    client._reserve_session_budget(owner, "aba-operation", "3")
+
+    def restore():
+        if async_mode:
+            asyncio.run(
+                client._restore_session_spend_from_evidence_async(restoring)
+            )
+        else:
+            client._restore_session_spend_from_evidence(restoring)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(restore)
+        assert entered.wait(timeout=5)
+        assert client._release_session_budget(
+            owner, "aba-operation"
+        ) == Decimal("3")
+        assert client._reserve_session_budget(
+            owner, "aba-operation", "3"
+        ) == Decimal("3")
+        release_import.set()
+        future.result(timeout=5)
+
+    assert policy._session_spent_usd == 0
+    assert policy._session_reserved_usd == pytest.approx(3.0)
+    assert restoring._ambiguous_reservations["aba-operation"] == Decimal("3.0")
+
+
+def test_audit_duplicate_context_cannot_cancel_or_confirm_owner_reservation():
+    client = Payment402Client(
+        policy=PaymentPolicy(max_spend_per_session_usd=10.0)
+    )
+    owner = ExecutionContext(session_id="owner-session")
+    duplicate = ExecutionContext(session_id="owner-session")
+    operation_id = "owned-operation"
+
+    client._reserve_session_budget(owner, operation_id, "3")
+    with pytest.raises(PaymentExecutionError, match="already reserved"):
+        client._reserve_session_budget(duplicate, operation_id, "3")
+    assert client._release_session_budget(duplicate, operation_id) == 0
+    with pytest.raises(PaymentExecutionError, match="does not own"):
+        client._confirm_session_budget(duplicate, operation_id)
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == pytest.approx(3.0)
+
+    assert client._confirm_session_budget(
+        owner, operation_id
+    ) == Decimal("3")
+    assert client.policy._session_spent_usd == pytest.approx(3.0)
+    assert client.policy._session_reserved_usd == 0
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "first_outcome", ["confirmed_paid", "confirmed_not_paid"],
+    ids=["paid", "not-paid"],
+)
+def test_audit_hydrated_contexts_cannot_resolve_one_reservation_twice(
+    async_mode, first_outcome
+):
+    operation_id = "hydrated-shared-operation"
+    evidence = _PersistentEvidence()
+    evidence.records = [
+        PaymentEvidenceRecord(
+            session_id="hydrated-session",
+            correlation_id="reservation",
+            target_url="https://buyer.test/start",
+            method="GET",
+            session_spend_delta_usd=0.0,
+            session_budget_event="reserved",
+            session_budget_operation_id=operation_id,
+            session_budget_amount_usd=3.0,
+        )
+    ]
+    client = Payment402Client(
+        policy=PaymentPolicy(max_spend_per_session_usd=10.0),
+        evidence_repo=evidence,
+    )
+    first = ExecutionContext(session_id="hydrated-session")
+    stale = ExecutionContext(session_id="hydrated-session")
+    client._restore_session_spend_from_evidence(first)
+    client._restore_session_spend_from_evidence(stale)
+
+    if async_mode:
+        asyncio.run(
+            client.resolve_ambiguous_payment_async(
+                first, operation_id, first_outcome
+            )
+        )
+    else:
+        client.resolve_ambiguous_payment(first, operation_id, first_outcome)
+
+    with pytest.raises(PaymentExecutionError, match="already resolved"):
+        client.resolve_ambiguous_payment(stale, operation_id, first_outcome)
+    conflicting = (
+        "confirmed_not_paid"
+        if first_outcome == "confirmed_paid" else "confirmed_paid"
+    )
+    with pytest.raises(PaymentExecutionError):
+        client.resolve_ambiguous_payment(stale, operation_id, conflicting)
+
+    expected_spent = 3.0 if first_outcome == "confirmed_paid" else 0.0
+    assert client.policy._session_spent_usd == pytest.approx(expected_spent)
+    assert client.policy._session_reserved_usd == 0
+
+
+def test_audit_signed_receipt_without_settlement_checker_stays_unsettled():
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    verified_claims = {}
+
+    def transport(_method, _url, **_kwargs):
+        if not verified_claims:
+            return _exact_402()
+        token = ".".join(
+            (
+                _encode_requirement({"alg": "test"}),
+                _encode_requirement(verified_claims),
+                "AA",
+            )
+        )
+        return _transport_response(
+            200,
+            {"status": "paid"},
+            headers={"PAYMENT-RESPONSE": token},
+        )
+
+    def signature_verifier(_token):
+        return dict(verified_claims)
+
+    client._receipt_signature_verifier = signature_verifier
+
+    call_count = 0
+    def dynamic_transport(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            response = _exact_402()
+            original_json = response.json
+            # The verifier claims are filled after parsing/signing, before the
+            # second transport call.
+            return response
+        requirement = client._last_parsed_challenge._canonical_requirement
+        verified_claims.update(
+            {
+                "payment_id": requirement["payment_id"],
+                "requirement_hash": requirement["requirement_hash"],
+            }
+        )
+        return transport(method, url, **kwargs)
+
+    with patch(
+        "ln_church_agent.client.requests.request",
+        side_effect=dynamic_transport,
+    ):
+        result = client.execute_detailed("GET", "https://buyer.test/start")
+
+    receipt = result.settlement_receipt
+    assert receipt.signature_verified is True
+    assert receipt.settlement_verified is False
+    assert receipt.verification_status == "signature_verified"
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_audit_exact_credential_redirect_cannot_confirm_settlement(async_mode):
+    client = Payment402Client(private_key=EVM_PRIVATE_KEY)
+    context = ExecutionContext(hints={"allowed_hosts": ["public.test"]})
+    redirect = _transport_response(
+        302,
+        headers={"Location": "https://public.test/free"},
+        url="https://buyer.test/start",
+    )
+    public_success = _transport_response(
+        200, {"status": "free"}, url="https://public.test/free"
+    )
+
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(
+                side_effect=[_exact_402(), redirect, public_success]
+            )
+            with pytest.raises(PaymentExecutionError, match="settlement_unknown"):
+                await client.execute_detailed_async(
+                    "GET", "https://buyer.test/start", context=context
+                )
+            assert client._async_client.request.call_count == 2
+
+        asyncio.run(run())
+    else:
+        with patch(
+            "ln_church_agent.client.requests.request",
+            side_effect=[_exact_402(), redirect, public_success],
+        ) as transport:
+            with pytest.raises(PaymentExecutionError, match="settlement_unknown"):
+                client.execute_detailed(
+                    "GET", "https://buyer.test/start", context=context
+                )
+        assert transport.call_count == 2
+
+    assert set(context._payment_states.values()) == {"settlement_unknown"}
+    assert client.policy._session_spent_usd == 0
+    assert client.policy._session_reserved_usd == pytest.approx(1.0)
+    assert client.last_receipt.payment_performed is False
