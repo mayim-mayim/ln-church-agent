@@ -131,8 +131,10 @@ def test_parse_standard_x402_challenge():
 
 @patch("ln_church_agent.client.requests.request")
 @patch("ln_church_agent.crypto.evm.sign_standard_x402_evm")
-def test_full_x402_execution_roundtrip(mock_sign_evm, mock_request):
-    """402を受け取り、標準x402署名し、再リクエストしてレシートを受け取る一連のフロー"""
+def test_flat_x402_execution_is_inspect_only_and_fails_closed(
+    mock_sign_evm, mock_request
+):
+    """Canonical fieldsのない旧flat x402を署名対象に昇格しない。"""
 
     mock_sign_evm.return_value = "0xDummySignature"
 
@@ -146,29 +148,17 @@ def test_full_x402_execution_roundtrip(mock_sign_evm, mock_request):
         "PAYMENT-REQUIRED": 'scheme="x402", network="eip155:137", amount="1.0", asset="USDC", payTo="0x1111111111111111111111111111111111111111"'
     }
 
-    response_200 = MagicMock()
-    response_200.status_code = 200
-    response_200.headers = {
-        "PAYMENT-RESPONSE": "ey...JWS_TOKEN..."
-    }
-    response_200.json.return_value = {"data": "success"}
-    response_200.content = b'{"data": "success"}'
-
-    mock_request.side_effect = [response_402, response_200]
+    mock_request.return_value = response_402
 
     context = ExecutionContext()
-    result = client.execute_detailed("POST", "https://api.example.com/data", context=context)
+    with pytest.raises(PaymentExecutionError, match="no complete canonical"):
+        client.execute_detailed(
+            "POST", "https://api.example.com/data", context=context
+        )
 
-    assert mock_request.call_count == 2
-    assert mock_sign_evm.call_count == 1
-
-    assert result.response == {"data": "success"}
-    assert result.used_scheme == "x402"
-
-    assert result.settlement_receipt is not None
-    assert result.settlement_receipt.settled_amount == 1.0
-    assert result.settlement_receipt.receipt_token == "ey...JWS_TOKEN..."
-    assert result.settlement_receipt.verification_status == "verified"
+    assert mock_request.call_count == 1
+    mock_sign_evm.assert_not_called()
+    assert set(context._payment_states.values()) == {"validation_failed"}
 
 # ==========================================
 # 4. 1.5.6 Wire-Level Protocol Purity & Parser テスト

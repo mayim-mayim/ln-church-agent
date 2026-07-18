@@ -9,11 +9,11 @@ This SDK natively manages the following layers to ensure seamless autonomous eco
 
 ### 1. Multi-Protocol Settlement Layers
 
-The client automatically intercepts 402 challenges and negotiates payment across standard and extended networks:
+The client automatically intercepts 402 challenges, executes supported payment rails, and safely inspects or halts on non-executable shapes:
 
 * **x402 (Standard Path)**: Natively handles the standard x402 settlement contract, including Base64URL JSON payloads and CAIP-2-aware routing in the core negotiation loop. The strongest validated standard path today is EVM-based settlement (EIP-712 / EIP-3009), while LN Church-specific `lnc-*` routes remain available for optimized relay and ecosystem-specific flows.
-* **SVM exact (Solana)**: Official x402 v2 SVM exact payments via CAIP-2 `solana:<genesisHash>` networks. This SDK features a built-in transaction builder for standard x402 SVM exact compatible VersionedTransaction payloads. 
-  * **Architecture Boundary:** The current LN Church x402 EVM and SVM exact sandboxes are *post-settlement validators*. They accept submitted transaction hash / Solana signature evidence but do not broadcast unsubmitted exact payloads. The SDK's diagnostic runners treat the rejection of unbroadcasted payloads as expected behavior. True x402 V2 exact settlement is a future server/facilitator phase.
+* **SVM exact (Solana)**: The client recognizes CAIP-2 `solana:<genesisHash>` exact challenges, but canonical high-level sync/async auto-payment is inspect-only and fail-closed. Recent-blockhash validity cannot be mechanically proven to end at or before canonical Unix `expires_at`, so the runtime halts before signer invocation, Solana RPC access, or the paid HTTP retry.
+  * **Architecture Boundary:** The retained local builder and validator are low-level payload construction and interoperability tooling only. They emit and validate official-format `VersionedTransaction` payloads but do not make the canonical high-level lane executable. LN Church exact sandboxes remain *post-settlement validators*: they accept submitted transaction hash or Solana signature evidence and do not broadcast unsubmitted payloads.
 * **L402 & MPP (Lightning Network)**: Fully compatible with Lightning Labs' L402 protocol and the emerging Machine Payments Protocol (MPP). It manages macaroon extraction, Bolt11 invoice parsing, and preimage submission.
 * **LN Church Optimized Routings (`lnc-*`)**: For interacting specifically with the LN Church testbed, agents can opt-in to custom canonical routes:
   * `lnc-evm-relay`: Optimized gasless relayer orchestration.

@@ -1,6 +1,7 @@
 import base64
 import math
 import re
+import secrets
 from typing import Optional, Dict, Any, Union
 from .protocols import X402SvmSigner
 
@@ -26,6 +27,7 @@ TOKEN_PROGRAM_ID_STR = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 MAX_COMPUTE_UNIT_LIMIT = 200_000
 MAX_COMPUTE_UNIT_PRICE_MICRO_LAMPORTS = 1_000_000
 MAX_PRIORITY_FEE_LAMPORTS = 200_000
+MAX_MEMO_BYTES = 256
 
 _SUPPORTED_SVM_NETWORKS = {SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2}
 _ATOMIC_AMOUNT_RE = re.compile(r"^[1-9][0-9]*$")
@@ -88,13 +90,19 @@ def _parse_pubkey(value: Any, field_name: str):
 def validate_svm_exact_payload(
     payload: Any, *, network: str, asset: str,
     amount: Union[str, int, float], pay_to: str, fee_payer: str,
-    signer_address: str, memo: Optional[str] = None
+    signer_address: str, memo: Optional[str] = None,
+    canonical_expires_at: Optional[Union[str, int]] = None,
 ) -> Dict[str, Any]:
     """Validate a serialized x402 SVM transfer against canonical inputs."""
     if not isinstance(payload, dict) or not isinstance(payload.get("transaction"), str):
         raise ValueError("Invalid or incomplete SVM exact payload.")
     if set(payload.keys()) != {"transaction"}:
         raise ValueError("Unexpected SVM exact payload fields.")
+    if canonical_expires_at is not None:
+        raise ValueError(
+            "SVM exact cannot mechanically bound recent-blockhash validity to a "
+            "canonical Unix expiry; canonical SVM payment is disabled."
+        )
 
     decimals = _validate_network_and_mint(network, asset)
     normalized_amount = _normalize_atomic_amount(amount)
@@ -104,8 +112,8 @@ def validate_svm_exact_payload(
     source_owner = _parse_pubkey(signer_address, "signer")
     if memo is not None and not isinstance(memo, str):
         raise ValueError("Invalid SVM memo.")
-    if memo == "":
-        memo = None
+    if memo is not None and len(memo.encode("utf-8")) > MAX_MEMO_BYTES:
+        raise ValueError("SVM memo exceeds the 256-byte x402 limit.")
 
     try:
         raw_transaction = base64.b64decode(payload["transaction"], validate=True)
@@ -141,6 +149,31 @@ def validate_svm_exact_payload(
     if message.header.num_required_signatures < 1 or not message.is_signer(0):
         raise ValueError("SVM transaction fee payer is not a required signer.")
 
+    # The reference x402 SVM facilitator validates these four instruction
+    # positions.  Keeping the layout exact also prevents a second memo from
+    # changing the logical identity while the facilitator validates only one.
+    expected_program_order = [
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        TOKEN_PROGRAM_ID_STR,
+        MEMO_PROGRAM_ID_STR,
+    ]
+    if len(message.instructions) != len(expected_program_order):
+        raise ValueError(
+            "SVM exact payload must contain exactly four instructions and one memo."
+        )
+    actual_program_order = []
+    for compiled_instruction in message.instructions:
+        program_index = compiled_instruction.program_id_index
+        if program_index >= len(account_keys):
+            raise ValueError("SVM instruction contains an invalid program index.")
+        actual_program_order.append(str(account_keys[program_index]))
+    if actual_program_order != expected_program_order:
+        raise ValueError(
+            "Invalid SVM instruction order: expected compute limit, compute price, "
+            "TransferChecked, then memo."
+        )
+
     expected_source = get_associated_token_address(source_owner, mint_pubkey)
     expected_destination = get_associated_token_address(destination_owner, mint_pubkey)
     transfer_details = None
@@ -149,10 +182,8 @@ def validate_svm_exact_payload(
     compute_unit_limit = None
     compute_unit_price = None
 
-    for compiled_instruction in message.instructions:
+    for instruction_index, compiled_instruction in enumerate(message.instructions):
         program_index = compiled_instruction.program_id_index
-        if program_index >= len(account_keys):
-            raise ValueError("SVM instruction contains an invalid program index.")
         program_id = str(account_keys[program_index])
         data = bytes(compiled_instruction.data)
 
@@ -161,6 +192,11 @@ def validate_svm_exact_payload(
                 raise ValueError("Unexpected account-bearing compute-budget instruction.")
             if not data or data[0] not in (2, 3):
                 raise ValueError("Unexpected SVM compute-budget instruction.")
+            expected_discriminator = 2 if instruction_index == 0 else 3
+            if data[0] != expected_discriminator:
+                raise ValueError(
+                    "Invalid SVM compute-budget instruction order."
+                )
             expected_length = 5 if data[0] == 2 else 9
             if len(data) != expected_length or data[0] in compute_discriminators:
                 raise ValueError("Invalid or duplicate SVM compute-budget instruction.")
@@ -179,12 +215,14 @@ def validate_svm_exact_payload(
         if program_id == MEMO_PROGRAM_ID_STR:
             if compiled_instruction.accounts:
                 raise ValueError("Unexpected account-bearing SVM memo instruction.")
+            if len(data) > MAX_MEMO_BYTES:
+                raise ValueError("SVM memo exceeds the 256-byte x402 limit.")
             try:
                 memo_values.append(data.decode("utf-8"))
             except UnicodeDecodeError:
                 raise ValueError("Invalid UTF-8 SVM memo instruction.") from None
             if len(memo_values) > 1:
-                raise ValueError("Duplicate SVM memo instruction.")
+                raise ValueError("SVM exact payload must contain exactly one memo.")
             continue
 
         if program_id != TOKEN_PROGRAM_ID_STR:
@@ -224,10 +262,8 @@ def validate_svm_exact_payload(
             "decimals": decimals,
         }
 
-    if compute_discriminators not in (set(), {2, 3}):
-        raise ValueError(
-            "SVM compute-budget limit and price must either both be absent or both be present."
-        )
+    if compute_discriminators != {2, 3}:
+        raise ValueError("SVM exact payload requires compute limit and compute price.")
     if compute_unit_limit is not None and compute_unit_price is not None:
         priority_fee_lamports = (
             compute_unit_limit * compute_unit_price + 999_999
@@ -237,8 +273,13 @@ def validate_svm_exact_payload(
 
     if transfer_details is None:
         raise ValueError("SVM exact payload is missing SPL Token TransferChecked.")
-    if memo is not None and memo_values != [memo]:
-        raise ValueError("SVM memo does not match the canonical requirement.")
+    if memo is not None:
+        if memo_values != [memo]:
+            raise ValueError("SVM memo does not match the challenge memo.")
+    elif len(memo_values) != 1 or re.fullmatch(r"[0-9a-f]{32}", memo_values[0]) is None:
+        raise ValueError(
+            "SVM generated memo must be exactly 16 random bytes encoded as lowercase hex."
+        )
 
     try:
         signer_index = account_keys.index(source_owner)
@@ -286,7 +327,7 @@ class LocalSvmAdapter(X402SvmSigner):
 
     def generate_svm_exact_payload(
         self, network: str, asset: str, amount: Union[str, int, float], pay_to: str,
-        fee_payer: str, memo: Optional[str] = None
+        fee_payer: str, memo: Optional[str] = None,
     ) -> Dict[str, Any]:
         decimals = _validate_network_and_mint(network, asset)
         atomic_amount = _normalize_atomic_amount(amount)
@@ -296,8 +337,9 @@ class LocalSvmAdapter(X402SvmSigner):
         payer_pubkey = self.keypair.pubkey()
         if memo is not None and not isinstance(memo, str):
             raise ValueError("Invalid SVM memo.")
-        if memo == "":
-            memo = None
+        if memo is not None and len(memo.encode("utf-8")) > MAX_MEMO_BYTES:
+            raise ValueError("SVM memo exceeds the 256-byte x402 limit.")
+        resolved_memo = memo if memo is not None else secrets.token_hex(16)
 
         target_rpc = self.rpc_url
         if not target_rpc:
@@ -333,16 +375,8 @@ class LocalSvmAdapter(X402SvmSigner):
             instructions.append(set_compute_unit_limit(200_000))
             instructions.append(set_compute_unit_price(1))
 
-            # 2. Memo Instruction (Optional)
-            if memo:
-                memo_ix = Instruction(
-                    program_id=Pubkey.from_string(MEMO_PROGRAM_ID_STR),
-                    accounts=[],
-                    data=memo.encode('utf-8')
-                )
-                instructions.append(memo_ix)
-
-            # 3. SPL Token TransferChecked Instruction
+            # 2. SPL Token TransferChecked Instruction.  The reference x402
+            # facilitator requires this at index 2.
             instructions.append(
                 transfer_checked(
                     TransferCheckedParams(
@@ -355,6 +389,17 @@ class LocalSvmAdapter(X402SvmSigner):
                         decimals=decimals,
                         signers=[]
                     )
+                )
+            )
+
+            # 3. Exactly one Memo instruction follows TransferChecked.  When
+            # the challenge has no extra.memo, x402 clients use 16 random bytes
+            # represented as lowercase hex.
+            instructions.append(
+                Instruction(
+                    program_id=Pubkey.from_string(MEMO_PROGRAM_ID_STR),
+                    accounts=[],
+                    data=resolved_memo.encode("utf-8"),
                 )
             )
 

@@ -75,7 +75,7 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 | Mode | Entrypoints | Capabilities & Safety Boundaries |
 | :--- | :--- | :--- |
 | **1. Inspect-only Mode** | `ln-church-agent-mcp`, `inspect` CLI | **Keyless**. Requires no private key, no wallet, and no signer. Performs no payment execution. Safe for enterprise preflight and classification. Classifies HTTP 402 and agent-commerce surfaces (AP2/ACP/APP). Outputs guided handoff, settlement options, and safe next steps (`observe_only` or `stop_safely`). |
-| **2. Execution Runtime Mode** | `Payment402Client`, `LnChurchClient` | May use private key, wallet, LN adapter, or SVM/EVM signer. Can execute supported HTTP 402-compatible settlement rails when local policy allows. Performs the full `Pay → Execute → Verify → Trace` loop. Does not auto-submit telemetry unless explicitly called. |
+| **2. Execution Runtime Mode** | `Payment402Client`, `LnChurchClient` | May use a private key, wallet, LN adapter, or supported EVM signer for executable rails. Canonical SVM exact remains inspect-only and fail-closed; configured SVM key material does not enable its high-level execution. Performs the supported `Pay → Execute → Verify → Trace` loop. Does not auto-submit telemetry unless explicitly called. |
 | **3. Read-only Memory** | `get_surface_preflight()` | Fetches public-safe observed memory for a surface without executing payments or interacting with the target. |
 | **4. Explicit Telemetry** | `submit_goal_attempt_observation()`, `submit_external_observation()` | Explicit-only telemetry submission. Never auto-submits from standard execution paths. |
 
@@ -254,7 +254,7 @@ Example output:
 
 This distinction is intentional:
 
-* **L402 / x402 / MPP** are treated as executable payment rails.
+* **L402, MPP charge, and supported EVM x402 shapes** are treated as executable payment rails. Canonical SVM exact is inspect-only and halts safely; only its low-level payload builder remains available.
 * **Google AP2 / ACP / OKX APP / card-network agent payments** are treated as commerce, authorization, identity, or checkout surfaces. Even if they expose a concrete HTTP 402-compatible settlement path, their baseline recommendation defaults to observation.
 * `inspect` never executes payment, initializes wallets, signs payloads, or calls brokers.
 
@@ -687,7 +687,7 @@ The SDK supports multiple settlement rails through a unified interface.
 **Standard x402 v2 (Global Standards):**
 
 * **EVM exact (`x402`)**: Standard EVM-based settlement utilizing strict EIP-712/EIP-3009 gasless authorization payloads.
-* **SVM exact (Solana)**: Official x402 v2 SVM exact payments via CAIP-2 `solana:<genesisHash>` networks. This SDK features a built-in transaction builder for standard x402 SVM exact compatible payloads.
+* **SVM exact (Solana, inspect + payload builder only)**: The high-level canonical sync/async auto-payment lane is intentionally fail-closed before signer, RPC, or paid retry because a recent blockhash lifetime cannot be proven to end at or before canonical Unix `expires_at`. The low-level builder can construct and validate standard x402 SVM exact payloads, but it does not broadcast payment or execute the protected action.
 * *Note: The current LN Church exact sandboxes act as **post-settlement validators**. They require submitted tx hash / signature evidence and will reject unbroadcasted payloads. True V2 exact settlement (facilitator broadcasting) is a future phase.*
 
 
@@ -709,9 +709,9 @@ The SDK supports multiple settlement rails through a unified interface.
 
 ---
 
-## 🚀 Initializing with Dual-Stack Keys (EVM & SVM)
+## 🚀 Dual-Stack Configuration: EVM Execution and SVM Inspection Tooling
 
-For agents operating across both Ethereum and Solana ecosystems, the SDK strictly isolates key handling to prevent parsing collisions.
+For agents operating across both Ethereum and Solana ecosystems, the SDK strictly isolates EVM execution keys from the optional low-level SVM payload builder. Supplying an SVM key does not enable high-level canonical SVM auto-payment.
 
 ```python
 from ln_church_agent import Payment402Client, PaymentPolicy
@@ -719,7 +719,7 @@ import os
 
 client = Payment402Client(
     private_key=os.getenv("EVM_PRIVATE_KEY"),        # For standard x402 EVM
-    svm_private_key=os.getenv("SVM_PRIVATE_KEY"),    # For standard x402 SVM Exact
+    svm_private_key=os.getenv("SVM_PRIVATE_KEY"),    # Low-level SVM payload builder only
     svm_rpc_url=os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
     policy=PaymentPolicy(...)
 )
@@ -727,14 +727,16 @@ client = Payment402Client(
 ```
 
 > **⚠️ SVM Exact Architecture & Constraints:**
-> * `svm_private_key` must be a standard 64-byte Base58 encoded Solana key.
-> * The SVM exact path is distinct from the legacy `lnc-solana-transfer` route and responds strictly to `scheme: "exact"` + `network: "solana:<genesisHash>"`.
+> * High-level canonical SVM exact auto-payment always halts before signer, RPC, or paid retry. Solana recent-blockhash validity is expressed as block height and cannot be mechanically bounded to end at or before canonical Unix `expires_at`.
+> * `svm_private_key` is used only by the low-level payload builder and must be a standard 64-byte Base58 encoded Solana key. It does not make the high-level lane executable.
+> * The low-level SVM exact builder is distinct from the legacy `lnc-solana-transfer` route and accepts `scheme: "exact"` inputs using `network: "solana:<genesisHash>"`.
 > * **Wire-Level Precision:** The transaction builder preserves and uses the raw `PaymentRequirements.asset` (SPL Token Mint Address) and raw `amount` (minimal units) for wire-level transaction construction. Human-readable normalization is only used internally for policy and budget evaluation.
 > * **ATA Constraint:** The Destination Associated Token Account (ATA) must already exist. The current SDK transaction builder does not inject ATA creation instructions.
 > * **Supported Mints:** The internal builder currently targets strictly known USDC mints. Unknown mints will be rejected due to unknown decimals.
-> * **Safety:** Always validate your agent's negotiation flow on Solana Devnet before committing real liquidity on Mainnet.
-> * **Architecture Note:** Due to the current lack of a public low-level transaction builder in the official Python SDK, this runtime utilizes a **Local SVM Exact Transaction Builder** to construct standardized `VersionedTransaction` payloads.
-> * **Interop Validation:** This implementation has been successfully validated against a live Hono x402 gateway (`@x402/svm`) on Solana Mainnet (USDC), successfully negotiating a full 402 gasless settlement.
+> * **Instruction Contract:** The builder emits `CU limit → CU price → TransferChecked → exactly one Memo`.
+> * **Memo Contract:** Without `extra.memo`, the Memo is 16 random bytes encoded as 32 lowercase hex characters. With `extra.memo`, it is the supplied UTF-8 value. Values over 256 UTF-8 bytes are rejected.
+> * **Architecture Note:** The **Local SVM Exact Transaction Builder** constructs and locally validates standardized `VersionedTransaction` payloads only; it does not claim high-level canonical payment execution.
+> * **Interop Validation:** Payloads with `extra.memo` absent and present are accepted by the x402 Python 2.16.0 facilitator verifier.
 > 
 > 
 

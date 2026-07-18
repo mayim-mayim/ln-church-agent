@@ -11,6 +11,7 @@ except ImportError:
 
 from ..client import LnChurchClient
 from ..models import AssetType
+from ..payment_contract import sha256_prefixed
 
 # ==========================================
 # ⛩️ MCP Server Initialization
@@ -132,11 +133,14 @@ def execute_paid_entropy_oracle(
             f"💰 SETTLED: {resp.get('paid')} via {scheme}\n"
         )
 
-        if receipt and receipt.receipt_token:
-            text_output += f"🔑 VERIFY TOKEN (JWS): {receipt.receipt_token}\n"
+        if receipt and receipt.receipt_token_hash:
+            text_output += f"🔑 VERIFY TOKEN HASH: {receipt.receipt_token_hash}\n"
             text_output += f"🛡️ ATTESTATION SOURCE: {receipt.source.value}\n"
         elif resp.get("receipt", {}).get("verify_token"):
-            text_output += f"🔑 VERIFY TOKEN (JWS): {resp['receipt']['verify_token']}\n"
+            token_hash = sha256_prefixed(
+                str(resp["receipt"]["verify_token"])
+            )
+            text_output += f"🔑 VERIFY TOKEN HASH: {token_hash}\n"
         
         text_output += f"💡 NEXT ACTION: Proceed to 'check_agent_capability_passport' to register this capability."
         

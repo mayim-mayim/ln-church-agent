@@ -122,6 +122,25 @@ def test_capability_matrix_credential_and_grant_semantics():
     assert grant["requires_payment_credential"] is False
     assert grant["proof_semantics"] == "grant_validated_not_settlement_proof"
 
+
+def test_capability_matrix_marks_canonical_svm_exact_non_executable():
+    """Keep the public capability contract aligned with the fail-closed runtime."""
+    matrix = get_capability_matrix()
+    svm = next(row for row in matrix if row["id"] == "x402_v2_exact_svm")
+
+    assert svm["current_sdk_support"] == "observe_only"
+    assert svm["inspect_behavior"] == "observe_only"
+    assert svm["execution_behavior"] == "halt"
+    assert svm["default_recommended_action"] == "stop_safely"
+    assert svm["mode"] == "inspect_only"
+    assert svm["requires_private_key"] is False
+    assert svm["requires_payment_credential"] is False
+    assert svm["credential_requirement"] == "none"
+    assert svm["can_execute_payment"] is False
+    assert svm["can_execute_protected_action"] is False
+    assert svm["proof_semantics"] == "unverified"
+
+
 def test_capability_matrix_payment_draft_semantics():
     """Ensure Payment draft challenge is conditional and does not generate JSON credentials."""
     from ln_church_agent.capabilities import get_capability_matrix

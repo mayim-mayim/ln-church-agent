@@ -33,8 +33,9 @@ client = Payment402Client(
     base_url="https://api.standard-402-provider.com"
 )
 
-# The SDK handles 402 challenges and captures JWS receipts automatically.
-# execute_detailed is recommended to access the full settlement evidence.
+# The SDK handles 402 challenges and captures receipt state automatically.
+# Raw bearer-like receipt tokens are deliberately discarded. execute_detailed
+# exposes a one-way token hash and independent assertion/verification states.
 result = client.execute_detailed(
     method="POST",
     endpoint_path="/api/v1/action",
@@ -42,8 +43,11 @@ result = client.execute_detailed(
 )
 
 print(f"Status: {result.response['status']}")
-print(f"Receipt Token (JWS): {result.settlement_receipt.receipt_token}")
-print(f"Attestation: {result.settlement_receipt.source}") # -> server_attested
+print(f"Receipt Token Hash: {result.settlement_receipt.receipt_token_hash}")
+print(f"Server Asserted: {result.settlement_receipt.server_asserted}")
+print(f"Signature Verified: {result.settlement_receipt.signature_verified}")
+print(f"Settlement Verified: {result.settlement_receipt.settlement_verified}")
+print(f"Delivered: {result.settlement_receipt.delivered}")
 ```
 
 ## ⛩️ Reference Testbed: LN Church Pilgrimage

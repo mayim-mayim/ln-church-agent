@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from ln_church_agent.client import Payment402Client
 from ln_church_agent.exceptions import NavigationGuardrailError, PaymentExecutionError
@@ -45,7 +45,8 @@ def test_canonical_next_action_navigation():
         assert mock_req.call_count == 2
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"
-        assert args[1] == "http://dummy.local/canonical-retry"
+        assert args[1] == "http://93.184.216.34/canonical-retry"
+        assert kwargs["headers"]["Host"] == "dummy.local"
 
 # ==========================================
 # 2. Body Alias の正規化確認
@@ -78,11 +79,54 @@ def test_body_alias_normalization():
 
         assert result.response == {"status": "alias_ok"}
 
-        # 呼び出し履歴の検証 (GETなので payload は params に入る)
+        # GET query is materialized before transport and remains IP-pinned.
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"
-        assert args[1] == "http://dummy.local/alias-retry"
-        assert kwargs["params"] == {"agent_mode": "strict"}
+        assert args[1] == (
+            "http://93.184.216.34/alias-retry?agent_mode=strict"
+        )
+        assert kwargs["headers"]["Host"] == "dummy.local"
+        assert kwargs["params"] is None
+
+
+def test_async_query_navigation_keeps_validated_origin_pin():
+    client = Payment402Client(
+        base_url="http://dummy.local", auto_navigate=True
+    )
+
+    first = MagicMock()
+    first.status_code = 409
+    first.headers = {}
+    first.json.return_value = {
+        "action": {
+            "method": "GET",
+            "url": "/alias-retry",
+            "payload": {"agent_mode": "strict"},
+        }
+    }
+    second = MagicMock()
+    second.status_code = 200
+    second.headers = {}
+    second.json.return_value = {"status": "alias_ok"}
+
+    async def run():
+        client._async_client = MagicMock()
+        client._async_client.request = AsyncMock(
+            side_effect=[first, second]
+        )
+        result = await client.execute_detailed_async("GET", "/first")
+        return result, client._async_client.request
+
+    result, transport = asyncio.run(run())
+    assert result.response == {"status": "alias_ok"}
+    args, kwargs = transport.call_args_list[1]
+    assert args[0] == "GET"
+    assert args[1] == (
+        "http://93.184.216.34/alias-retry?agent_mode=strict"
+    )
+    assert kwargs["headers"]["Host"] == "dummy.local"
+    assert kwargs["params"] is None
+    assert kwargs["extensions"]["sni_hostname"] == "dummy.local"
 
 # ==========================================
 # 3. Location ヘッダによる Same-Origin 遷移確認
@@ -113,7 +157,8 @@ def test_location_header_same_origin_safe():
 
         args, kwargs = mock_req.call_args_list[1]
         assert args[0] == "GET"  # ヘッダ由来は必ずGETに正規化される
-        assert args[1] == "http://dummy.local/redirected"
+        assert args[1] == "http://93.184.216.34/redirected"
+        assert kwargs["headers"]["Host"] == "dummy.local"
 
 # ==========================================
 # 4. Guardrail: Cross-Origin と ヘッダ上書きのブロック確認
@@ -201,7 +246,8 @@ def test_async_alias_normalization():
 
             args, kwargs = mock_req.call_args_list[1]
             assert args[0] == "GET"
-            assert args[1] == "http://dummy.local/async-retry"
+            assert args[1] == "http://93.184.216.34/async-retry"
+            assert kwargs["headers"]["Host"] == "dummy.local"
 
     asyncio.run(run_test())
 

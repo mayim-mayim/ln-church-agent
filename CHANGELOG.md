@@ -2,7 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
-## [1.16.2] - Unreleased (Buyer-side Payment Boundary Hardening)
+## [1.16.3] - 2026-07-18 (P0-2 Canonical Payment and Privacy Boundaries)
+* **Canonical boundary**: Binds approvals and generated credentials to one canonical requirement, final wire URL (including GET query), request identity, idempotency key, expiry, and requirement hash; revalidates the approved snapshot before signing or sending.
+* **Settlement safety**: Separates credential generation, signature verification, and settlement verification; records unknown delivery outcomes as `settlement_unknown`; and makes session-budget check/reserve/confirm/release transitions atomic and operation-specific.
+* **SVM fail-closed**: Stops canonical SVM exact high-level sync and async auto-payment after approval and before session-budget reservation, signer, fee-payer or credential access, Solana RPC, credential generation, or a second HTTP request.
+* **SVM payload interoperability**: Keeps the low-level payload builder and validator available for payload construction only, using `SetComputeUnitLimit → SetComputeUnitPrice → TransferChecked → exactly one Memo`; Memo behavior was independently checked against the x402 Python 2.16.0 facilitator verifier with and without `extra.memo`.
+* **Privacy and navigation**: Redacts credential-bearing headers, payload keys, URL queries, receipt tokens, signatures, macaroons, and preimages at persistence and reporting boundaries; strips `Signature`, `Signature-Input`, and `DPoP` across untrusted redirects.
+* **Release boundary**: This entry records previously audited P0-2 behavior in a Private release-preparation state; this new release SHA remains pending independent re-audit. Public promotion, tagging, PyPI upload, and compatibility claims beyond the tested dependency set remain pending.
+
+## [1.16.2] - 2026-07-13 (Buyer-side Payment Boundary Hardening)
 * **Fixed**: Preserves canonical atomic payment requirements from parsing through policy evaluation, signer input, and signer-output verification without rebuilding exact amounts from floats.
 * **Hardened**: Requires `bolt11>=2.1.0,<2.1.1` for signed Lightning invoice validation and Windows-wheel-compatible `coincurve` support without a native `secp256k1` build; rejects invalid, amountless, placeholder, or mismatched L402/MPP invoices before wallet invocation; and treats MPP auth-parameter names case-insensitively while rejecting empty, duplicate, falsey, non-canonical, or contradictory amount/currency/invoice declarations.
 * **Fixed**: Rejects incomplete, invalid, or contradictory `Payment request` drafts before wallet, delegate, signer, retry, Evidence-success, or budget side effects regardless of the legacy fallback flag; only a complete draft retains the existing explicit opt-in fallback behavior.

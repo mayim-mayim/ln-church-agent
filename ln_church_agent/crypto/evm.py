@@ -2,6 +2,7 @@ import time
 import os
 import requests
 import re
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
@@ -24,6 +25,7 @@ _ATOMIC_AMOUNT_RE = re.compile(r"^[1-9][0-9]*$")
 _UINT_RE = re.compile(r"^(0|[1-9][0-9]*)$")
 _BYTES32_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _SIGNATURE_RE = re.compile(r"^(?:0x)?[0-9a-fA-F]{130}$")
+_REQUIREMENT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,32 @@ def _parse_uint(value: Any, field_name: str) -> int:
     return parsed
 
 
+def derive_eip3009_requirement_nonce(
+    requirement_hash: str, idempotency_key: str
+) -> str:
+    """Derive the signed EIP-3009 nonce from the complete approval snapshot.
+
+    EIP-3009 has no extensible requirement-hash field, but its ``nonce`` is a
+    signed bytes32 value.  Domain-separating this derivation binds every field
+    covered by ``requirement_hash`` plus the logical operation key without
+    putting the (potentially sensitive) idempotency value on the wire.
+    """
+    if (
+        not isinstance(requirement_hash, str)
+        or _REQUIREMENT_HASH_RE.fullmatch(requirement_hash) is None
+    ):
+        raise ValueError("Invalid canonical requirement hash for EIP-3009 nonce.")
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise ValueError("Invalid idempotency key for EIP-3009 nonce.")
+    material = (
+        "ln_church.eip3009_requirement_nonce.v1\x00"
+        + requirement_hash
+        + "\x00"
+        + idempotency_key
+    ).encode("utf-8")
+    return "0x" + hashlib.sha256(material).hexdigest()
+
+
 def get_trusted_eip3009_metadata(
     chain_id: Any, token_address: Any, asset: Optional[str] = None
 ) -> EIP3009TokenMetadata:
@@ -176,7 +204,8 @@ def build_eip3009_typed_data(
 def validate_eip3009_payload(
     payload: Any, *, expected_signer: Any, chain_id: Any,
     token_address: Any, asset: str, atomic_amount: Any, pay_to: Any,
-    now: Optional[int] = None
+    now: Optional[int] = None, max_valid_before: Optional[int] = None,
+    expected_nonce: Optional[str] = None,
 ) -> str:
     """Validate signer output against one canonical EIP-3009 requirement."""
     if not isinstance(payload, Mapping):
@@ -213,6 +242,16 @@ def validate_eip3009_payload(
     verification_time = int(time.time()) if now is None else _parse_uint(now, "verification time")
     if valid_after >= valid_before or not (valid_after < verification_time < valid_before):
         raise ValueError("EIP-3009 authorization time window is not currently valid.")
+    if max_valid_before is not None:
+        canonical_expiry = _parse_uint(max_valid_before, "canonical expiry")
+        if valid_before > canonical_expiry:
+            raise ValueError(
+                "EIP-3009 authorization outlives the canonical requirement."
+            )
+    if expected_nonce is not None and authorization.get("nonce") != expected_nonce:
+        raise ValueError(
+            "EIP-3009 authorization nonce is not bound to the canonical requirement."
+        )
 
     domain, types, message = build_eip3009_typed_data(
         chain_id=chain_id,
@@ -370,7 +409,11 @@ class LocalKeyAdapter(EVMSigner):
     # 既存のレガシー互換メソッド (破壊的変更を回避・プロトコル要件)
     def generate_eip3009_payload(
         self, asset: str, human_amount: float, treasury_address: str,
-        chain_id: int = 137, token_address: str = None
+        chain_id: int = 137, token_address: str = None, *,
+        valid_before: Optional[int] = None,
+        requirement_hash: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        now: Optional[int] = None,
     ) -> dict:
         token_info = TOKENS.get(asset, {})
         contract_address = token_address or token_info.get("address")
@@ -378,12 +421,26 @@ class LocalKeyAdapter(EVMSigner):
             raise ValueError(f"The token address is unknown: {asset}")
         metadata = get_trusted_eip3009_metadata(chain_id, contract_address, asset)
         atomic_amount_str = _human_amount_to_atomic(human_amount, metadata.decimals)
-        return self.generate_eip3009_payload_atomic(asset, atomic_amount_str, treasury_address, chain_id, token_address)
+        return self.generate_eip3009_payload_atomic(
+            asset,
+            atomic_amount_str,
+            treasury_address,
+            chain_id,
+            token_address,
+            valid_before=valid_before,
+            requirement_hash=requirement_hash,
+            idempotency_key=idempotency_key,
+            now=now,
+        )
 
     # P0-B: 安全な Atomic パス (オプショナルCapabilityとして追加。client.pyが優先利用する)
     def generate_eip3009_payload_atomic(
         self, asset: str, atomic_amount_str: str, treasury_address: str,
-        chain_id: int = 137, token_address: str = None
+        chain_id: int = 137, token_address: str = None, *,
+        valid_before: Optional[int] = None,
+        requirement_hash: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        now: Optional[int] = None,
     ) -> dict:
         atomic_amount_str = _validate_atomic_amount(atomic_amount_str)
         validate_evm_address(treasury_address, "treasury address")
@@ -395,15 +452,34 @@ class LocalKeyAdapter(EVMSigner):
             raise ValueError(f"The token address is unknown: {asset}")
         get_trusted_eip3009_metadata(chain_id, contract_address, asset)
 
+        signing_time = int(time.time()) if now is None else _parse_uint(
+            now, "signing time"
+        )
+        authorization_expiry = (
+            signing_time + 3600
+            if valid_before is None
+            else _parse_uint(valid_before, "validBefore")
+        )
+        if authorization_expiry <= signing_time:
+            raise ValueError("EIP-3009 validBefore must be after signing time.")
+        if requirement_hash is None and idempotency_key is None:
+            nonce = "0x" + os.urandom(32).hex()
+        elif requirement_hash is not None and idempotency_key is not None:
+            nonce = derive_eip3009_requirement_nonce(
+                requirement_hash, idempotency_key
+            )
+        else:
+            raise ValueError(
+                "requirement_hash and idempotency_key must be provided together."
+            )
         valid_after = 0
-        valid_before = int(time.time()) + 3600
         authorization = {
             "from": self.account.address,
             "to": treasury_address,
             "value": atomic_amount_str,
             "validAfter": str(valid_after),
-            "validBefore": str(valid_before),
-            "nonce": "0x" + os.urandom(32).hex(),
+            "validBefore": str(authorization_expiry),
+            "nonce": nonce,
         }
         domain, types, message = build_eip3009_typed_data(
             chain_id=chain_id,
@@ -432,6 +508,9 @@ class LocalKeyAdapter(EVMSigner):
             asset=asset,
             atomic_amount=atomic_amount_str,
             pay_to=treasury_address,
+            now=signing_time,
+            max_valid_before=authorization_expiry,
+            expected_nonce=nonce,
         )
         return payload
 

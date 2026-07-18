@@ -1,13 +1,19 @@
 import pytest
 import asyncio
 import requests
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from ln_church_agent.client import Payment402Client
 from ln_church_agent.models import (
     ExecutionContext, PaymentPolicy, PaymentEvidenceRecord, EvidenceRepository
 )
 from ln_church_agent.exceptions import PaymentExecutionError
+from _p0_2_fixture import (
+    configure_contract_clock,
+    contract_response,
+    load_contract_fixture,
+    success_response,
+)
 
 # ==========================================
 # テスト用の Mock Repository
@@ -29,15 +35,9 @@ class MockSessionRepo(EvidenceRepository):
 # ==========================================
 # ヘルパー関数
 # ==========================================
-def _create_402_mock(amount: float = 2.0, asset: str = "USDC"):
-    """402チャレンジのレスポンスを生成するヘルパー"""
-    mock_resp = MagicMock()
-    mock_resp.status_code = 402
-    mock_resp.headers = {
-        "PAYMENT-REQUIRED": f'scheme="x402", network="eip155:137", amount="{amount}", asset="{asset}", destination="0xABC"'
-    }
-    mock_resp.json.return_value = {}
-    return mock_resp
+def _create_402_mock(fixture):
+    """Production-shaped canonical 402 response."""
+    return contract_response(fixture)
 
 # ==========================================
 # テストケース (A〜F: 基本要件)
@@ -49,16 +49,24 @@ def test_sync_budget_restore():
         method="POST", session_spend_delta_usd=4.0
     )
     repo = MockSessionRepo([past_record])
-    policy = PaymentPolicy(max_spend_per_session_usd=5.0) 
+    fixture = load_contract_fixture()
+    policy = PaymentPolicy(max_spend_per_session_usd=4.005)
     
-    client = Payment402Client(policy=policy, evidence_repo=repo)
+    client = configure_contract_clock(
+        Payment402Client(policy=policy, evidence_repo=repo), fixture
+    )
     ctx = ExecutionContext(session_id="test_session")
 
     with patch("requests.request") as mock_req:
-        mock_req.return_value = _create_402_mock(amount=2.0) 
+        mock_req.return_value = _create_402_mock(fixture)
         
         with pytest.raises(PaymentExecutionError, match="would exceed limit"):
-            client.execute_detailed("POST", "/test", context=ctx)
+            client.execute_detailed(
+                fixture["request"]["method"],
+                fixture["request"]["url"],
+                headers=fixture["request"]["headers"],
+                context=ctx,
+            )
         
         assert repo.sync_call_count == 1
         assert client.policy._session_spent_usd == 4.0
@@ -70,36 +78,57 @@ def test_async_budget_restore():
         method="POST", session_spend_delta_usd=4.0
     )
     repo = MockSessionRepo([past_record])
-    policy = PaymentPolicy(max_spend_per_session_usd=5.0)
+    fixture = load_contract_fixture()
+    policy = PaymentPolicy(max_spend_per_session_usd=4.005)
     
-    client = Payment402Client(policy=policy, evidence_repo=repo)
+    client = configure_contract_clock(
+        Payment402Client(policy=policy, evidence_repo=repo), fixture
+    )
     ctx = ExecutionContext(session_id="test_session")
 
     async def run_test():
-        with patch("httpx.AsyncClient.request") as mock_req:
-            mock_req.return_value = _create_402_mock(amount=2.0)
-            
-            with pytest.raises(PaymentExecutionError, match="would exceed limit"):
-                await client.execute_detailed_async("POST", "/test", context=ctx)
-            
-            assert repo.async_call_count == 1
-            assert client.policy._session_spent_usd == 4.0
+        client._async_client = MagicMock()
+        client._async_client.request = AsyncMock(
+            return_value=_create_402_mock(fixture)
+        )
+
+        with pytest.raises(PaymentExecutionError, match="would exceed limit"):
+            await client.execute_detailed_async(
+                fixture["request"]["method"],
+                fixture["request"]["url"],
+                headers=fixture["request"]["headers"],
+                context=ctx,
+            )
+
+        assert repo.async_call_count == 1
+        assert client.policy._session_spent_usd == 4.0
 
     asyncio.run(run_test())
 
 def test_no_repo_fallback():
     """C. No Repo Fallback: EvidenceRepositoryがない場合でも、インメモリで正常に動作・消費されるか"""
     policy = PaymentPolicy(max_spend_per_session_usd=5.0)
-    client = Payment402Client(policy=policy, evidence_repo=None) 
+    fixture = load_contract_fixture()
+    client = configure_contract_clock(
+        Payment402Client(policy=policy, evidence_repo=None), fixture
+    )
     ctx = ExecutionContext()
 
     with patch("requests.request") as mock_req:
-        mock_req.side_effect = [_create_402_mock(amount=2.0), MagicMock(status_code=200, headers={}, json=lambda: {})]
+        mock_req.side_effect = [
+            _create_402_mock(fixture),
+            success_response(fixture, {}),
+        ]
         
         with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
-            client.execute_detailed("POST", "/test", context=ctx)
+            client.execute_detailed(
+                fixture["request"]["method"],
+                fixture["request"]["url"],
+                headers=fixture["request"]["headers"],
+                context=ctx,
+            )
             
-        assert client.policy._session_spent_usd == 2.0 
+        assert client.policy._session_spent_usd == pytest.approx(0.0065)
 
 def test_non_budget_evidence_ignored():
     """D. Non-budget Evidence is Ignored: 失敗やナビゲーションの履歴が合算されないことを確認"""
@@ -173,23 +202,31 @@ def test_budget_event_on_downstream_failure():
             exported_records.append(record)
 
     repo = ExportCatchingRepo()
-    client = Payment402Client(policy=PaymentPolicy(), evidence_repo=repo)
+    fixture = load_contract_fixture()
+    client = configure_contract_clock(
+        Payment402Client(policy=PaymentPolicy(), evidence_repo=repo), fixture
+    )
     ctx = ExecutionContext(session_id="s1")
 
     with patch("requests.request") as mock_req:
         mock_req.side_effect = [
-            _create_402_mock(amount=2.0),
+            _create_402_mock(fixture),
             requests.exceptions.ConnectionError("Downstream failed")
         ]
         
         with patch.object(client, "_process_payment", return_value=("dummy_proof", "Lightning", None)):
             # P0-D要件に基づき、例外はambiguous_payment_resultとして安全にラップされる
             with pytest.raises(PaymentExecutionError, match="ambiguous_payment_result"):
-                client.execute_detailed("POST", "/test", context=ctx)
+                client.execute_detailed(
+                    fixture["request"]["method"],
+                    fixture["request"]["url"],
+                    headers=fixture["request"]["headers"],
+                    context=ctx,
+                )
                 
     assert len(exported_records) == 1
     record = exported_records[0]
     
     assert "ambiguous_payment_result" in record.error_message
-    assert record.session_spend_delta_usd == 2.0
+    assert record.session_spend_delta_usd == pytest.approx(0.0065)
     assert record.receipt_summary is not None

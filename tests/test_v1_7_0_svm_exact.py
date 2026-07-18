@@ -8,10 +8,79 @@ from ln_church_agent.client import Payment402Client, _b64url_decode
 from ln_church_agent.models import PaymentPolicy
 from ln_church_agent.exceptions import PaymentExecutionError
 from ln_church_agent.challenges import SOLANA_USDC_MINT
-from ln_church_agent.crypto.solana_svm import LocalSvmAdapter, SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2
+from ln_church_agent.crypto.solana_svm import (
+    COMPUTE_BUDGET_PROGRAM_ID_STR,
+    MEMO_PROGRAM_ID_STR,
+    TOKEN_PROGRAM_ID_STR,
+    LocalSvmAdapter,
+    SOLANA_DEVNET_CAIP2,
+    SOLANA_MAINNET_CAIP2,
+    validate_svm_exact_payload,
+)
 from solders.keypair import Keypair
 
 SOLANA_DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+
+_SVM_PAY_TO = "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
+_SVM_FEE_PAYER = "EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd"
+
+
+def _set_default_blockhash(mock_blockhash):
+    from solders.hash import Hash
+
+    response = MagicMock()
+    response.value.blockhash = Hash.default()
+    mock_blockhash.return_value = response
+
+
+def _parsed_transaction(payload):
+    from solders.transaction import VersionedTransaction
+
+    return VersionedTransaction.from_bytes(base64.b64decode(payload["transaction"]))
+
+
+def _instruction_programs(transaction):
+    account_keys = list(transaction.message.account_keys)
+    return [
+        str(account_keys[instruction.program_id_index])
+        for instruction in transaction.message.instructions
+    ]
+
+
+def _payload_with_instructions(payload, source_keypair, instructions):
+    """Rebuild and re-sign a payload after a test-only instruction mutation."""
+    from solders.message import MessageV0
+    from solders.null_signer import NullSigner
+    from solders.transaction import VersionedTransaction
+
+    original = _parsed_transaction(payload)
+    message = MessageV0(
+        original.message.header,
+        original.message.account_keys,
+        original.message.recent_blockhash,
+        instructions,
+        original.message.address_table_lookups,
+    )
+    signers = [
+        source_keypair if key == source_keypair.pubkey() else NullSigner(key)
+        for key in message.account_keys[:message.header.num_required_signatures]
+    ]
+    transaction = VersionedTransaction(message, signers)
+    return {"transaction": base64.b64encode(bytes(transaction)).decode("ascii")}
+
+
+def _validate_payload(payload, adapter, *, memo=None, canonical_expires_at=None):
+    return validate_svm_exact_payload(
+        payload,
+        network=SOLANA_MAINNET_CAIP2,
+        asset=SOLANA_USDC_MINT,
+        amount="1000000",
+        pay_to=_SVM_PAY_TO,
+        fee_payer=_SVM_FEE_PAYER,
+        signer_address=adapter.address,
+        memo=memo,
+        canonical_expires_at=canonical_expires_at,
+    )
 
 def _create_v2_challenge(network: str, scheme: str = "exact") -> httpx.Response:
     payload = {
@@ -61,15 +130,16 @@ def test_classification_svm_exact_raw_payloads(MockSvmAdapter):
     assert parsed.amount == 1.0
 
     headers = {}
-    with pytest.raises(PaymentExecutionError, match="Invalid SVM"):
+    with pytest.raises(
+        PaymentExecutionError,
+        match="canonical SVM exact auto-payment",
+    ):
         client._process_payment(parsed, headers, {}, url="http://api.test")
 
-    call_args = mock_signer.generate_svm_exact_payload.call_args[1]
-    assert call_args["asset"] == SOLANA_USDC_MINT
-    assert call_args["amount"] == "1000000"
+    mock_signer.generate_svm_exact_payload.assert_not_called()
 
-def test_missing_fee_payer():
-    """feePayer が欠損している場合に安全に拒否されるか"""
+def test_high_level_svm_halts_before_fee_payer_requirement():
+    """高水準SVMはfeePayerの有無より先に恒久的な境界で停止する。"""
     client = Payment402Client(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
     client.svm_signer = MagicMock()
 
@@ -80,7 +150,10 @@ def test_missing_fee_payer():
     mock_res = httpx.Response(402, headers={"PAYMENT-REQUIRED": b64_str})
     parsed = client._parse_challenge(mock_res)
 
-    with pytest.raises(PaymentExecutionError, match="(?i).*feePayer.*"):
+    with pytest.raises(
+        PaymentExecutionError,
+        match="canonical SVM exact auto-payment",
+    ):
         client._process_payment(parsed, {}, {})
 
 def test_policy_allowed_networks():
@@ -155,10 +228,9 @@ def test_accepts_array_selection_and_budget_evaluation(MockSvmAdapter):
     # 3. Budget Validation がクラッシュせずに通るか
     client._enforce_policy(parsed, "http://api.test")
 
-def test_missing_fee_payer_fails_loudly():
-    """feePayer が欠損している場合に安全に拒否されるか"""
+def test_high_level_svm_halts_without_signer_or_fee_payer():
+    """鍵やfeePayerがなくても実行可能性を示さず同じ境界で停止する。"""
     client = Payment402Client()
-    client.svm_signer = MagicMock()
 
     payload = {
         "accepts": [{"scheme": "exact", "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "asset": SOLANA_USDC_MINT, "amount": "1000", "payTo": "xyz"}]
@@ -167,7 +239,10 @@ def test_missing_fee_payer_fails_loudly():
     mock_res = httpx.Response(402, headers={"PAYMENT-REQUIRED": b64_str})
     parsed = client._parse_challenge(mock_res)
 
-    with pytest.raises(PaymentExecutionError, match="(?i).*feePayer.*"):
+    with pytest.raises(
+        PaymentExecutionError,
+        match="canonical SVM exact auto-payment",
+    ):
         client._process_payment(parsed, {}, {})
 
 @patch("solana.rpc.api.Client.get_latest_blockhash")
@@ -213,8 +288,220 @@ def test_generate_svm_exact_payload_success(mock_blockhash):
     from solders.transaction import VersionedTransaction
     parsed_tx = VersionedTransaction.from_bytes(raw_tx)
 
-    # Compute limit, Compute price, Memo, TransferChecked の4つが存在するはず
+    # Reference facilitator order: CU limit, CU price, TransferChecked, Memo.
     assert len(parsed_tx.message.instructions) == 4
+    assert _instruction_programs(parsed_tx) == [
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        TOKEN_PROGRAM_ID_STR,
+        MEMO_PROGRAM_ID_STR,
+    ]
+    assert bytes(parsed_tx.message.instructions[3].data).decode("utf-8") == memo
+    validated = _validate_payload(payload, adapter, memo=memo)
+    assert validated["memo"] == memo
+
+
+@patch("ln_church_agent.crypto.solana_svm.secrets.token_hex", return_value="ab" * 16)
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_standard_facilitator_layout_without_extra_memo(
+    mock_blockhash, mock_token_hex
+):
+    """Without extra.memo, emit one 16-byte lowercase-hex memo at index 3."""
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+
+    payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+    )
+
+    transaction = _parsed_transaction(payload)
+    assert _instruction_programs(transaction) == [
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        COMPUTE_BUDGET_PROGRAM_ID_STR,
+        TOKEN_PROGRAM_ID_STR,
+        MEMO_PROGRAM_ID_STR,
+    ]
+    assert bytes(transaction.message.instructions[3].data).decode("utf-8") == "ab" * 16
+    assert _validate_payload(payload, adapter)["memo"] == "ab" * 16
+    mock_token_hex.assert_called_once_with(16)
+
+
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_validator_rejects_wrong_standard_instruction_order(mock_blockhash):
+    """A memo before TransferChecked is incompatible with the facilitator."""
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+    payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo="challenge-memo",
+    )
+    instructions = list(_parsed_transaction(payload).message.instructions)
+    instructions[2], instructions[3] = instructions[3], instructions[2]
+    reordered = _payload_with_instructions(payload, adapter.keypair, instructions)
+
+    with pytest.raises(ValueError, match="instruction order"):
+        _validate_payload(reordered, adapter, memo="challenge-memo")
+
+
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_validator_rejects_duplicate_memo(mock_blockhash):
+    """The facilitator-compatible shape contains exactly one memo."""
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+    payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo="challenge-memo",
+    )
+    instructions = list(_parsed_transaction(payload).message.instructions)
+    instructions.append(instructions[-1])
+    duplicate = _payload_with_instructions(payload, adapter.keypair, instructions)
+
+    with pytest.raises(ValueError, match="exactly four instructions and one memo"):
+        _validate_payload(duplicate, adapter, memo="challenge-memo")
+
+
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_validator_rejects_challenge_memo_mismatch(mock_blockhash):
+    """The sole memo must equal extra.memo byte-for-byte when it is supplied."""
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+    payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo="challenge-memo",
+    )
+
+    with pytest.raises(ValueError, match="does not match the challenge memo"):
+        _validate_payload(payload, adapter, memo="different-memo")
+
+
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_validator_fails_closed_for_canonical_unix_expiry(mock_blockhash):
+    """Recent-blockhash lifetime cannot prove a canonical wall-clock expiry bound."""
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+    payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo="challenge-memo",
+    )
+
+    with pytest.raises(ValueError, match="cannot mechanically bound"):
+        _validate_payload(
+            payload,
+            adapter,
+            memo="challenge-memo",
+            canonical_expires_at=1_900_000_000,
+        )
+
+
+@pytest.mark.parametrize(
+    "memo",
+    [None, "official-facilitator-memo"],
+    ids=["extra-memo-absent", "extra-memo-present"],
+)
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_payload_is_accepted_by_official_x402_python_facilitator(
+    mock_blockhash, memo
+):
+    """Exercise the installed x402 2.16.0 production facilitator verifier."""
+    from importlib.metadata import version
+
+    from x402.mechanisms.svm.exact.facilitator import ExactSvmScheme
+    from x402.schemas import PaymentPayload, PaymentRequirements
+
+    class OfflineFacilitatorSigner:
+        def get_addresses(self):
+            return [_SVM_FEE_PAYER]
+
+        def sign_transaction(self, transaction, fee_payer, network):
+            assert fee_payer == _SVM_FEE_PAYER
+            assert network == SOLANA_MAINNET_CAIP2
+            return transaction
+
+        def simulate_transaction(self, transaction, network):
+            assert transaction
+            assert network == SOLANA_MAINNET_CAIP2
+
+    assert version("x402") == "2.16.0"
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+    transaction_payload = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo=memo,
+    )
+    extra = {"feePayer": _SVM_FEE_PAYER}
+    if memo is not None:
+        extra["memo"] = memo
+    requirements = PaymentRequirements(
+        scheme="exact",
+        network=SOLANA_MAINNET_CAIP2,
+        asset=SOLANA_USDC_MINT,
+        amount="1000000",
+        pay_to=_SVM_PAY_TO,
+        max_timeout_seconds=60,
+        extra=extra,
+    )
+    payment = PaymentPayload(
+        x402_version=2,
+        accepted=requirements,
+        payload=transaction_payload,
+    )
+
+    result = ExactSvmScheme(OfflineFacilitatorSigner()).verify(
+        payment, requirements
+    )
+
+    assert result.is_valid is True
+    assert result.invalid_reason is None
+
+
+@patch("solana.rpc.api.Client.get_latest_blockhash")
+def test_svm_challenge_memo_enforces_256_byte_limit(mock_blockhash):
+    _set_default_blockhash(mock_blockhash)
+    adapter = LocalSvmAdapter(private_key=str(Keypair()))
+
+    accepted = adapter.generate_svm_exact_payload(
+        SOLANA_MAINNET_CAIP2,
+        SOLANA_USDC_MINT,
+        "1000000",
+        _SVM_PAY_TO,
+        _SVM_FEE_PAYER,
+        memo="m" * 256,
+    )
+    assert _validate_payload(accepted, adapter, memo="m" * 256)["memo"] == "m" * 256
+
+    with pytest.raises(ValueError, match="256-byte"):
+        adapter.generate_svm_exact_payload(
+            SOLANA_MAINNET_CAIP2,
+            SOLANA_USDC_MINT,
+            "1000000",
+            _SVM_PAY_TO,
+            _SVM_FEE_PAYER,
+            memo="m" * 257,
+        )
 
 def test_unsupported_mint_and_network_rejection():
     """未対応のMintや俗称ネットワーク(solana:mainnet)が明示エラーになるか"""

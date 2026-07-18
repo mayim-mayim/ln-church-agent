@@ -14,11 +14,12 @@ def test_mpp_sandbox_harness_dynamic_telemetry(mock_execute):
     """
     client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
     
-    # 💡 修正: 新しい厳密な判定を通過させるため、receipt_token と source=SERVER_JWS を追加
+    # Raw token は保持せず、receipt state と digest のみを模擬する。
     mock_receipt = SettlementReceipt(
         receipt_id="r_123", scheme="MPP_Draft_v2", network="Lightning", 
         asset="SATS", settled_amount=10, proof_reference="preimage123",
-        receipt_token="dummy.jws.token.here", source=AttestationSource.SERVER_JWS
+        receipt_token_hash="sha256:" + "a" * 64, present=True,
+        source=AttestationSource.SERVER_JWS
     )
     
     deterministic_payload = {
@@ -66,11 +67,12 @@ def test_mpp_sandbox_harness_async_dynamic_telemetry(mock_execute_async):
     async def run_test():
         client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
         
-        # 💡 修正: 新しい厳密な判定を通過させるため、receipt_token と source=SERVER_JWS を追加
+        # Raw token は保持せず、receipt state と digest のみを模擬する。
         mock_receipt = SettlementReceipt(
             receipt_id="r_123", scheme="MPP_Async_Test", network="Lightning", 
             asset="SATS", settled_amount=10, proof_reference="preimage123",
-            receipt_token="dummy.jws.token.here", source=AttestationSource.SERVER_JWS
+            receipt_token_hash="sha256:" + "a" * 64, present=True,
+            source=AttestationSource.SERVER_JWS
         )
 
         deterministic_payload = {
@@ -125,7 +127,8 @@ def test_l402_sandbox_harness_extended_telemetry(mock_execute):
     mock_receipt = SettlementReceipt(
         receipt_id="r_123", scheme="L402", network="Lightning", 
         asset="SATS", settled_amount=10, proof_reference="preimage123",
-        receipt_token="dummy.jws.token.here", source=AttestationSource.SERVER_JWS
+        receipt_token_hash="sha256:" + "a" * 64, present=True,
+        source=AttestationSource.SERVER_JWS
     )
 
     deterministic_payload = {
