@@ -32,7 +32,7 @@ def test_inspect_outputs_remain_non_executing():
             # For executing rails, inspect must not execute
             assert "executed_in_inspect" in row["inspect_behavior"] or row["inspect_behavior"] == "supported_but_not_executed_in_inspect"
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_no_execution_behavior_changed(mock_req):
     mock_res = MagicMock()
     mock_res.status_code = 402
@@ -40,10 +40,10 @@ def test_no_execution_behavior_changed(mock_req):
     b64_str = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
     mock_res.headers = {"PAYMENT-REQUIRED": b64_str}
     mock_res.content = b""
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     mock_req.return_value = mock_res
     
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is True
     assert res.will_execute_payment is False

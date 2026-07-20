@@ -4,10 +4,10 @@ import base64
 from unittest.mock import patch, MagicMock
 from ln_church_agent.cli import inspect_url
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_ap2_payment_mandate_returns_guided_handoff(mock_req):
     mock_res = MagicMock(status_code=402)
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     mock_res.headers = {"Content-Type": "application/json"}
     
     payload = {
@@ -19,7 +19,7 @@ def test_ap2_payment_mandate_returns_guided_handoff(mock_req):
     mock_res.content = json.dumps(payload).encode()
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert "AP2" in res.surfaces_detected
     assert "AP2" not in res.rails_detected
@@ -30,10 +30,10 @@ def test_ap2_payment_mandate_returns_guided_handoff(mock_req):
     assert "treat_mandate_as_settlement_proof" in res.do_not
     assert "explicit_price" in res.required_evidence
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_ap2_with_x402_coexist_still_observe_only(mock_req):
     mock_res = MagicMock(status_code=402)
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     
     ap2_payload = {"protocol": "ap2", "intent": "checkout_mandate"}
     x402_payload = {"accepts": [{"scheme": "exact", "network": "eip155:1", "payTo": "0xABC"}]}
@@ -47,7 +47,7 @@ def test_ap2_with_x402_coexist_still_observe_only(mock_req):
     mock_res.content = json.dumps(ap2_payload).encode()
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert "AP2" in res.surfaces_detected
     assert "x402" in res.settlement_rails_detected
@@ -58,9 +58,9 @@ def test_ap2_with_x402_coexist_still_observe_only(mock_req):
     assert res.operator_approval_reason == "commerce_surface_with_settlement_rail"
     assert "settlement_rail_options" in res.ask_site_for
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_acp_shared_payment_token_does_not_expose_raw_token(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     payload = {
         "protocol": "acp",
         "intent": "agentic_checkout",
@@ -71,7 +71,7 @@ def test_acp_shared_payment_token_does_not_expose_raw_token(mock_req):
     mock_res.headers = {"Content-Type": "application/json"}
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert "ACP" in res.surfaces_detected
     assert "ACP" not in res.rails_detected
@@ -83,9 +83,9 @@ def test_acp_shared_payment_token_does_not_expose_raw_token(mock_req):
     serialized = res.model_dump_json() if hasattr(res, "model_dump_json") else res.json()
     assert "SECRET_TOKEN_SHOULD_NOT_LEAK" not in serialized
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_acp_cart_returns_cart_guidance(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     payload = {
         "protocol": "acp",
         "intent": "cart"
@@ -95,7 +95,7 @@ def test_acp_cart_returns_cart_guidance(mock_req):
     mock_res.headers = {"Content-Type": "application/json"}
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert "ACP" in res.surfaces_detected
     assert res.surface_type in ["checkout", "commerce", "catalog"]
@@ -104,9 +104,9 @@ def test_acp_cart_returns_cart_guidance(mock_req):
     assert "price_breakdown" in res.ask_site_for
     assert "cart_total" in res.required_evidence
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_app_okx_app_returns_broker_escrow_guidance(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     payload = {
         "protocol": "okx-app",
         "intent": "escrow",
@@ -117,7 +117,7 @@ def test_app_okx_app_returns_broker_escrow_guidance(mock_req):
     mock_res.headers = {"Content-Type": "application/json"}
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.handoff_mode == "guided_handoff"
     assert res.approval_required is True
@@ -125,15 +125,15 @@ def test_app_okx_app_returns_broker_escrow_guidance(mock_req):
     assert "treat_broker_hint_as_settlement_proof" in res.do_not
     assert "escrow_or_dispute_terms" in res.required_evidence
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_normal_l402_regression_has_no_guided_handoff(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     mock_res.headers = {"WWW-Authenticate": 'L402 macaroon="mac", invoice="inv"'}
     mock_res.content = b""
     mock_res.json.side_effect = ValueError()
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert "L402" in res.settlement_rails_detected
     assert res.surfaces_detected == []
@@ -145,9 +145,9 @@ def test_normal_l402_regression_has_no_guided_handoff(mock_req):
     assert res.required_evidence == []
     assert res.missing_information == []
 
-@patch("ln_church_agent.cli.requests.request")
-def test_malformed_overlap_returns_stop_safely_with_guidance(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+@patch("ln_church_agent.inspect_transport._exchange_once")
+def test_malformed_overlap_returns_typed_parse_failure(mock_req):
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     acp_payload = {"protocol": "acp", "intent": "cart"}
     mock_res.headers = {
         "Content-Type": "application/json",
@@ -157,11 +157,13 @@ def test_malformed_overlap_returns_stop_safely_with_guidance(mock_req):
     mock_res.content = json.dumps(acp_payload).encode()
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
-    assert "ACP" in res.surfaces_detected
-    assert res.recommended_action == "stop_safely"
-    assert res.handoff_mode == "guided_handoff"
-    assert res.approval_required is True
-    assert res.operator_approval_reason == "malformed_or_unsupported_settlement_hint"
-    assert res.unsupported_reason is not None
+    assert res.ok is True
+    assert res.error_stage == "parse"
+    assert res.failure_class == "parse_failure"
+    assert res.failure_reason == "parse_failure"
+    assert res.diagnostic_class == "invalid_payment_auth_request"
+    assert res.recommended_action == "reject_invalid"
+    assert res.surfaces_detected == []
+    assert res.will_execute_payment is False

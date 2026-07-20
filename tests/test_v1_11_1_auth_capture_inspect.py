@@ -13,7 +13,7 @@ def _mock_402_response(accepts_array: list) -> MagicMock:
     mock_res = MagicMock()
     mock_res.status_code = 402
     mock_res.content = b""
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     
     payload = {"accepts": accepts_array}
     b64_str = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
@@ -21,7 +21,7 @@ def _mock_402_response(accepts_array: list) -> MagicMock:
     
     return mock_res
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_auth_capture_inspect_classification(mock_req):
     """Ensure auth-capture is correctly classified as an x402 observe-only settlement option."""
     mock_req.return_value = _mock_402_response([{
@@ -32,7 +32,7 @@ def test_auth_capture_inspect_classification(mock_req):
         "payTo": "0xabc"
     }])
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
 
     assert res.ok is True
     assert res.recommended_action == "observe_only"

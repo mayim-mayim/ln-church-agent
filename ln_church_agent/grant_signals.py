@@ -67,12 +67,12 @@ def detect_grant_signals(response: httpx.Response) -> GrantSignalObservation:
             for st in STRONG_TERMS:
                 if st in kl: 
                     detected_strong.add(st)
-                    detected_fields.add(k)
+                    detected_fields.add(st)
                     found_in_headers = True
             for wt in WEAK_TERMS:
                 if wt in kl: 
                     detected_weak.add(wt)
-                    detected_fields.add(k)
+                    detected_fields.add(wt)
                     found_in_headers = True
                     
     if found_in_headers and "headers" not in obs.source_kinds:
@@ -100,11 +100,11 @@ def detect_grant_signals(response: httpx.Response) -> GrantSignalObservation:
                 for st in STRONG_TERMS:
                     if st in kl: 
                         detected_strong.add(st)
-                        detected_fields.add(k)
+                        detected_fields.add(st)
                 for wt in WEAK_TERMS:
                     if wt in kl: 
                         detected_weak.add(wt)
-                        detected_fields.add(k)
+                        detected_fields.add(wt)
                 
                 if isinstance(v, str):
                     vl = v.lower()
@@ -159,8 +159,11 @@ def detect_grant_signals(response: httpx.Response) -> GrantSignalObservation:
         obs.confidence = "low"
 
     obs.detected = True
-    obs.detected_terms = sorted(list(detected_strong | detected_weak))
-    obs.detected_fields = sorted(list(detected_fields))
+    # Only fixed semantic labels cross the Inspect result boundary.  Raw
+    # header names and JSON keys are attacker-controlled and can contain
+    # credentials even when the matching ``grant`` token itself is benign.
+    obs.detected_terms = sorted(detected_strong | detected_weak)[:64]
+    obs.detected_fields = sorted(detected_fields)[:64]
 
     # Determine Signal Types
     st_str = " ".join(obs.detected_terms)

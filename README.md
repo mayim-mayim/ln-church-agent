@@ -83,9 +83,9 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 
 `ln-church-agent` provides two distinct Model Context Protocol (MCP) entrypoints:
 
-* **1. Inspect-only MCP (`ln-church-agent-mcp`)**: 
-  Use `ln-church-agent-mcp` for enterprise/read-only/preflight inspection. It **never** signs, pays, or executes transactions. 
-  *Telemetry Side-effects*: This MCP never auto-submits telemetry. It may submit redacted observation telemetry *only* when the `submit_mcp_observation` tool is explicitly invoked by the agent.
+* **1. Inspect-only MCP (`ln-church-agent-mcp`)**:
+  Use `ln-church-agent-mcp` for enterprise/read-only/preflight inspection. It is keyless and **never** initializes a wallet or signer, pays, or executes transactions. Inspection accepts only public HTTP(S) `GET` and `HEAD` targets. DNS answers and every redirect hop are checked against the public-IP policy and connections are pinned to validated addresses. Environment proxies, `netrc`, and automatic redirects are ignored. Identity-encoded response bodies are limited to 1 MiB; content-encoded responses are rejected before the body is read.
+  *Telemetry Side-effects*: This MCP never auto-submits telemetry. It may submit a schema-allowlisted observation *only* when `submit_mcp_observation` is explicitly invoked. Submission is restricted to the canonical LN Church observation endpoint, does not follow redirects, never replays an ambiguous POST, and never returns or reads a raw response body. Public URLs are reduced to their canonical origin, and attacker-controlled scalar fields are reduced to fixed values or finite allowlists.
   
 * **2. Execution-capable MCP (`python -m ln_church_agent.integrations.mcp`)**: 
   Use `python -m ln_church_agent.integrations.mcp` *only* when the operator explicitly wants an MCP server that can execute paid actions with configured credentials (e.g., Lightning wallets or EVM signers).
@@ -386,9 +386,14 @@ It exposes inspect / explain / observation-payload tools, returns Guided Handoff
 `ln-church-agent-mcp` is a public, inspect-only MCP server designed for safe reconnaissance.
 It parses HTTP 402 paid surfaces, returning detailed structural classifications for L402, x402, MPP, OKX APP, AP2, and ACP.
 
-* **No Payments Executed**: It strictly analyzes the response and suggests a `recommended_action`.
+* **GET/HEAD only**: Inspection rejects every other method before network access and accepts only absolute public HTTP(S) targets.
+* **Pinned public networking**: Literal IPs and every DNS answer are checked against the public-IP policy. Each redirect hop is revalidated and connected through a validated IP while preserving the original HTTP Host and HTTPS certificate hostname. HTTPS-to-HTTP downgrade is rejected.
+* **No ambient proxy or credentials**: Environment proxy variables, `NO_PROXY`, `netrc`, caller-supplied proxies, response cookies, and cross-hop authorization credentials are not used.
+* **Bounded responses**: Requests use `Accept-Encoding: identity`. Identity-encoded bodies are streamed from the raw response and capped at 1 MiB; compressed responses are rejected before any body read. One wall-clock deadline covers DNS, connect/TLS, status/header, body, and redirect processing. Timeouts and transport failures return fixed, redacted diagnostics.
+* **No Payments Executed**: It strictly analyzes the response and suggests a `recommended_action`. It does not initialize payment clients, wallets, signers, RPC clients, payment retries, or credentials.
 * **No Private Keys Required**: It operates entirely without wallet adapters or identity credentials.
-* **Safe Telemetry**: The server can build and submit observations to `/api/agent/external/mcp-observe` with guaranteed secret redaction. (It does not auto-submit).
+* **Redacted outputs**: Wire paths and queries may be sent to the inspected target, but public URL fields retain only the initially requested URL's canonical origin and never retain a redirect destination or the raw path, query, or fragment. Raw invoices, payment destinations, amounts, macaroons, preimages, receipt tokens, response bodies, and raw exception strings are not exposed; other public scalars use fixed values or finite allowlists.
+* **Explicit canonical telemetry only**: Observation submission never happens automatically. The explicit `submit_mcp_observation` tool accepts only the builder's canonical allowlisted schema and the canonical `https://kari.mayim-mayim.com/api/agent/external/mcp-observe` endpoint, follows no redirects, performs at most one POST, and returns only status metadata or a fixed failure code. An ambiguous timeout or network failure returns `observation_delivery_unknown` and stops safely without replay.
 
 > **Remote MCP scope note:**  
 > v1.9.2 provides a bundled **stdio MCP server** for inspect-only payment surface discovery.  

@@ -1,4 +1,5 @@
 class PaymentChallengeError(Exception): pass
+class NoValidPaymentChallengeError(PaymentChallengeError): pass
 class PaymentExecutionError(Exception): pass
 class NavigationGuardrailError(Exception): pass
 class InvoiceParseError(Exception): pass

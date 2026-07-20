@@ -13,7 +13,7 @@ def _mock_402_response(accepts_array: list) -> MagicMock:
     mock_res = MagicMock()
     mock_res.status_code = 402
     mock_res.content = b""
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     
     payload = {"accepts": accepts_array}
     b64_str = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
@@ -22,7 +22,7 @@ def _mock_402_response(accepts_array: list) -> MagicMock:
     return mock_res
 
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_a_batch_settlement_inspect_classification(mock_req):
     """A. batch-settlement accepts[] の inspect 分類が正しいことを確認"""
     mock_req.return_value = _mock_402_response([{
@@ -38,7 +38,7 @@ def test_a_batch_settlement_inspect_classification(mock_req):
         }
     }])
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
 
     assert res.ok is True
     assert res.recommended_action == "observe_only"
@@ -59,7 +59,7 @@ def test_a_batch_settlement_inspect_classification(mock_req):
     assert sel.deferred_settlement is True
 
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_b_not_misclassified_as_exact(mock_req):
     """B. batch-settlement が exact や未知として誤分類されないこと"""
     mock_req.return_value = _mock_402_response([{
@@ -67,7 +67,7 @@ def test_b_not_misclassified_as_exact(mock_req):
         "network": "solana:123"
     }])
     
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.selected_settlement_option.scheme == "batch-settlement"
     assert res.diagnostic_class == "deferred_batch_settlement_observed"
@@ -78,7 +78,7 @@ def test_c_mcp_observation_payload():
     """C. MCP observation payload が要件通りの状態・メタデータを維持していること"""
     # inspect結果をモック
     fake_res = {
-        "url": "http://test.local",
+        "url": "http://public.example",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": ["x402"],
@@ -141,7 +141,7 @@ def test_d_execution_guard():
     with pytest.raises(PaymentExecutionError, match="batch_settlement_execution_not_supported"):
         client_with_policy._process_payment(parsed, {}, {})
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_batch_settlement_inspect_result_to_mcp_payload(mock_req):
     mock_req.return_value = _mock_402_response([{
         "scheme": "batch-settlement",
@@ -156,7 +156,7 @@ def test_batch_settlement_inspect_result_to_mcp_payload(mock_req):
         }
     }])
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     payload = build_mcp_observation_payload(res.model_dump())
 
     assert payload["protocol"]["rail"] == "x402"

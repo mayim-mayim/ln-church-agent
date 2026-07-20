@@ -2,6 +2,15 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.16.4] - 2026-07-19 (Private Candidate — Inspect MCP SSRF and Privacy Boundary)
+* **SSRF boundary**: Restricts Inspect to public HTTP(S) `GET`/`HEAD`, applies one shared hostname/address policy before DNS and to every resolved address, pins connections to vetted IPs, and revalidates every redirect hop and explicit Observation target.
+* **Public identity and privacy**: Publishes only the canonical origin of the initially requested URL. Redirect destinations remain transport-only, forbidden/internal URLs are wholly redacted, and attacker-controlled public scalars use fixed values or finite allowlists.
+* **Response and deadline limits**: Requests identity encoding, rejects content-encoded responses before body read, caps raw response material at 1 MiB, and applies one total wall-clock deadline across DNS, connect/TLS, status/header, body, and redirects.
+* **Observation safety**: Keeps submission explicit and canonical, sends an Observation POST at most once, never reads its response body, and reports ambiguous delivery as `observation_delivery_unknown` without replay.
+* **Failure contract**: Keeps response adaptation, parsing/classification, and network transport in distinct failure domains. Known invalid challenges are rejected without execution; unexpected parser faults stop safely.
+* **Release boundary**: This is a Private candidate pending independent re-audit. It does not claim formal Go, Public promotion, tagging, publication, deployment, or registry release.
+* **Details**: [v1.16.4 candidate notes](docs/release_notes/v1.16.4.md)
+
 ## [1.16.3] - 2026-07-18 (P0-2 Canonical Payment and Privacy Boundaries)
 * **Canonical boundary**: Binds approvals and generated credentials to one canonical requirement, final wire URL (including GET query), request identity, idempotency key, expiry, and requirement hash; revalidates the approved snapshot before signing or sending.
 * **Settlement safety**: Separates credential generation, signature verification, and settlement verification; records unknown delivery outcomes as `settlement_unknown`; and makes session-budget check/reserve/confirm/release transitions atomic and operation-specific.

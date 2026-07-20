@@ -21,6 +21,7 @@ from ln_church_agent.models import (
     ParsedChallenge,
     TrustDecision,
 )
+from ln_church_agent.payment_contract import compute_requirement_hash
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "agent-server-l402-contract-v1.json"
@@ -131,6 +132,111 @@ def test_actual_server_response_parses_selected_canonical_l402_option():
     assert parsed._canonical_requirement == requirement
     assert parsed._atomic_amount == "10000"
     assert parsed.parameters["payment_id"] == requirement["payment_id"]
+    assert parsed._inspect_semantically_valid is True
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_canonical_l402_cannot_hide_marker_only_sibling(position):
+    fixture = _fixture()
+    body = copy.deepcopy(fixture["response"]["body"])
+    marker_only = {
+        "settlement_rail": "l402",
+        "amount": 10,
+        "asset": "SATS",
+    }
+    if position == "before":
+        body["accepted_payments"].insert(0, marker_only)
+    else:
+        body["accepted_payments"].append(marker_only)
+
+    with pytest.raises(PaymentChallengeError):
+        parse_challenge_from_response(
+            _httpx_402(fixture, body=body),
+            now=fixture["clock_unix_seconds"],
+        )
+
+
+def test_canonical_l402_valid_candidate_cannot_hide_later_tampering():
+    fixture = _fixture()
+    body = copy.deepcopy(fixture["response"]["body"])
+    body["accepted_payments"][1]["canonical_requirement"][
+        "amount_atomic"
+    ] = "2"
+
+    with pytest.raises(PaymentChallengeError):
+        parse_challenge_from_response(
+            _httpx_402(fixture, body=body),
+            now=fixture["clock_unix_seconds"],
+        )
+
+
+def test_marker_only_canonical_direct_parser_view_is_explicitly_invalid():
+    fixture = _fixture()
+    body = {
+        "schema_version": "ln_church.paid_surface_challenge.v1",
+        "accepted_payments": [{
+            "settlement_rail": "l402",
+            "amount": 10 ** 400,
+            "asset": "SATS",
+        }],
+    }
+    parsed = parse_challenge_from_response(
+        _httpx_402(
+            fixture,
+            body=body,
+            headers={"Content-Type": "application/json"},
+        ),
+        now=fixture["clock_unix_seconds"],
+    )
+
+    assert parsed.scheme == "l402"
+    assert parsed.amount == 0.0
+    assert parsed._inspect_semantically_valid is False
+
+
+@pytest.mark.parametrize("option_index", [0, 1, 2])
+def test_canonical_display_nonfinite_amount_is_typed_parser_failure(
+    option_index,
+):
+    fixture = _fixture()
+    body = copy.deepcopy(fixture["response"]["body"])
+    body["accepted_payments"][option_index]["amount"] = "sNaN"
+
+    with pytest.raises(PaymentChallengeError):
+        parse_challenge_from_response(
+            _httpx_402(fixture, body=body),
+            now=fixture["clock_unix_seconds"],
+        )
+
+
+@pytest.mark.parametrize("surface", ["bad", 1, True, ["bad"]])
+def test_canonical_surface_must_be_a_mapping(surface):
+    fixture = _fixture()
+    body = copy.deepcopy(fixture["response"]["body"])
+    body["surface"] = surface
+
+    with pytest.raises(PaymentChallengeError):
+        parse_challenge_from_response(
+            _httpx_402(fixture, body=body),
+            now=fixture["clock_unix_seconds"],
+        )
+
+
+@pytest.mark.parametrize("option_index", [1, 2])
+def test_canonical_nonpayment_sibling_requires_known_rail_tuple(option_index):
+    fixture = _fixture()
+    body = copy.deepcopy(fixture["response"]["body"])
+    requirement = body["accepted_payments"][option_index][
+        "canonical_requirement"
+    ]
+    requirement["authorization_scheme"] = "L402"
+    requirement["requirement_hash"] = compute_requirement_hash(requirement)
+
+    with pytest.raises(PaymentChallengeError):
+        parse_challenge_from_response(
+            _httpx_402(fixture, body=body),
+            now=fixture["clock_unix_seconds"],
+        )
 
 
 def test_actual_server_response_to_wallet_to_exact_server_credential_shape():
