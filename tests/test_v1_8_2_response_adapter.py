@@ -3,7 +3,7 @@ import json
 from unittest.mock import patch, MagicMock
 from ln_church_agent.cli import inspect_url
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_requests_to_httpx_strips_content_encoding(mock_req):
     """
     requestsがデコード済みであるにも関わらず 'Content-Encoding: gzip' が残っているレスポンスでも、
@@ -24,10 +24,10 @@ def test_requests_to_httpx_strips_content_encoding(mock_req):
     # requests によって展開済みの生の JSON bytes になっている想定
     mock_res.content = json.dumps(payload).encode()
     mock_res.json.return_value = payload
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is True
     assert "x402" in res.rails_detected
@@ -35,40 +35,41 @@ def test_requests_to_httpx_strips_content_encoding(mock_req):
 
 
 @patch("ln_church_agent.cli._requests_to_httpx_response")
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_requests_to_httpx_conversion_error_returns_structured_diagnostic(mock_req, mock_adapter):
     """
     httpxへの変換で予期せぬ例外（httpx.DecodingErrorなど）が発生した場合に、
     InspectResultとして構造化して返すことを確認
     """
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     mock_req.return_value = mock_res
     
     # 変換時にクラッシュさせる
     mock_adapter.side_effect = Exception("incorrect header check")
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is True  # 402は見えているため True とする
-    assert res.recommended_action == "observe_only"
+    assert res.recommended_action == "stop_safely"
     assert res.error_stage == "response_adapter"
     assert res.diagnostic_class == "response_decoding_error"
     assert res.failure_class == "requests_to_httpx_conversion_failed"
-    assert "incorrect header check" in res.failure_reason
+    assert "incorrect header check" not in res.model_dump_json()
 
 @patch("ln_church_agent.cli._requests_to_httpx_response")
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_requests_to_httpx_conversion_error_non_402(mock_req, mock_adapter):
     """
     402以外のステータス（200 OK等）で変換に失敗した場合は stop_safely になることを確認
     """
-    mock_res = MagicMock(status_code=200, url="http://test.local")
+    mock_res = MagicMock(status_code=200, url="http://public.example")
     mock_req.return_value = mock_res
     mock_adapter.side_effect = Exception("some random error")
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is False  # 402ではないので False
     assert res.recommended_action == "stop_safely"
     assert res.error_stage == "response_adapter"
     assert res.diagnostic_class == "response_decoding_error"
+    assert "some random error" not in res.model_dump_json()

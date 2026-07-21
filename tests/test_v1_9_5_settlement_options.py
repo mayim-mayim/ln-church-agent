@@ -16,7 +16,7 @@ def _create_mock_402(payload: dict) -> httpx.Response:
 # ==========================================
 # A. x402 accepts[] 複数候補の全列挙テスト
 # ==========================================
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_accepts_array_multiple_options_extracted(mock_req):
     payload = {
         "accepts": [
@@ -29,10 +29,10 @@ def test_accepts_array_multiple_options_extracted(mock_req):
     mock_res.status_code = 402
     mock_res.headers = {"PAYMENT-REQUIRED": base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')}
     mock_res.content = b""
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is True
     # 候補がすべて観測されているか
@@ -106,7 +106,7 @@ def test_prefer_svm_selection_reason():
 # ==========================================
 def test_mcp_observation_payload_network_asset_inherited():
     fake_inspect_result = {
-        "url": "http://test.local",
+        "url": "http://public.example",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": ["x402"],
@@ -130,7 +130,7 @@ def test_mcp_observation_payload_network_asset_inherited():
 # ==========================================
 # E. APP/AP2/ACP inspect-only safety test
 # ==========================================
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_app_ap2_acp_inspect_only_safety(mock_req):
     mock_res = MagicMock()
     mock_res.status_code = 402
@@ -139,10 +139,10 @@ def test_app_ap2_acp_inspect_only_safety(mock_req):
     payload = {"protocol": "ap2", "intent": "payment_mandate"}
     mock_res.json.return_value = payload
     mock_res.content = json.dumps(payload).encode()
-    mock_res.url = "http://test.local"
+    mock_res.url = "http://public.example"
     mock_req.return_value = mock_res
 
-    res = inspect_url("http://test.local")
+    res = inspect_url("http://public.example")
     
     assert res.ok is True
     assert "AP2" in res.surfaces_detected
@@ -223,7 +223,7 @@ def test_x402_real_world_fields():
     
     assert len(opts) == 1
     assert opts[0].asset == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-    assert opts[0].amount == "500000"
+    assert opts[0].amount == "REDACTED"
 
 # ==========================================
 # 3. execution_support が「SDK対応」と「inspectでは実行しない」を区別していることのテスト

@@ -144,7 +144,7 @@ def test_g_mcp_observation_payload_remains_unchanged():
     """Test G: MCP observation payload must strictly exclude all intent sidecars"""
     # 💡 GPT指摘反映: Forbiddenなキーをすべて含んだフェイク入力を用意
     fake_res = {
-        "url": "http://test.local",
+        "url": "http://public.example",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": ["L402"],

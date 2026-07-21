@@ -12,16 +12,16 @@ from ln_church_agent.integrations.mcp_inspect import (
     _contains_secret_keys
 )
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_mcp_inspect_paid_surface_never_executes_payment(mock_req):
     """Ensure the inspect tool returns will_execute_payment=False and requires no keys."""
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     mock_res.headers = {"WWW-Authenticate": 'L402 macaroon="mac", invoice="inv"'}
     mock_res.content = b""
     mock_res.json.side_effect = ValueError()
     mock_req.return_value = mock_res
 
-    res = inspect_paid_surface("http://test.local")
+    res = inspect_paid_surface("http://public.example")
     
     assert res["status_code"] == 402
     assert "L402" in res["settlement_rails_detected"]
@@ -31,17 +31,17 @@ def test_mcp_inspect_paid_surface_never_executes_payment(mock_req):
     assert res["safety"]["payment_performed"] is False
     assert res["safety"]["requires_private_key"] is False
 
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_mcp_ap2_acp_remain_observe_only(mock_req):
     """AP2/ACP surfaces should be classified as observe_only without hitting execution paths."""
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     payload = {"protocol": "ap2", "intent": "payment_mandate"}
     mock_res.headers = {"Content-Type": "application/json"}
     mock_res.content = json.dumps(payload).encode()
     mock_res.json.return_value = payload
     mock_req.return_value = mock_res
 
-    res = inspect_paid_surface("http://test.local")
+    res = inspect_paid_surface("http://public.example")
     
     assert "AP2" in res["surfaces_detected"]
     assert "AP2" not in res["settlement_rails_detected"]
@@ -60,7 +60,7 @@ def test_mcp_explain_action():
 def test_mcp_build_observation_redacts_secrets():
     """Observation payload must explicitly hardcode false for payment status."""
     fake_res = {
-        "url": "http://test.local",
+        "url": "http://public.example",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": ["x402"]
@@ -75,16 +75,16 @@ def test_mcp_build_observation_redacts_secrets():
     assert payload["evidence"]["proof_reference"] == "none"
 
 # --- 4-1. AP2 guided handoff fields are exposed through MCP ---
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_mcp_exposes_guided_handoff_fields(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     payload = {"protocol": "ap2", "intent": "payment_mandate"}
     mock_res.headers = {"Content-Type": "application/json"}
     mock_res.content = json.dumps(payload).encode()
     mock_res.json.return_value = payload
     mock_req.return_value = mock_res
 
-    res = inspect_paid_surface("http://test.local")
+    res = inspect_paid_surface("http://public.example")
 
     assert res["recommended_action"] == "observe_only"
     assert res["handoff_mode"] == "guided_handoff"
@@ -97,15 +97,15 @@ def test_mcp_exposes_guided_handoff_fields(mock_req):
     assert res["safety"]["payment_performed"] is False
 
 # --- 4-2. Normal L402 has no guided handoff but remains non-executing in MCP ---
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_mcp_l402_has_no_guided_handoff_but_never_executes(mock_req):
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     mock_res.headers = {"WWW-Authenticate": 'L402 macaroon="mac", invoice="inv"'}
     mock_res.content = b""
     mock_res.json.side_effect = ValueError()
     mock_req.return_value = mock_res
 
-    res = inspect_paid_surface("http://test.local")
+    res = inspect_paid_surface("http://public.example")
 
     assert "L402" in res["settlement_rails_detected"]
     assert res["recommended_action"] == "pay_and_verify"
@@ -120,7 +120,7 @@ def test_mcp_l402_has_no_guided_handoff_but_never_executes(mock_req):
 # --- 4-3. observation payload includes handoff summary and remains non-payment ---
 def test_mcp_observation_payload_includes_handoff_summary():
     fake_res = {
-        "url": "http://test.local",
+        "url": "http://public.example",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": [],
@@ -165,18 +165,23 @@ def test_mcp_explain_guided_handoff_context():
 # ==========================================
 # 🛡️ New Secret Redaction Tests 
 # ==========================================
-@patch("requests.post")
-def test_mcp_submit_safety_guardrails(mock_post):
-    mock_post.return_value = MagicMock(status_code=200, text='{"status":"ok"}')
+@patch("ln_church_agent.inspect_transport._exchange_observation_once")
+def test_mcp_submit_safety_guardrails(mock_exchange):
+    mock_exchange.return_value = 200
     
     # 1. Reject payment_performed = True
     bad_payload_1 = {"evidence": {"payment_performed": True}}
     res1 = submit_mcp_observation(bad_payload_1)
-    assert "Safety violation" in res1["error"]
+    assert res1 == {
+        "status": "failure",
+        "status_code": None,
+        "failure_code": "observation_payload_rejected",
+        "recommended_action": "stop_safely",
+    }
     
     # 2. Accept valid payload directly from build_mcp_observation_payload (authorization_scheme should be allowed)
     fake_res = {
-        "url": "http://test.local",
+        "url": "https://public.example/resource",
         "method": "GET",
         "status_code": 402,
         "settlement_rails_detected": ["L402"]
@@ -186,7 +191,13 @@ def test_mcp_submit_safety_guardrails(mock_post):
     assert built_payload["protocol"]["authorization_scheme"] == "L402"
     
     res_built = submit_mcp_observation(built_payload)
-    assert res_built.get("status") == "success", f"Should accept perfectly valid built payload: {res_built}"
+    assert res_built == {
+        "status": "success",
+        "status_code": 200,
+        "failure_code": None,
+        "recommended_action": "none",
+    }
+    assert "DUMMY_RAW_RESPONSE" not in json.dumps(res_built)
     
     # 3. Reject raw headers.Authorization
     bad_payload_2 = {
@@ -194,7 +205,7 @@ def test_mcp_submit_safety_guardrails(mock_post):
         "headers": {"Authorization": "Bearer secret123"}
     }
     res2 = submit_mcp_observation(bad_payload_2)
-    assert "Safety violation: potential secret leaked" in res2["error"]
+    assert res2["failure_code"] == "observation_payload_rejected"
 
     # 4. Reject grant_token key
     bad_payload_3 = {
@@ -202,7 +213,8 @@ def test_mcp_submit_safety_guardrails(mock_post):
         "grant_token": "jws.token.here"
     }
     res3 = submit_mcp_observation(bad_payload_3)
-    assert "Safety violation: potential secret leaked" in res3["error"]
+    assert res3["failure_code"] == "observation_payload_rejected"
+    mock_exchange.assert_called_once()
 
 def test_contains_secret_keys_recursive():
     """再帰的なキー名チェックが正しく機能するか単体テスト"""
@@ -231,19 +243,19 @@ def test_contains_secret_keys_recursive():
     assert _contains_secret_keys(unsafe_obj) is True
 
 @patch("ln_church_agent.client.Payment402Client.execute_detailed")
-@patch("ln_church_agent.cli.requests.request")
+@patch("ln_church_agent.inspect_transport._exchange_once")
 def test_mcp_inspect_never_calls_execute_detailed(mock_req, mock_execute_detailed):
     """
     Ensure the inspect_paid_surface tool purely relies on request/parsing
     and NEVER accidentally triggers the full runtime Payment402Client.execute_detailed loop.
     """
-    mock_res = MagicMock(status_code=402, url="http://test.local")
+    mock_res = MagicMock(status_code=402, url="http://public.example")
     mock_res.headers = {"WWW-Authenticate": 'L402 macaroon="mac", invoice="inv"'}
     mock_res.content = b""
     mock_res.json.side_effect = ValueError()
     mock_req.return_value = mock_res
 
-    res = inspect_paid_surface("http://test.local")
+    res = inspect_paid_surface("http://public.example")
     
     # 決済実行メソッドが一度も呼ばれていないことを担保する
     mock_execute_detailed.assert_not_called()

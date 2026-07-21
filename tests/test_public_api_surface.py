@@ -40,8 +40,8 @@ def test_public_api_imports_and_instantiation():
     assert td.is_trusted is True
 
     # 4. TrustEvidence (ParsedChallengeをネスト)
-    te = TrustEvidence(url="http://test.local", challenge=pc, agent_hints=ctx.hints)
-    assert te.url == "http://test.local"
+    te = TrustEvidence(url="http://public.example", challenge=pc, agent_hints=ctx.hints)
+    assert te.url == "http://public.example"
     assert te.challenge.scheme == "L402"
     assert te.agent_hints["key"] == "value"
 
@@ -52,7 +52,7 @@ def test_public_api_imports_and_instantiation():
     # 6. ExecutionResult (OutcomeSummaryをネスト)
     er = ExecutionResult(
         response={"ok": True},
-        final_url="http://test.local",
+        final_url="http://public.example",
         outcome=os_summary
     )
     assert er.outcome is not None
