@@ -51,29 +51,31 @@ def test_release_version_identities_are_consistent(monkeypatch):
     headings = re.findall(r"^## \[([^]]+)\].*$", changelog, re.MULTILINE)
     assert headings[0] == EXPECTED_VERSION
     candidate_section = changelog.split("## [1.16.3]", 1)[0]
-    assert "Public release candidate" in candidate_section
     assert (
-        "P0-3 Private fixed SHA and Private-to-Public promotion identity "
-        "have passed independent audit"
+        "Public release candidate passed independent audit before main merge"
     ) in candidate_section
-    assert "Private candidate" not in candidate_section
-    assert "pending independent re-audit" not in candidate_section
+    assert "audited v1.16.4 source boundary" in candidate_section
+    assert "must be verified from their respective systems" in candidate_section
     assert "docs/release_notes/v1.16.4.md" in candidate_section
 
     assert release_note.startswith(
         "# Release v1.16.4 — Inspect MCP SSRF and Privacy Boundary"
     )
-    assert "Public release candidate" in release_note
     assert (
-        "The Private implementation and Private-to-Public promotion identity "
-        "have passed independent audit."
+        "Public release candidate passed independent audit before main merge"
     ) in release_note
-    assert (
-        "Pull-request merge, tagging, GitHub Release, PyPI publication, "
-        "MCP Registry publication, and deployment remain pending."
-    ) in release_note
-    assert "Private candidate behavior only" not in release_note
-    assert "does not claim formal independent-audit approval" not in release_note
+    assert "must be verified from their respective systems" in release_note
+
+    stale_status_phrases = (
+        "Private candidate",
+        "Public release candidate for",
+        "pending independent re-audit",
+        "remain pending",
+        "does not claim formal independent-audit approval",
+    )
+    for stale_status_phrase in stale_status_phrases:
+        assert stale_status_phrase not in candidate_section
+        assert stale_status_phrase not in release_note
 
     observation = mcp_inspect.build_mcp_observation_payload(
         {

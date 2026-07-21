@@ -2,13 +2,13 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
-## [1.16.4] - 2026-07-19 (Public Release Candidate — Inspect MCP SSRF and Privacy Boundary)
+## [1.16.4] - 2026-07-21 (Inspect MCP SSRF and Privacy Boundary)
 * **SSRF boundary**: Restricts Inspect to public HTTP(S) `GET`/`HEAD`, applies one shared hostname/address policy before DNS and to every resolved address, pins connections to vetted IPs, and revalidates every redirect hop and explicit Observation target.
 * **Public identity and privacy**: Publishes only the canonical origin of the initially requested URL. Redirect destinations remain transport-only, forbidden/internal URLs are wholly redacted, and attacker-controlled public scalars use fixed values or finite allowlists.
 * **Response and deadline limits**: Requests identity encoding, rejects content-encoded responses before body read, caps raw response material at 1 MiB, and applies one total wall-clock deadline across DNS, connect/TLS, status/header, body, and redirects.
 * **Observation safety**: Keeps submission explicit and canonical, sends an Observation POST at most once, never reads its response body, and reports ambiguous delivery as `observation_delivery_unknown` without replay.
 * **Failure contract**: Keeps response adaptation, parsing/classification, and network transport in distinct failure domains. Known invalid challenges are rejected without execution; unexpected parser faults stop safely.
-* **Release boundary**: The P0-3 Private fixed SHA and Private-to-Public promotion identity have passed independent audit. This `release/v1.16.4` branch is the Public release candidate; PR, main merge, tagging, GitHub Release, PyPI publication, MCP Registry publication, and deployment remain pending.
+* **Release boundary**: The P0-3 Private fixed SHA, Private-to-Public promotion identity, and Public release candidate passed independent audit before main merge. This entry records the audited v1.16.4 source boundary. Current tag, GitHub Release, PyPI, MCP Registry, and deployment status must be verified from their respective systems rather than inferred from this file.
 * **Details**: [v1.16.4 release notes](docs/release_notes/v1.16.4.md)
 
 ## [1.16.3] - 2026-07-18 (P0-2 Canonical Payment and Privacy Boundaries)
