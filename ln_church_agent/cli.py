@@ -47,6 +47,7 @@ _TASK_ERROR_CODES = frozenset(
         "TASK_RESPONSE_TOO_LARGE",
         "TASK_RESPONSE_INVALID",
         "TASK_API_ERROR",
+        "TASK_CHECKPOINT_PERSISTENCE_ERROR",
         "TASK_CREDENTIAL_INVALID",
         "TASK_CREDENTIAL_EXPIRED",
         "invalid_request",
@@ -465,51 +466,47 @@ class _TaskCredentialReservation:
             self.close()
 
 
-class _TaskCheckpointFile(_TaskCredentialReservation):
-    """Private restart metadata held on one verified descriptor."""
+class _TaskCheckpointFile:
+    """Private restart metadata serialized by a stable sibling lock."""
 
     def __init__(self, path: str) -> None:
         self.path = _validated_task_file_path(path)
-        base_flags = os.O_RDWR
+        self.lock_path = _validated_task_file_path(
+            str(self.path) + ".lock"
+        )
+        lock_flags = os.O_RDWR | os.O_CREAT
         if hasattr(os, "O_NOFOLLOW"):
-            base_flags |= os.O_NOFOLLOW
+            lock_flags |= os.O_NOFOLLOW
         if hasattr(os, "O_BINARY"):
-            base_flags |= os.O_BINARY
+            lock_flags |= os.O_BINARY
         if hasattr(os, "O_NOINHERIT"):
-            base_flags |= os.O_NOINHERIT
+            lock_flags |= os.O_NOINHERIT
         self.closed = False
         self.created_new = False
         self.written = False
         self.locked = False
         self._lock_module = None
+        self.lock_fd = -1
+        self.lock_identity: Optional[Tuple[int, int]] = None
+        self.identity: Optional[Tuple[int, int]] = None
         try:
-            self.fd = os.open(
-                str(self.path),
-                base_flags | os.O_CREAT | os.O_EXCL,
-                0o600,
+            self.lock_fd = os.open(
+                str(self.lock_path), lock_flags, 0o600
             )
-            self.created_new = True
-        except FileExistsError:
-            self.fd = os.open(str(self.path), base_flags)
-        try:
-            info = os.fstat(self.fd)
-            self.identity = (info.st_dev, info.st_ino)
+            info = os.fstat(self.lock_fd)
+            self.lock_identity = (info.st_dev, info.st_ino)
             self._acquire_exclusive_lock()
-            if self.created_new and os.name != "nt":
-                os.fchmod(self.fd, 0o600)
-            self._require_identity()
+            self._require_lock_identity()
+            self._load_data_identity()
         except Exception:
             try:
-                if self.created_new:
-                    self.remove_own_reservation()
-                else:
-                    self.close()
-            except Exception:
                 self.close()
+            except Exception:
+                pass
             raise
 
     def _acquire_exclusive_lock(self) -> None:
-        self._lock_module = self._lock_descriptor(self.fd)
+        self._lock_module = self._lock_descriptor(self.lock_fd)
         self.locked = True
 
     @staticmethod
@@ -549,51 +546,153 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
             return
         try:
             self._unlock_descriptor(
-                self.fd,
+                self.lock_fd,
                 self._lock_module,
             )
         finally:
             self.locked = False
 
-    def _require_identity(self) -> None:
-        super()._require_identity()
-        info = os.fstat(self.fd)
+    @staticmethod
+    def _data_open_flags() -> int:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        if hasattr(os, "O_NOINHERIT"):
+            flags |= os.O_NOINHERIT
+        return flags
+
+    @staticmethod
+    def _require_regular_file(
+        descriptor: int,
+        path: Path,
+        *,
+        expected_identity: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[int, int]:
+        info = os.fstat(descriptor)
+        path_info = os.stat(str(path), follow_symlinks=False)
+        identity = (info.st_dev, info.st_ino)
         if (
-            os.name != "nt"
-            and hasattr(os, "geteuid")
-            and info.st_uid != os.geteuid()
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or not stat.S_ISREG(path_info.st_mode)
+            or path_info.st_nlink != 1
+            or (path_info.st_dev, path_info.st_ino) != identity
+            or (
+                expected_identity is not None
+                and identity != expected_identity
+            )
+            or (
+                os.name != "nt"
+                and stat.S_IMODE(info.st_mode) != 0o600
+            )
+            or (
+                os.name != "nt"
+                and hasattr(os, "geteuid")
+                and info.st_uid != os.geteuid()
+            )
         ):
             raise ValueError("TASK_CREDENTIAL_INVALID")
+        return identity
+
+    def _require_lock_identity(self) -> None:
+        if self.closed or self.lock_fd < 0 or self.lock_identity is None:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        self._require_regular_file(
+            self.lock_fd,
+            self.lock_path,
+            expected_identity=self.lock_identity,
+        )
+
+    def _load_data_identity(self) -> None:
+        self._require_lock_identity()
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                str(self.path), self._data_open_flags()
+            )
+        except FileNotFoundError:
+            self.created_new = True
+            self.identity = None
+            return
+        try:
+            self.identity = self._require_regular_file(
+                descriptor, self.path
+            )
+            self.created_new = False
+        finally:
+            os.close(descriptor)
+
+    def _require_data_identity(self) -> int:
+        self._require_lock_identity()
+        if self.identity is None:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        descriptor = os.open(
+            str(self.path), self._data_open_flags()
+        )
+        try:
+            self._require_regular_file(
+                descriptor,
+                self.path,
+                expected_identity=self.identity,
+            )
+        except Exception:
+            os.close(descriptor)
+            raise
+        return descriptor
+
+    def _require_data_absent(self) -> None:
+        self._require_lock_identity()
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                str(self.path), self._data_open_flags()
+            )
+        except FileNotFoundError:
+            return
+        try:
+            self._require_regular_file(descriptor, self.path)
+        finally:
+            os.close(descriptor)
+        raise ValueError("TASK_CREDENTIAL_INVALID")
 
     def read_payload(self) -> Dict[str, Any]:
-        self._require_identity()
-        before = os.fstat(self.fd)
-        if (
-            before.st_size <= 0
-            or before.st_size > _TASK_CHECKPOINT_FILE_MAX_BYTES
-        ):
-            raise ValueError("TASK_CREDENTIAL_INVALID")
-        os.lseek(self.fd, 0, os.SEEK_SET)
+        descriptor = self._require_data_identity()
         content = bytearray()
-        while len(content) <= _TASK_CHECKPOINT_FILE_MAX_BYTES:
-            chunk = os.read(
-                self.fd,
-                min(
-                    64 * 1024,
-                    _TASK_CHECKPOINT_FILE_MAX_BYTES + 1 - len(content),
-                ),
+        try:
+            before = os.fstat(descriptor)
+            if (
+                before.st_size <= 0
+                or before.st_size > _TASK_CHECKPOINT_FILE_MAX_BYTES
+            ):
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+            while len(content) <= _TASK_CHECKPOINT_FILE_MAX_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    min(
+                        64 * 1024,
+                        _TASK_CHECKPOINT_FILE_MAX_BYTES + 1
+                        - len(content),
+                    ),
+                )
+                if not chunk:
+                    break
+                content.extend(chunk)
+            self._require_regular_file(
+                descriptor,
+                self.path,
+                expected_identity=self.identity,
             )
-            if not chunk:
-                break
-            content.extend(chunk)
-        self._require_identity()
-        after = os.fstat(self.fd)
-        if (
-            (before.st_dev, before.st_ino)
-            != (after.st_dev, after.st_ino)
-            or len(content) > _TASK_CHECKPOINT_FILE_MAX_BYTES
-        ):
-            raise ValueError("TASK_CREDENTIAL_INVALID")
+            after = os.fstat(descriptor)
+            if (
+                (before.st_dev, before.st_ino)
+                != (after.st_dev, after.st_ino)
+                or len(content) > _TASK_CHECKPOINT_FILE_MAX_BYTES
+            ):
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+        finally:
+            os.close(descriptor)
         parse_failed = False
         value: Any = None
         try:
@@ -620,7 +719,9 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
         return value
 
     def write_payload(self, payload: Dict[str, Any]) -> None:
-        self._require_identity()
+        self._require_lock_identity()
+        encoding_failed = False
+        encoded = b""
         try:
             encoded = (
                 json.dumps(
@@ -632,15 +733,17 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
                 + "\n"
             ).encode("utf-8")
         except (TypeError, ValueError, UnicodeError):
-            raise ValueError("TASK_CREDENTIAL_INVALID") from None
+            encoding_failed = True
+        if encoding_failed:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
         if len(encoded) > _TASK_CHECKPOINT_FILE_MAX_BYTES:
             raise ValueError("TASK_CREDENTIAL_INVALID")
 
         temporary_fd = -1
         temporary_name: Optional[str] = None
-        temporary_lock_module: Any = None
-        temporary_locked = False
+        temporary_identity: Optional[Tuple[int, int]] = None
         replaced = False
+        persistence_failed = False
         try:
             temporary_fd, temporary_name = tempfile.mkstemp(
                 prefix=".%s." % self.path.name,
@@ -649,21 +752,10 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
             )
             if os.name != "nt":
                 os.fchmod(temporary_fd, 0o600)
-            info = os.fstat(temporary_fd)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-                or (
-                    os.name != "nt"
-                    and stat.S_IMODE(info.st_mode) != 0o600
-                )
-                or (
-                    os.name != "nt"
-                    and hasattr(os, "geteuid")
-                    and info.st_uid != os.geteuid()
-                )
-            ):
-                raise ValueError("TASK_CREDENTIAL_INVALID")
+            temporary_path = Path(temporary_name)
+            temporary_identity = self._require_regular_file(
+                temporary_fd, temporary_path
+            )
 
             view = memoryview(encoded)
             while view:
@@ -672,15 +764,34 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
                     raise OSError
                 view = view[written:]
             os.fsync(temporary_fd)
-            temporary_lock_module = self._lock_descriptor(
-                temporary_fd
+            self._require_regular_file(
+                temporary_fd,
+                temporary_path,
+                expected_identity=temporary_identity,
             )
-            temporary_locked = True
+            os.close(temporary_fd)
+            temporary_fd = -1
 
-            # Keep the last-good checkpoint and its lock until the complete,
-            # fsynced replacement is also locked and ready for one atomic
-            # same-directory swap.
-            self._require_identity()
+            # Windows does not permit a rename over an open destination, and
+            # the mkstemp source handle may also lack delete sharing.  The
+            # stable sibling lock remains held while both data handles are
+            # closed for this same-directory atomic swap.
+            verified_temporary_fd = os.open(
+                temporary_name, self._data_open_flags()
+            )
+            try:
+                self._require_regular_file(
+                    verified_temporary_fd,
+                    temporary_path,
+                    expected_identity=temporary_identity,
+                )
+            finally:
+                os.close(verified_temporary_fd)
+            if self.identity is None:
+                self._require_data_absent()
+            else:
+                current_fd = self._require_data_identity()
+                os.close(current_fd)
             os.replace(temporary_name, str(self.path))
             replaced = True
 
@@ -699,69 +810,48 @@ class _TaskCheckpointFile(_TaskCredentialReservation):
                 finally:
                     os.close(directory_fd)
 
-            new_info = os.fstat(temporary_fd)
-            path_info = os.stat(
-                str(self.path),
-                follow_symlinks=False,
+            new_fd = os.open(
+                str(self.path), self._data_open_flags()
             )
-            new_identity = (new_info.st_dev, new_info.st_ino)
-            if (
-                not stat.S_ISREG(new_info.st_mode)
-                or new_info.st_nlink != 1
-                or (path_info.st_dev, path_info.st_ino)
-                != new_identity
-                or not stat.S_ISREG(path_info.st_mode)
-                or path_info.st_nlink != 1
-                or (
-                    os.name != "nt"
-                    and stat.S_IMODE(new_info.st_mode) != 0o600
+            try:
+                new_identity = self._require_regular_file(
+                    new_fd,
+                    self.path,
+                    expected_identity=temporary_identity,
                 )
-                or (
-                    os.name != "nt"
-                    and hasattr(os, "geteuid")
-                    and new_info.st_uid != os.geteuid()
-                )
-            ):
-                raise ValueError("TASK_CREDENTIAL_INVALID")
-
-            old_fd = self.fd
-            self.fd = temporary_fd
-            temporary_fd = -1
+            finally:
+                os.close(new_fd)
             self.identity = new_identity
-            self._lock_module = temporary_lock_module
-            self.locked = True
-            temporary_locked = False
             self.written = True
-            os.close(old_fd)
+        except (OSError, ValueError):
+            persistence_failed = True
         finally:
             if temporary_fd >= 0:
-                if temporary_locked:
-                    try:
-                        self._unlock_descriptor(
-                            temporary_fd,
-                            temporary_lock_module,
-                        )
-                    except OSError:
-                        pass
-                os.close(temporary_fd)
+                try:
+                    os.close(temporary_fd)
+                except OSError:
+                    persistence_failed = True
             if not replaced and temporary_name is not None:
                 try:
                     os.unlink(temporary_name)
-                except FileNotFoundError:
-                    pass
+                except OSError as error:
+                    if not isinstance(error, FileNotFoundError):
+                        persistence_failed = True
+        if persistence_failed:
+            raise ValueError("TASK_CHECKPOINT_PERSISTENCE_ERROR")
 
     def close(self) -> None:
         if not self.closed:
             try:
                 self._release_exclusive_lock()
             finally:
-                super().close()
+                if self.lock_fd >= 0:
+                    os.close(self.lock_fd)
+                    self.lock_fd = -1
+                self.closed = True
 
     def close_or_remove_empty_reservation(self) -> None:
-        if self.created_new and not self.written:
-            self.remove_own_reservation()
-        else:
-            self.close()
+        self.close()
 
 
 def _reject_task_json_object_pairs(
@@ -2532,9 +2622,7 @@ def main():
                                     raise ValueError
                                 checkpoint_file.write_payload(payload)
                             except Exception:
-                                raise ValueError(
-                                    "TASK_CREDENTIAL_INVALID"
-                                ) from None
+                                raise ValueError from None
 
                         result = (
                             client.submit_and_complete_domain_observation(
