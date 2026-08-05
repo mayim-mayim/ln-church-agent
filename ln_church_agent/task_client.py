@@ -62,6 +62,27 @@ from .task_transport import (
 )
 
 
+class TaskCheckpointPersistenceError(TaskError):
+    """Finite SDK-local failure from the guided checkpoint sink."""
+
+    code = "TASK_CHECKPOINT_PERSISTENCE_ERROR"
+
+    def __init__(self, *, request_bytes_sent: bool) -> None:
+        # This is an SDK-local checkpoint result, not a Hondo wire-contract
+        # error code and not an HTTP transport failure.  Initialize the
+        # finite TaskError surface directly so the canonical Hondo error-code
+        # collection remains unchanged while existing ``except TaskError``
+        # callers continue to catch every AgentTaskClient failure.
+        code = type(self).code
+        Exception.__init__(self, code)
+        self.code = code
+        self.status_code = None
+        self.request_bytes_sent = request_bytes_sent
+        self.mutation_free = False
+        self.retry_after_seconds = None
+        self._retryable_transport = False
+
+
 def _public_client_error_boundary(
     function: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -72,6 +93,10 @@ def _public_client_error_boundary(
         clean_error: Optional[TaskError] = None
         try:
             return function(*args, **kwargs)
+        except TaskCheckpointPersistenceError as error:
+            clean_error = TaskCheckpointPersistenceError(
+                request_bytes_sent=error.request_bytes_sent
+            )
         except TaskError as error:
             clean_error = _detached_task_error(error)
         except Exception:
@@ -935,12 +960,14 @@ class AgentTaskClient:
             return
         try:
             emitted = _guided_checkpoint_snapshot(checkpoint)
-            checkpoint_sink(emitted)
         except TaskError:
             raise
         except Exception:
-            raise TaskTransportError(
-                "TASK_TRANSPORT_ERROR",
+            raise _local_invalid("TASK_CREDENTIAL_INVALID") from None
+        try:
+            checkpoint_sink(emitted)
+        except Exception:
+            raise TaskCheckpointPersistenceError(
                 request_bytes_sent=request_bytes_sent,
             ) from None
 
