@@ -208,35 +208,39 @@ def test_release_version_identities_are_consistent(monkeypatch):
 
     headings = re.findall(r"^## \[([^]]+)\].*$", changelog, re.MULTILINE)
     assert headings[0] == EXPECTED_VERSION
-    candidate_prefix, next_heading, _older_entries = changelog.partition(
+    release_prefix, next_heading, _older_entries = changelog.partition(
         "## [1.16.4]"
     )
     assert next_heading == "## [1.16.4]"
-    candidate_heading = (
-        "## [1.17.0] - 2026-07-28 "
-        "(Private Source Candidate — Agent Task Venue SDK)"
-    )
-    candidate_start = candidate_prefix.index(candidate_heading)
-    candidate_section = candidate_prefix[candidate_start:]
-    assert candidate_section.startswith(candidate_heading)
+    release_heading = "## [1.17.0] - 2026-08-05 (Agent Task Venue SDK)"
+    release_start = release_prefix.index(release_heading)
+    release_section = release_prefix[release_start:]
+    assert release_section.startswith(release_heading)
     assert (
-        "This Private Source Candidate is pending independent audit and "
-        "does not claim cross-repository compatibility, runtime acceptance, "
-        "release readiness, deployment, or publication."
-    ) in candidate_section
-    assert "docs/release_notes/v1.17.0.md" in candidate_section
-    assert "payment_surface_discovery.v1" in candidate_section
-    assert "claim_task_or_observation_binding_mismatch" in candidate_section
-    assert "pending independent re-audit" not in candidate_section
-    assert "Public release candidate passed independent audit" not in (
-        candidate_section
+        "Public release promoted from the independently audited Private "
+        "candidate"
+    ) in release_section
+    assert (
+        "the two release-status documents are updated for Public release."
+    ) in release_section
+    assert "docs/release_notes/v1.17.0.md" in release_section
+    assert "payment_surface_discovery.v1" in release_section
+    assert "claim_task_or_observation_binding_mismatch" in release_section
+    assert "Private Source Candidate is pending independent audit" not in (
+        release_section
     )
+    assert "pending independent re-audit" not in release_section
 
     assert release_note.startswith(
         "# Release v1.17.0 — Agent Task Venue SDK"
     )
-    assert "Private candidate behavior only" in release_note
-    assert "does not claim formal independent-audit approval" in release_note
+    assert (
+        "Version 1.17.0 is the public release of the Agent Task Venue SDK."
+    ) in release_note
+    assert "It promotes the independently audited Private candidate" in release_note
+    assert "real-world SDK runtime acceptance is not inferred" in release_note
+    assert "Private candidate behavior only" not in release_note
+    assert "does not claim formal independent-audit approval" not in release_note
     assert "payment_surface_discovery.v1" in release_note
     assert "Host Agent" in release_note
     assert "claim_task_or_observation_binding_mismatch" in release_note
