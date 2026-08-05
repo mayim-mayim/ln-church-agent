@@ -2,7 +2,7 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
-## [1.17.0] - 2026-07-28 (Private Source Candidate — Agent Task Venue SDK)
+## [1.17.0] - 2026-08-05 (Agent Task Venue SDK)
 * **Public Agent Task lifecycle**: Adds a synchronous, wallet-keyless `AgentTaskClient` for discovery, detail, Claim, public-safe Observation Register, Completion, and bounded reward-status polling for the domainless `payment_surface_discovery.v1` Task at the fixed LN Church origin.
 * **Interface authority and 1:N cardinality**: Treats the public Hondo API as canonical and the SDK as an optional supporting client. One Task record is one Task Offer with Hondo-defined homogeneous capacity, while every successful Claim creates an independent Execution.
 * **Server-owned Offer snapshots**: Strictly retains Hondo-provided execution, Claim, reward-paid, capacity, `claimable`, and `poc_terms` fields. `OPEN` is an Offer publication status—not proof of claimability—and the SDK never reconstructs aggregates, predicts Claim success, or substitutes local time/capacity inference for the server snapshot.
@@ -23,8 +23,8 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Low-level compatibility**: Keeps the existing DomainObservation Register/response and internal OpenClaw interfaces for manual-ID integrations, but removes the old public Task type and Task Offer models rather than adding a compatibility alias or paid wrapper.
 * **PoC reward disclosure**: Preserves Hondo's canonical disclosure that Completion is durable receipt only and reward sending is automatic best-effort with finite retry and recorded evidence, without promising a payment SLA, individual investigation, manual resend, compensation, alternative payment, or arbitrary non-payment.
 * **Compatibility boundary**: Preserves the internal OpenClaw endpoints and `X-Internal-Secret`, existing payment-capable `LnChurchClient`, and inspect-only MCP without adding Task mutation tools.
-* **Candidate status**: This Private Source Candidate is pending independent audit and does not claim cross-repository compatibility, runtime acceptance, release readiness, deployment, or publication.
-* **Details**: [v1.17.0 candidate notes](docs/release_notes/v1.17.0.md)
+* **Release status**: Public release promoted from the independently audited Private candidate after paired Hondo compatibility and capacity-only correction verification. SDK source, tests, and canonical fixture retain their audited identities; the two release-status documents are updated for Public release. Real-world SDK runtime acceptance is not inferred from Hondo runtime E2E, and Python 3.8.1 / 3.11 compatibility remains unverified where unavailable.
+* **Details**: [v1.17.0 release notes](docs/release_notes/v1.17.0.md)
 
 ## [1.16.4] - 2026-07-19 (Private Candidate — Inspect MCP SSRF and Privacy Boundary)
 * **SSRF boundary**: Restricts Inspect to public HTTP(S) `GET`/`HEAD`, applies one shared hostname/address policy before DNS and to every resolved address, pins connections to vetted IPs, and revalidates every redirect hop and explicit Observation target.
