@@ -70,7 +70,7 @@ from ln_church_agent.task_transport import (
 
 CLAIM_TOKEN = "A" * 43
 FIXTURE_SHA256 = (
-    "86c2d8665a91387732c50f68a987bb4230d97174b91fc1de8641dd2a1e4ab0f3"
+    "a2ec940297ad4a342596b06ef3024a4c3799f64c4a72fdb5d91c690e9fab47f1"
 )
 REWARD_ADDRESS = "0x1111111111111111111111111111111111111111"
 TASK_TYPE = "payment_surface_discovery.v1"
@@ -537,7 +537,7 @@ def test_canonical_fixture_bytes_and_hash():
     assert hashlib.sha256(data).hexdigest() == FIXTURE_SHA256
     fixture = json.loads(data)
     assert fixture["contract_revision"] == (
-        "payment_surface_discovery_20260731"
+        "payment_surface_discovery_capacity_only_parallel_20260803"
     )
     assert fixture["task_type"] == TASK_TYPE
     assert fixture["task_definition_version"] == TASK_DEFINITION_VERSION
@@ -618,6 +618,56 @@ def test_canonical_fixture_bytes_and_hash():
     assert fixture["capacity_snapshot"][
         "sdk_or_taskboard_decrements_or_reconstructs"
     ] is False
+    offer_capacity = fixture["offer_execution_capacity"]
+    assert offer_capacity["separate_concurrency_limit_exists"] is False
+    assert offer_capacity["active_execution_count_range"] == (
+        "integer_0_through_50"
+    )
+    assert offer_capacity["maximum_active_formula"] == (
+        "capacity_total - rewarded_execution_count"
+    )
+    assert offer_capacity[
+        "same_agent_id_multiple_active_claims_allowed"
+    ] is True
+    assert offer_capacity[
+        "same_reward_address_multiple_active_claims_allowed"
+    ] is True
+    assert offer_capacity[
+        "reward_address_agent_id_or_ip_uniqueness_condition_allowed"
+    ] is False
+    assert offer_capacity[
+        "claim_uses_expected_active_execution_count_compare"
+    ] is False
+    assert offer_capacity["new_claim_writes_active_execution_id"] is False
+    assert offer_capacity[
+        "new_claim_expires_supersedes_or_terminalizes_sibling"
+    ] is False
+    assert "capacity_remaining_above_0" in offer_capacity[
+        "claimable_formula"
+    ]
+    assert "active_execution_count" not in offer_capacity[
+        "claimable_formula"
+    ]
+    claim_transition = fixture["lifecycle_atomic_transition_sets"]["claim"]
+    assert claim_transition["expected_active_execution_count_compare"] is False
+    assert claim_transition["active_execution_id_write"] is False
+    assert claim_transition["sibling_execution_write"] is False
+    assert fixture["lifecycle_atomic_transition_sets"][
+        "expiry_or_abandonment"
+    ]["sibling_execution_write"] is False
+    assert fixture["lifecycle_atomic_transition_sets"][
+        "evaluation_approval"
+    ]["sibling_execution_write"] is False
+    public_aggregates = fixture["public_task_aggregate_invariants"]
+    assert public_aggregates["active_execution_count"] == (
+        "integer_0_through_50"
+    )
+    assert public_aggregates[
+        "active_plus_rewarded_not_above_capacity_total"
+    ] is True
+    assert fixture["taskboard"][
+        "active_execution_count_values_above_one_render_without_clamping"
+    ] is True
     assert fixture["reward_delivery_disclosure"]["sending"] == (
         "automatic_best_effort"
     )
@@ -797,6 +847,51 @@ def test_hondo_snapshot_round_trip_preserves_rewarded_count_above_total():
     ) == (3, 2, 4)
 
 
+def test_hondo_snapshot_round_trip_preserves_parallel_active_execution_count_without_cross_field_inference():
+    detail_payload = _task(
+        capacity_total=3,
+        capacity_remaining=4,
+        reward_amount="37",
+        active_execution_count=7,
+        claim_count_total=73,
+        rewarded_execution_count=5,
+        reward_paid_total_minor=251,
+        maximum_reward_principal_atomic="41",
+        claimable=False,
+    )
+    list_payload = _task(
+        capacity_total=3,
+        capacity_remaining=4,
+        reward_amount="37",
+        active_execution_count=7,
+        claim_count_total=73,
+        rewarded_execution_count=5,
+        reward_paid_total_minor=251,
+        maximum_reward_principal_atomic="41",
+        claimable=False,
+        detail=False,
+    )
+
+    for model, payload in (
+        (AgentTask, detail_payload),
+        (AgentTaskListItem, list_payload),
+    ):
+        task = model.model_validate(payload)
+        assert task.active_execution_count == 7
+        assert task.model_dump(mode="json") == payload
+        serialized = task.model_dump_json()
+        assert json.loads(serialized) == payload
+        reparsed = model.model_validate_json(serialized)
+        assert reparsed.model_dump(mode="json") == payload
+        assert (
+            reparsed.capacity_total,
+            reparsed.active_execution_count,
+            reparsed.rewarded_execution_count,
+            reparsed.capacity_remaining,
+            reparsed.claimable,
+        ) == (3, 7, 5, 4, False)
+
+
 @pytest.mark.parametrize(
     ("capacity_total", "capacity_remaining"),
     [
@@ -850,7 +945,11 @@ def test_task_preserves_server_aggregates_claimable_and_poc_terms():
     "overrides",
     [
         {"active_execution_count": True},
-        {"active_execution_count": 2},
+        {"active_execution_count": False},
+        {"active_execution_count": -1},
+        {"active_execution_count": "2"},
+        {"active_execution_count": 2.0},
+        {"active_execution_count": None},
         {"claim_count_total": False},
         {"claim_count_total": -1},
         {"rewarded_execution_count": -1},
@@ -1650,6 +1749,22 @@ def test_sibling_claims_keep_independent_credentials_submissions_and_statuses():
         agent_id="external-agent",
         reward_address=REWARD_ADDRESS,
     )
+    assert [(call[0], call[1]) for call in transport.calls[:2]] == [
+        ("POST", task_claim_path("task_example")),
+        ("POST", task_claim_path("task_example")),
+    ]
+    assert [call[2]["json_body"] for call in transport.calls[:2]] == [
+        {
+            "schema_version": "ln_church.agent_task_claim_request.v1",
+            "agent_id": "external-agent",
+            "reward_address": REWARD_ADDRESS,
+        },
+        {
+            "schema_version": "ln_church.agent_task_claim_request.v1",
+            "agent_id": "external-agent",
+            "reward_address": REWARD_ADDRESS,
+        },
+    ]
     assert first.credential._validated_snapshot() == first_snapshot
     assert first.credential._claim_token_value() == first_token
     assert second.credential._claim_token_value() == second_token
@@ -1679,6 +1794,7 @@ def test_sibling_claims_keep_independent_credentials_submissions_and_statuses():
     assert all(
         "claim_token" not in call[2] for call in transport.calls[-2:]
     )
+    assert len(transport.calls) == 4
 
 
 @pytest.mark.parametrize(
@@ -5881,7 +5997,7 @@ def test_task_get_cli_displays_exact_server_page_and_disclosure(capsys):
         _task(
             capacity_total=3,
             capacity_remaining=2,
-            active_execution_count=1,
+            active_execution_count=2,
             rewarded_execution_count=0,
             claim_count_total=73,
             reward_paid_total_minor=0,
@@ -5930,7 +6046,7 @@ def test_task_get_cli_displays_exact_server_page_and_disclosure(capsys):
         )
     ]
     for exact_server_value in (
-        "Active executions       : 1",
+        "Active executions       : 2",
         "Successful claims       : 73",
         "Rewarded executions     : 0",
         "Paid total (atomic)     : 0",

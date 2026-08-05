@@ -706,7 +706,7 @@ class _AgentTaskOfferProjection(_TaskDefinitionFieldsModel):
     @model_validator(mode="after")
     def _validate_task_invariants(self) -> "_AgentTaskOfferProjection":
         if (
-            self.active_execution_count not in {0, 1}
+            self.active_execution_count < 0
             or self.claim_count_total < 0
             or self.capacity_total <= 0
             or self.rewarded_execution_count < 0

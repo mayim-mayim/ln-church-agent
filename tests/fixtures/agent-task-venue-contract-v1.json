@@ -1,7 +1,7 @@
 {
   "contract_id": "ln_church.agent_task_venue.v1",
   "schema_version": "ln_church.agent_task_venue_contract_fixture.v1",
-  "contract_revision": "payment_surface_discovery_20260731",
+  "contract_revision": "payment_surface_discovery_capacity_only_parallel_20260803",
   "task_type": "payment_surface_discovery.v1",
   "task_definition_version": "1.0.0",
   "evaluator_id": "ln_church.payment_surface_discovery.read_only.v1",
@@ -123,6 +123,37 @@
     "old_credential_authorizes_new_claim": false,
     "sibling_claim_executions_independent": true,
     "same_execution_credential_revocation_may_invalidate_prior_digest": true
+  },
+  "private_claim_token_binding": {
+    "table": "AgentTaskExecutions",
+    "partition_key": "TASK_CLAIM_TOKEN#<namespaced_claim_token_hash>",
+    "sort_key": "BINDING",
+    "record_type": "TASK_CLAIM_TOKEN_BINDING",
+    "schema_version": "ln_church.task_claim_token_binding.v1",
+    "required_fields": [
+      "PK",
+      "SK",
+      "recordType",
+      "schema_version",
+      "task_id",
+      "execution_id",
+      "claim_token_hash",
+      "claim_expires_at",
+      "created_at"
+    ],
+    "plaintext_claim_token_stored": false,
+    "claim_transaction_conditional_put": true,
+    "overwrite_allowed": false,
+    "observation_lookup": "strongly_consistent_exact_Get_by_namespaced_claim_token_hash",
+    "completion_lookup": "strongly_consistent_exact_Get_of_claim_token_binding_intersected_with_exact_TASK_OBSERVATION_SUBMISSION_binding",
+    "completion_execution_id_source": "immutable_TASK_OBSERVATION_SUBMISSION_binding",
+    "completion_token_binding_must_match_same_task_and_execution": true,
+    "binding_task_execution_hash_and_expiry_all_verified": true,
+    "scan_or_filter_expression_allowed": false,
+    "latest_execution_inference_allowed": false,
+    "reward_address_or_agent_id_lookup_allowed": false,
+    "public_projection_allowed": false,
+    "legacy_fallback": "only_when_binding_is_absent_for_a_pre_correction_execution_then_exact_active_execution_id_pointer_and_constant_time_execution_hash_validation"
   },
   "claim_delivery_classification": {
     "success_http_status": 200,
@@ -312,24 +343,35 @@
     "agent_task_executions_record": "one_record_per_successful_claim_generation",
     "internal_execution_id_required": true,
     "public_execution_id_allowed": false,
-    "concurrent_active_execution_limit": 1,
+    "separate_concurrency_limit_exists": false,
     "lifetime_reward_capacity": 50,
+    "active_execution_count_range": "integer_0_through_50",
+    "rewarded_execution_count_range": "integer_0_through_50",
+    "capacity_invariant": "active_execution_count + rewarded_execution_count <= capacity_total",
     "remaining_formula": "capacity_total - active_execution_count - rewarded_execution_count",
-    "claimable_formula": "status_is_OPEN_and_sponsor_payment_state_is_SETTLED_and_not_expired_at_server_time_and_active_execution_count_below_1_and_capacity_remaining_above_0",
+    "maximum_active_formula": "capacity_total - rewarded_execution_count",
+    "claimable_formula": "status_is_OPEN_and_sponsor_payment_state_is_SETTLED_and_not_expired_at_server_time_and_capacity_remaining_above_0",
     "claim_transaction_conditions": [
       "status == OPEN",
       "sponsor_payment_state == SETTLED",
       "expires_at > server_now",
-      "active_execution_count < concurrent_active_execution_limit",
-      "active_execution_count + rewarded_execution_count < capacity_total"
+      "rewarded_execution_count == expected_rewarded_execution_count_from_strongly_consistent_read",
+      "active_execution_count < capacity_total - expected_rewarded_execution_count"
     ],
     "claim_transaction_writes": [
       "increment_active_execution_count_once",
       "increment_claim_count_total_once",
-      "create_private_agent_task_execution_with_status_CLAIMED",
+      "create_private_agent_task_execution_with_status_CLAIMED_and_CLAIM_EXPIRY_DUE",
+      "conditionally_create_private_claim_token_binding",
       "append_canonical_claim_event"
     ],
     "claim_transaction_atomic": true,
+    "claim_uses_expected_active_execution_count_compare": false,
+    "new_claim_writes_active_execution_id": false,
+    "new_claim_expires_supersedes_or_terminalizes_sibling": false,
+    "same_reward_address_multiple_active_claims_allowed": true,
+    "same_agent_id_multiple_active_claims_allowed": true,
+    "reward_address_agent_id_or_ip_uniqueness_condition_allowed": false,
     "claim_count_total": "monotonic_successful_claim_generation_count_may_exceed_capacity_total",
     "claim_count_total_is_capacity": false,
     "claim_count_total_is_distinct_agent_count": false,
@@ -377,27 +419,33 @@
         "offer_status_is_OPEN",
         "sponsor_payment_state_is_SETTLED",
         "offer_expires_at_greater_than_server_now",
-        "active_execution_count_below_concurrent_limit",
-        "active_execution_count_plus_rewarded_execution_count_below_capacity_total"
+        "rewarded_execution_count_equals_strong_read_expected_rewarded_count",
+        "active_execution_count_below_capacity_total_minus_expected_rewarded_count"
       ],
       "writes": [
         "increment_offer_active_execution_count_once",
         "increment_offer_claim_count_total_once",
-        "create_private_execution_CLAIMED_with_immutable_claim_snapshot",
+        "create_private_execution_CLAIMED_with_immutable_claim_snapshot_and_CLAIM_EXPIRY_DUE",
+        "conditionally_create_private_claim_token_binding",
         "append_canonical_claim_event"
-      ]
+      ],
+      "expected_active_execution_count_compare": false,
+      "active_execution_id_write": false,
+      "sibling_execution_write": false
     },
     "durable_completion_receipt": {
       "conditions": [
         "private_execution_is_CLAIMED",
+        "exact_private_claim_token_binding_resolves_the_execution",
         "matching_unexpired_claim_credential_and_task_observation_agent_binding",
+        "active_reservation_release_marker_is_absent",
         "durable_observation_exists_and_matches_claim_task_execution_and_definition",
         "no_prior_submission_for_execution_or_same_submission_id_and_same_canonical_submission_digest"
       ],
       "writes": [
         "persist_immutable_submission_and_completion_receipt",
         "set_private_execution_SUBMITTED_and_public_reward_pending",
-        "create_sparse_EVALUATION_DUE_and_clear_claim_expiry_work",
+        "atomically_replace_sparse_CLAIM_EXPIRY_DUE_with_EVALUATION_DUE",
         "create_public_summary_pk_TASK_task_id",
         "create_immutable_public_summary_sk_submitted_at_submission_id",
         "store_initial_exact_public_summary_allowlist_fields",
@@ -412,23 +460,37 @@
     "expiry_or_abandonment": {
       "conditions": [
         "private_execution_is_CLAIMED_before_durable_completion",
+        "private_execution_evaluation_status_is_NOT_SUBMITTED",
+        "claim_expiry_is_due_for_EXPIRED_or_explicit_abandonment_is_authorized_for_ABANDONED",
         "release_not_previously_applied"
       ],
       "writes": [
         "decrement_offer_active_execution_count_once",
         "set_private_execution_EXPIRED_or_ABANDONED",
+        "set_active_reservation_released_at_and_reason_once",
+        "remove_sparse_work_and_lease_attributes",
         "append_matching_canonical_terminal_event"
-      ]
+      ],
+      "completion_race": "exactly_one_of_completion_or_expiry_commits",
+      "expiry_release_reason_values": [
+        "CLAIM_EXPIRED",
+        "EXPIRED"
+      ],
+      "abandonment_release_reason": "ABANDONED",
+      "sibling_execution_write": false
     },
     "evaluation_rejection": {
       "conditions": [
         "private_execution_is_SUBMITTED",
         "matching_unexpired_evaluation_lease",
+        "offer_active_execution_count_is_greater_than_zero",
+        "active_reservation_release_marker_is_absent",
         "one_allowed_deterministic_rejection_reason_is_positively_proven"
       ],
       "writes": [
         "decrement_offer_active_execution_count_once",
         "set_private_execution_EVALUATION_REJECTED",
+        "set_active_reservation_released_at_and_reason_once",
         "store_immutable_evaluation_evidence",
         "remove_sparse_evaluation_work_keys",
         "append_canonical_evaluation_rejection_event"
@@ -439,6 +501,9 @@
       "conditions": [
         "private_execution_is_SUBMITTED",
         "matching_unexpired_evaluation_lease",
+        "offer_active_execution_count_is_greater_than_zero",
+        "offer_rewarded_execution_count_is_below_capacity_total",
+        "active_reservation_release_marker_is_absent",
         "all_authoritative_reads_completed_successfully_and_result_is_determinate",
         "observation_exists",
         "claim_task_and_observation_binding_match",
@@ -449,12 +514,14 @@
         "decrement_offer_active_execution_count_once",
         "increment_offer_rewarded_execution_count_once",
         "set_private_execution_REWARD_PENDING",
+        "set_active_reservation_released_at_and_reason_once",
         "store_immutable_evaluation_evidence",
         "conditionally_create_or_confirm_same_execution_durable_observation_consumption_binding",
         "atomically_replace_sparse_evaluation_due_with_settlement_due_on_same_gsi",
         "append_canonical_evaluation_approval_event"
       ],
-      "cross_execution_uniqueness_conflict": "abort_approval_transaction_then_reread_authoritative_binding_and_reject_only_with_positive_different_execution_evidence"
+      "cross_execution_uniqueness_conflict": "abort_approval_transaction_then_reread_authoritative_binding_and_reject_only_with_positive_different_execution_evidence",
+      "sibling_execution_write": false
     },
     "evaluation_indeterminate": {
       "conditions": [
@@ -553,11 +620,12 @@
     "task_execution_and_event_consistency_required": true
   },
   "public_task_aggregate_invariants": {
-    "active_execution_count": "integer_0_or_1",
+    "active_execution_count": "integer_0_through_50",
     "claim_count_total": "non_negative_monotonic_integer",
     "rewarded_execution_count": "integer_0_through_50_counted_at_evaluation_approval",
     "reward_paid_total_minor": "integer_0_through_500000_counted_only_at_PAID_CONFIRMED",
     "capacity_total": 50,
+    "active_plus_rewarded_not_above_capacity_total": true,
     "capacity_remaining": "integer_0_through_50_equal_to_capacity_total_minus_active_execution_count_minus_rewarded_execution_count",
     "maximum_reward_principal_atomic": "500000",
     "claimable": "read_only_boolean_snapshot_for_publicly_projected_SETTLED_offer",
@@ -613,9 +681,10 @@
     "sdk_hardcodes_or_derives_A_B_N_or_remaining_capacity": false
   },
   "evaluation_and_settlement": {
-    "dispatch": "same_five_minute_scheduler_queries_same_sparse_gsi_for_evaluation_and_settlement_due_work",
+    "dispatch": "same_five_minute_scheduler_queries_same_sparse_gsi_for_claim_expiry_evaluation_and_settlement_due_work",
     "schedule_minutes": 5,
     "sparse_work_types": [
+      "CLAIM_EXPIRY_DUE",
       "EVALUATION_DUE",
       "SETTLEMENT_DUE",
       "SETTLEMENT_RECONCILIATION_DUE"
@@ -626,6 +695,9 @@
     "lease_required_for_payout_confirmation": true,
     "lease_must_be_unexpired": true,
     "stale_lease_updates_rejected": true,
+    "claim_expiry_performs_external_evaluation_url_access_or_payment": false,
+    "claim_expiry_releases_only_the_exact_target_reservation_once": true,
+    "completion_atomically_replaces_claim_expiry_due_with_evaluation_due": true,
     "evaluation_rejection_removes_sparse_work_keys": true,
     "evaluation_approval_atomically_replaces_evaluation_due_with_settlement_due_on_same_gsi": true,
     "evaluation_approval_crash_window_retains_durable_settlement_work": true,
@@ -709,6 +781,7 @@
   },
   "taskboard": {
     "read_only": true,
+    "active_execution_count_values_above_one_render_without_clamping": true,
     "task_level_domain_displayed_or_inferred": false,
     "task_label": "generic_http_402_discovery",
     "observed_domain_if_displayed_source": "execution_or_submission_only",
@@ -912,6 +985,7 @@
     "task_offer_create_response": "ln_church.task_offer_create_response.v1",
     "claim_request": "ln_church.agent_task_claim_request.v1",
     "claim_response": "ln_church.agent_task_claim_response.v1",
+    "claim_token_binding": "ln_church.task_claim_token_binding.v1",
     "observation_submission": "ln_church.task_domain_observation_submission.v1",
     "observation_response": "ln_church.task_domain_observation_response.v1",
     "completion_request": "ln_church.agent_task_completion_request.v1",
@@ -1200,6 +1274,11 @@
     "public_execution_id_added": false,
     "internal_execution_id_required": true,
     "internal_execution_id_exposed": false,
+    "private_binding_table": "AgentTaskExecutions",
+    "private_binding_key": "TASK_CLAIM_TOKEN#<namespaced_claim_token_hash>/BINDING",
+    "private_binding_lookup": "strongly_consistent_exact_Get",
+    "private_binding_publicly_exposed": false,
+    "private_binding_scan_or_latest_execution_inference": false,
     "result_identity_fields": [
       "task_id",
       "submission_id",
@@ -1490,6 +1569,24 @@
     "agent_task_executions_record": "one_successful_claim_execution",
     "task_offer_contains_individual_execution_state": false,
     "internal_execution_id_publicly_exposed": false
+  },
+  "legacy_active_execution_id_compatibility": {
+    "new_task_or_claim_writes_pointer": false,
+    "pointer_is_claim_mutex": false,
+    "pointer_presence_requires_active_count_at_most_one": false,
+    "binding_absent_legacy_lookup_only": true,
+    "fallback_requires_exact_pointer_and_constant_time_execution_token_hash_match": true,
+    "legacy_terminal_transition_removes_pointer_only_on_exact_execution_match": true,
+    "new_binding_backfill_uses_existing_namespaced_hash_without_plaintext_token": true,
+    "runtime_migration_required": true,
+    "runtime_migration": [
+      "legacy_CLAIMED_not_submitted_backfill_private_token_binding_and_CLAIM_EXPIRY_DUE",
+      "legacy_CLAIMED_expired_apply_exact_once_EXPIRED_and_active_decrement",
+      "legacy_SUBMITTED_preserve_existing_EVALUATION_DUE",
+      "terminal_or_approved_verify_counters_and_pointer",
+      "remove_active_execution_id_after_all_legacy_executions_are_reachable"
+    ],
+    "runtime_gate_reads_checkpoint_plaintext_claim_token_or_wallet_credential": false
   },
   "reward_delivery_disclosure": {
     "sending": "automatic_best_effort",
