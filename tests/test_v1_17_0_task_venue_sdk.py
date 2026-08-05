@@ -12,7 +12,10 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from ln_church_agent.task_client import AgentTaskClient
+from ln_church_agent.task_client import (
+    AgentTaskClient,
+    TaskCheckpointPersistenceError,
+)
 from ln_church_agent.task_contract import (
     MAXIMUM_JSON_BYTES,
     PUBLIC_API_ORIGIN,
@@ -57,6 +60,7 @@ from ln_church_agent.task_transport import (
     TASK_API_PORT,
     TaskAPIError,
     TaskAmbiguousOutcomeError,
+    TaskError,
     TaskTransport,
     TaskTransportError,
     TaskTransportResponse,
@@ -4850,9 +4854,11 @@ def test_guided_pending_checkpoint_is_saved_before_register():
 
     def fail_pending(checkpoint):
         checkpoints.append(checkpoint)
-        raise OSError("simulated durable write failure")
+        raise OSError(
+            "simulated durable write failure " + CLAIM_TOKEN
+        )
 
-    with pytest.raises(TaskTransportError) as caught:
+    with pytest.raises(TaskCheckpointPersistenceError) as caught:
         AgentTaskClient(
             _transport=transport
         ).submit_and_complete_domain_observation(
@@ -4861,7 +4867,11 @@ def test_guided_pending_checkpoint_is_saved_before_register():
             checkpoint_sink=fail_pending,
         )
 
+    assert not isinstance(caught.value, TaskTransportError)
+    assert isinstance(caught.value, TaskError)
+    assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
     assert caught.value.request_bytes_sent is False
+    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
     assert [item.state for item in checkpoints] == [
         TaskDomainObservationCheckpointState.REGISTER_PENDING
     ]
@@ -4878,9 +4888,11 @@ def test_guided_registered_checkpoint_is_saved_before_completion():
             checkpoint.state
             == TaskDomainObservationCheckpointState.REGISTERED
         ):
-            raise OSError("simulated durable write failure")
+            raise OSError(
+                "simulated durable write failure " + CLAIM_TOKEN
+            )
 
-    with pytest.raises(TaskTransportError) as caught:
+    with pytest.raises(TaskCheckpointPersistenceError) as caught:
         AgentTaskClient(
             _transport=transport
         ).submit_and_complete_domain_observation(
@@ -4889,7 +4901,11 @@ def test_guided_registered_checkpoint_is_saved_before_completion():
             checkpoint_sink=fail_registered,
         )
 
+    assert not isinstance(caught.value, TaskTransportError)
+    assert isinstance(caught.value, TaskError)
+    assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
     assert caught.value.request_bytes_sent is True
+    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
     assert [item.state for item in checkpoints] == [
         TaskDomainObservationCheckpointState.REGISTER_PENDING,
         TaskDomainObservationCheckpointState.REGISTERED,
@@ -4897,6 +4913,31 @@ def test_guided_registered_checkpoint_is_saved_before_completion():
     assert [
         path for _, path, _ in transport.calls
     ] == [task_observation_path("task_example")]
+
+
+def test_guided_sink_task_error_is_reclassified_as_local_persistence():
+    transport = _FakeTransport([_register_response()])
+
+    def fail_pending(_checkpoint):
+        raise TaskTransportError(
+            "TASK_TRANSPORT_ERROR", request_bytes_sent=None
+        )
+
+    with pytest.raises(TaskError) as caught:
+        AgentTaskClient(
+            _transport=transport
+        ).submit_and_complete_domain_observation(
+            _credential(),
+            _submission_payload(),
+            checkpoint_sink=fail_pending,
+        )
+
+    assert type(caught.value) is TaskCheckpointPersistenceError
+    assert not isinstance(caught.value, TaskTransportError)
+    assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
+    assert caught.value.request_bytes_sent is False
+    _assert_finite_exception_graph(caught.value)
+    assert transport.calls == []
 
 
 def test_guided_pending_resume_reuses_saved_body_id_and_digest():
@@ -5228,6 +5269,66 @@ def test_cli_submit_complete_persists_secret_free_registered_checkpoint(
         assert stat.S_IMODE(checkpoint_path.stat().st_mode) == 0o600
 
 
+def test_cli_checkpoint_replace_failure_is_local_and_pre_observation(
+    tmp_path, capsys
+):
+    credential_path = tmp_path / "credential.json"
+    observation_path = tmp_path / "observation.json"
+    checkpoint_path = tmp_path / "checkpoint.json"
+    lock_path = Path(str(checkpoint_path) + ".lock")
+    credential_path.write_text(
+        json.dumps(_credential()._to_private_file_payload()),
+        encoding="utf-8",
+    )
+    observation_path.write_text(
+        json.dumps(_submission_payload()),
+        encoding="utf-8",
+    )
+    if os.name != "nt":
+        os.chmod(credential_path, 0o600)
+    transport = _FakeTransport([_register_response()])
+    client = AgentTaskClient(_transport=transport)
+    argv = [
+        "ln-church-agent",
+        "task",
+        "submit-complete",
+        "task_example",
+        "--credential-file",
+        str(credential_path),
+        "--file",
+        str(observation_path),
+        "--checkpoint-file",
+        str(checkpoint_path),
+    ]
+    with patch(
+        "ln_church_agent.task_client.AgentTaskClient",
+        return_value=client,
+    ), patch(
+        "ln_church_agent.cli.os.replace",
+        side_effect=PermissionError(
+            "simulated Windows sharing failure " + CLAIM_TOKEN
+        ),
+    ), patch.object(sys, "argv", argv):
+        from ln_church_agent.cli import main
+
+        with pytest.raises(SystemExit) as caught:
+            main()
+
+    assert caught.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Task error: TASK_CHECKPOINT_PERSISTENCE_ERROR\n"
+    )
+    assert "TASK_TRANSPORT_ERROR" not in captured.err
+    assert CLAIM_TOKEN not in captured.out + captured.err
+    assert transport.calls == []
+    assert not checkpoint_path.exists()
+    assert lock_path.is_file()
+    assert lock_path.read_bytes() == b""
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
 def test_checkpoint_file_round_trips_wire_valid_boundary_envelopes(
     tmp_path,
 ):
@@ -5300,6 +5401,95 @@ def test_checkpoint_file_round_trips_wire_valid_boundary_envelopes(
             assert stat.S_IMODE(path.stat().st_mode) == 0o600
     finally:
         checkpoint_file.close()
+
+
+def test_checkpoint_atomic_replace_closes_data_handles_and_keeps_lock(
+    tmp_path,
+):
+    from ln_church_agent.cli import _TaskCheckpointFile
+
+    path = tmp_path / "checkpoint.json"
+    lock_path = Path(str(path) + ".lock")
+    pending = _pending_checkpoint().model_dump(
+        mode="json", exclude_none=True
+    )
+    registered = _registered_checkpoint().model_dump(
+        mode="json", exclude_none=True
+    )
+    real_open = os.open
+    real_close = os.close
+    real_replace = os.replace
+    open_paths = {}
+    replace_calls = []
+    checkpoint_file = None
+
+    def tracked_open(file, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is None:
+            descriptor = real_open(file, flags, mode)
+            resolved = os.path.abspath(os.fsdecode(file))
+        else:
+            descriptor = real_open(
+                file, flags, mode, dir_fd=dir_fd
+            )
+            resolved = os.fsdecode(file)
+        open_paths[descriptor] = resolved
+        return descriptor
+
+    def tracked_close(descriptor):
+        try:
+            return real_close(descriptor)
+        finally:
+            open_paths.pop(descriptor, None)
+
+    def guarded_replace(source, destination):
+        source_path = os.path.abspath(os.fsdecode(source))
+        destination_path = os.path.abspath(os.fsdecode(destination))
+        assert source_path not in open_paths.values()
+        assert destination_path not in open_paths.values()
+        assert Path(source_path).parent == path.parent
+        assert destination_path == str(path)
+        assert checkpoint_file.lock_fd in open_paths
+        assert open_paths[checkpoint_file.lock_fd] == str(lock_path)
+        with pytest.raises((OSError, ValueError)):
+            _TaskCheckpointFile(str(path))
+        replace_calls.append((source_path, destination_path))
+        return real_replace(source, destination)
+
+    with patch(
+        "ln_church_agent.cli.os.open", side_effect=tracked_open
+    ), patch(
+        "ln_church_agent.cli.os.close", side_effect=tracked_close
+    ), patch(
+        "ln_church_agent.cli.os.replace", side_effect=guarded_replace
+    ):
+        checkpoint_file = _TaskCheckpointFile(str(path))
+        try:
+            assert checkpoint_file.created_new is True
+            assert not path.exists()
+            assert lock_path.is_file()
+            initial_lock_identity = checkpoint_file.lock_identity
+            checkpoint_file.write_payload(pending)
+            checkpoint_file.write_payload(registered)
+            assert checkpoint_file.read_payload()["state"] == (
+                "REGISTERED"
+            )
+            assert checkpoint_file.lock_identity == initial_lock_identity
+            assert (
+                lock_path.stat().st_dev,
+                lock_path.stat().st_ino,
+            ) == initial_lock_identity
+            assert lock_path.read_bytes() == b""
+            assert CLAIM_TOKEN not in lock_path.read_text(
+                encoding="utf-8"
+            )
+            assert list(tmp_path.glob(".*.tmp")) == []
+            if os.name != "nt":
+                assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+        finally:
+            checkpoint_file.close()
+
+    assert len(replace_calls) == 2
+    assert open_paths == {}
 
 
 def test_checkpoint_file_rejects_above_checkpoint_only_cap(tmp_path):
@@ -5687,8 +5877,45 @@ def test_checkpoint_failed_update_preserves_last_good_pending_state(
             "ln_church_agent.cli.os.write",
             side_effect=fail_after_partial_write,
         ):
-            with pytest.raises(OSError):
+            with pytest.raises(ValueError) as caught:
                 checkpoint_file.write_payload(registered)
+        assert str(caught.value) == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
+        _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
+        assert path.read_bytes() == pending_bytes
+        assert checkpoint_file.read_payload()["state"] == (
+            "REGISTER_PENDING"
+        )
+        assert list(tmp_path.glob(".*.tmp")) == []
+    finally:
+        checkpoint_file.close()
+
+
+def test_checkpoint_replace_failure_preserves_old_bytes_and_cleans_temp(
+    tmp_path,
+):
+    from ln_church_agent.cli import _TaskCheckpointFile
+
+    path = tmp_path / "checkpoint.json"
+    checkpoint_file = _TaskCheckpointFile(str(path))
+    pending = _pending_checkpoint().model_dump(
+        mode="json", exclude_none=True
+    )
+    registered = _registered_checkpoint().model_dump(
+        mode="json", exclude_none=True
+    )
+    checkpoint_file.write_payload(pending)
+    pending_bytes = path.read_bytes()
+    try:
+        with patch(
+            "ln_church_agent.cli.os.replace",
+            side_effect=PermissionError(
+                "simulated Windows sharing failure " + CLAIM_TOKEN
+            ),
+        ):
+            with pytest.raises(ValueError) as caught:
+                checkpoint_file.write_payload(registered)
+        assert str(caught.value) == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
+        _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
         assert path.read_bytes() == pending_bytes
         assert checkpoint_file.read_payload()["state"] == (
             "REGISTER_PENDING"
@@ -5705,7 +5932,9 @@ def test_checkpoint_atomic_update_transfers_exclusive_lock(
 
     path = tmp_path / "checkpoint.json"
     checkpoint_file = _TaskCheckpointFile(str(path))
+    lock_path = Path(str(path) + ".lock")
     try:
+        stable_lock_identity = checkpoint_file.lock_identity
         checkpoint_file.write_payload(
             _pending_checkpoint().model_dump(
                 mode="json", exclude_none=True
@@ -5726,11 +5955,42 @@ def test_checkpoint_atomic_update_transfers_exclusive_lock(
         )
         assert registered_identity != pending_identity
         assert checkpoint_file.identity == registered_identity
+        assert checkpoint_file.lock_identity == stable_lock_identity
+        assert (
+            lock_path.stat().st_dev,
+            lock_path.stat().st_ino,
+        ) == stable_lock_identity
         assert checkpoint_file.read_payload()["state"] == "REGISTERED"
         with pytest.raises((OSError, ValueError)):
             _TaskCheckpointFile(str(path))
     finally:
         checkpoint_file.close()
+    next_writer = _TaskCheckpointFile(str(path))
+    try:
+        assert next_writer.read_payload()["state"] == "REGISTERED"
+        assert next_writer.lock_identity == stable_lock_identity
+    finally:
+        next_writer.close()
+
+
+def test_windows_python_314_known_limitation_is_documented_consistently():
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    release_note = (
+        root / "docs" / "release_notes" / "v1.17.0.md"
+    ).read_text(encoding="utf-8")
+    required_wording = (
+        "Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、"
+        "通常のpip installが完了しない。SDK v1.17.0ではWindows＋Python 3.14を"
+        "サポート対象外とし、WindowsではPython 3.11を推奨する。"
+    )
+
+    assert "## Supported environments" in readme
+    assert "| Windows | 3.11.x | Supported and recommended |" in readme
+    assert "| Windows | 3.14.x | Unsupported |" in readme
+    assert "## Known limitations" in release_note
+    assert required_wording in readme
+    assert required_wording in release_note
 
 
 def test_inspect_only_mcp_exposes_no_task_mutation_tools():

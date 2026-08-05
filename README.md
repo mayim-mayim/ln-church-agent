@@ -17,6 +17,16 @@ It helps agents inspect paid-action surfaces, distinguish executable payment rai
 
 In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surfaces such as **OKX Agent Payments Protocol (APP), Google AP2, and ACP** without executing payment logic. These protocols are treated as observable commerce / authorization patterns unless they expose a concrete HTTP 402-compatible settlement path.
 
+## Supported environments
+
+| Scope | Python | SDK v1.17.0 status |
+| :--- | :--- | :--- |
+| Windows | 3.11.x | Supported and recommended |
+| Windows | 3.14.x | Unsupported |
+| Package metadata | 3.8.1 or newer | Declared range unchanged; platform and dependency limitations still apply |
+
+Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、通常のpip installが完了しない。SDK v1.17.0ではWindows＋Python 3.14をサポート対象外とし、WindowsではPython 3.11を推奨する。
+
 ## Core Doctrine
 
 **Do not spend even one LLM token on what the agent should not need to reason about.**
@@ -122,7 +132,7 @@ ln-church-agent task submit-complete TASK_ID \
   --checkpoint-file ./claims/TASK_ID.checkpoint.json
 ```
 
-The Observation file may omit `submission_id`; the initial guided invocation generates it once. Re-running the same command resumes deterministically: a pending checkpoint restores that saved ID before validating the same Observation content, while a registered checkpoint skips Register and continues from its verified receipt. A resume never generates a replacement identity. The CLI holds an exclusive, non-blocking checkpoint-file lock for the invocation so concurrent guided processes fail before overwriting one another. The checkpoint contains no Claim token or usable credential. Its dedicated finite envelope is 768 KiB; public wire bodies, Observation files, and credential files remain limited to 256 KiB. It is protected restart metadata for reconnecting the local operation to Hondo—not Hondo state, SDK authority, a public Execution identifier, proof of Evaluation acceptance, or proof of reward payment.
+The Observation file may omit `submission_id`; the initial guided invocation generates it once. Re-running the same command resumes deterministically: a pending checkpoint restores that saved ID before validating the same Observation content, while a registered checkpoint skips Register and continues from its verified receipt. A resume never generates a replacement identity. The CLI holds a dedicated sibling lock file exclusively and non-blockingly for the invocation so concurrent guided processes fail before overwriting one another. Replaceable checkpoint data handles are closed before each same-directory atomic swap, including on Windows. The checkpoint contains no Claim token or usable credential. Its dedicated finite envelope is 768 KiB; public wire bodies, Observation files, and credential files remain limited to 256 KiB. A local sink or filesystem failure returns the finite `TASK_CHECKPOINT_PERSISTENCE_ERROR`, not `TASK_TRANSPORT_ERROR`. It is protected restart metadata for reconnecting the local operation to Hondo—not Hondo state, SDK authority, a public Execution identifier, proof of Evaluation acceptance, or proof of reward payment.
 
 Python callers use `AgentTaskClient.submit_and_complete_domain_observation(credential, submission, checkpoint=..., checkpoint_sink=...)`; the durable `checkpoint_sink` must return only after saving each checkpoint. The direct `submit_domain_observation()` → `complete_task()` bridge and the `task submit`, `task complete`, `task status`, and `task reward-wait` commands remain low-level compatibility paths for callers that deliberately manage existing IDs. They are not the standard workflow.
 
