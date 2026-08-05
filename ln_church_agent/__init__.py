@@ -4,6 +4,29 @@ from .client import (
     SURFACE_PREFLIGHT_SCHEMA_VERSION,
     validate_public_domain_for_observation
 )
+from .task_client import AgentTaskClient
+from .task_models import (
+    AgentTask,
+    AgentTaskPage,
+    AgentTaskRewardTerms,
+    AgentTaskClaim,
+    TaskClaimCredential,
+    TaskObservedUrlEntry,
+    TaskDiscoveredSurfaceEntry,
+    TaskObservationErrorEntry,
+    TaskVerificationCostVector,
+    TaskDomainObservationSubmission,
+    TaskDomainObservationResponse,
+    AgentTaskCompletionResponse,
+    AgentTaskRewardStatus,
+    TaskDefinitionReference,
+)
+from .task_transport import (
+    TaskError,
+    TaskTransportError,
+    TaskAPIError,
+    TaskAmbiguousOutcomeError,
+)
 from .exceptions import (
     PaymentChallengeError,
     PaymentExecutionError,
@@ -94,6 +117,7 @@ Http402Client = Payment402Client
 __all__ = [
     "Payment402Client", 
     "LnChurchClient", 
+    "AgentTaskClient",
     "Http402Client", 
     "AssetType",
     "SchemeType",
@@ -164,5 +188,23 @@ __all__ = [
     "VerifiedDomainTrackNextAction",
     "VerifiedDomainTrackRegistrationResponse",
     "VerifiedDomainTrackReadModel",
-    "VerifiedDomainTrackSummary"
+    "VerifiedDomainTrackSummary",
+    "AgentTask",
+    "AgentTaskPage",
+    "AgentTaskRewardTerms",
+    "AgentTaskClaim",
+    "TaskClaimCredential",
+    "TaskObservedUrlEntry",
+    "TaskDiscoveredSurfaceEntry",
+    "TaskObservationErrorEntry",
+    "TaskVerificationCostVector",
+    "TaskDomainObservationSubmission",
+    "TaskDomainObservationResponse",
+    "AgentTaskCompletionResponse",
+    "AgentTaskRewardStatus",
+    "TaskDefinitionReference",
+    "TaskError",
+    "TaskTransportError",
+    "TaskAPIError",
+    "TaskAmbiguousOutcomeError",
 ]

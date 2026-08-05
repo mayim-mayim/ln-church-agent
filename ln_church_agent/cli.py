@@ -4,9 +4,15 @@ import httpx
 import re
 import os
 import json
+import json as _task_json
+import stat
+import sys as _task_sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
 from enum import Enum
 from decimal import Decimal, InvalidOperation
-from typing import Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Type
 from .models import InspectResult, SettlementOption, ObservatoryMetadata
 from .challenges import parse_challenge_from_response
 from .exceptions import NoValidPaymentChallengeError, PaymentChallengeError
@@ -15,6 +21,831 @@ from .grant_signals import detect_grant_signals
 from .models import GrantSignalObservation
 from .inspect_transport import InspectTransportError, _inspect_request
 from .redaction import _contains_inspect_secret_material, redact_inspect_public_url
+
+
+_TASK_FILE_MAX_BYTES = 256 * 1024
+# A checkpoint wraps one wire-valid Observation plus the bounded public
+# snapshot from one CLI-valid Claim credential and fixed restart metadata.
+# Keep its private local envelope separate and finite without widening any
+# public wire, Observation-file, or credential-file limit.
+_TASK_CHECKPOINT_FILE_MAX_BYTES = 3 * _TASK_FILE_MAX_BYTES
+_TASK_CREDENTIAL_SCHEMA = "ln_church.task_claim_credential_file.v1"
+_TASK_FIXED_ORIGIN = "https://kari.mayim-mayim.com"
+_TASK_ERROR_CODES = frozenset(
+    {
+        "CLAIM_OUTCOME_UNKNOWN",
+        "SUBMISSION_OUTCOME_UNKNOWN",
+        "COMPLETION_OUTCOME_UNKNOWN",
+        "TASK_ORIGIN_INVALID",
+        "TASK_DNS_POLICY_REJECTED",
+        "TASK_TLS_ERROR",
+        "TASK_TIMEOUT",
+        "TASK_TRANSPORT_ERROR",
+        "TASK_REDIRECT_REJECTED",
+        "TASK_PAYMENT_UNEXPECTED",
+        "TASK_RESPONSE_ENCODING_REJECTED",
+        "TASK_RESPONSE_TOO_LARGE",
+        "TASK_RESPONSE_INVALID",
+        "TASK_API_ERROR",
+        "TASK_CREDENTIAL_INVALID",
+        "TASK_CREDENTIAL_EXPIRED",
+        "invalid_request",
+        "unsupported_task_type",
+        "domain_mismatch",
+        "claim_token_invalid",
+        "task_not_found",
+        "task_not_open",
+        "task_state_conflict",
+        "submission_conflict",
+        "claim_lease_expired",
+        "payload_too_large",
+        "rate_limited",
+        "internal_error",
+    }
+)
+_TASK_SECRET_FIELD_NAMES = frozenset(
+    {
+        "claimtoken",
+        "claim_token",
+        "claim-token",
+        "x_ln_task_claim_token",
+        "x-ln-task-claim-token",
+    }
+)
+
+
+def _task_cli_error(code: Any) -> None:
+    """Exit with a finite error code and no remote or exception text."""
+
+    safe_code = code if type(code) is str and code in _TASK_ERROR_CODES else (
+        "TASK_TRANSPORT_ERROR"
+    )
+    _task_sys.stderr.write("Task error: %s\n" % safe_code)
+    raise SystemExit(2)
+
+
+class _TaskArgumentParser(argparse.ArgumentParser):
+    """Keep Task parse failures finite and free of raw argv values."""
+
+    def error(self, message: str) -> None:
+        if _task_sys.argv[1:2] == ["task"]:
+            _task_cli_error("invalid_request")
+        super().error(message)
+
+
+def _task_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def _task_public_payload(value: Any) -> Any:
+    """Build a defensive public representation that drops credential fields."""
+
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if type(value) is dict:
+        public: Dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            compact = normalized.replace("-", "").replace("_", "")
+            if (
+                normalized in _TASK_SECRET_FIELD_NAMES
+                or compact in {"claimtoken", "xlntaskclaimtoken"}
+            ):
+                continue
+            public[str(key)] = _task_public_payload(item)
+        return public
+    if type(value) is list:
+        return [_task_public_payload(item) for item in value]
+    if type(value) is tuple:
+        return [_task_public_payload(item) for item in value]
+    if value is None or type(value) in {str, int, float, bool}:
+        return value
+    raise ValueError("TASK_RESPONSE_INVALID")
+
+
+def _task_active_credential_payload(credential: Any) -> Dict[str, Any]:
+    """Explicit secret-bearing codec used only for the private claim file."""
+
+    try:
+        payload = credential._to_private_file_payload()
+    except Exception:
+        raise ValueError("TASK_CREDENTIAL_INVALID") from None
+    if type(payload) is not dict:
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    return payload
+
+
+def _task_credential_from_payload(
+    payload: Dict[str, Any],
+    credential_type: Type[Any],
+) -> Any:
+    if type(payload) is not dict:
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    try:
+        return credential_type._from_private_file_payload(payload)
+    except Exception:
+        raise ValueError("TASK_CREDENTIAL_INVALID") from None
+
+
+def _task_tombstone(task_id: str) -> Dict[str, Any]:
+    return {
+        "schema_version": _TASK_CREDENTIAL_SCHEMA,
+        "state": "CLAIM_OUTCOME_UNKNOWN",
+        "api_origin": _TASK_FIXED_ORIGIN,
+        "task_id": task_id,
+        "created_at": _task_now_rfc3339(),
+    }
+
+
+def _reject_task_secret_cli_arguments(argv: List[str]) -> None:
+    """Reject token-like Task options without letting argparse echo a secret."""
+
+    if not argv or argv[0] != "task":
+        return
+    for argument in argv[1:]:
+        if type(argument) is not str or not argument.startswith("-"):
+            continue
+        option = argument.split("=", 1)[0].lstrip("-")
+        compact = option.lower().replace("-", "").replace("_", "")
+        if compact in {"claimtoken", "xlntaskclaimtoken"}:
+            _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+
+def _windows_original_ancestors(path: Any) -> Tuple[Any, ...]:
+    """Return the lexical Windows ancestry, including the target itself."""
+
+    return tuple(reversed(path.parents)) + (path,)
+
+
+def _reject_windows_reparse_path(
+    path: Path,
+    *,
+    require_claims_root: bool,
+) -> Path:
+    raw = str(path)
+    if raw.startswith("\\\\") or raw.startswith("//"):
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    # Build absolute lexical paths without following junctions.  Resolving
+    # first would erase the very reparse points this boundary must reject.
+    required_root = None
+    if require_claims_root:
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if (
+            not local_app_data
+            or local_app_data.startswith("\\\\")
+            or local_app_data.startswith("//")
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        required_root = Path(
+            os.path.abspath(
+                os.path.join(
+                    local_app_data, "ln-church-agent", "claims"
+                )
+            )
+        )
+    candidate = Path(os.path.abspath(raw))
+    if (
+        str(candidate).startswith("\\\\")
+        or not candidate.name
+    ):
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    if required_root is not None:
+        if str(required_root).startswith("\\\\"):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        try:
+            candidate.parent.relative_to(required_root)
+        except (TypeError, ValueError):
+            raise ValueError("TASK_CREDENTIAL_INVALID") from None
+
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    get_attributes = kernel32.GetFileAttributesW
+    get_attributes.argtypes = [ctypes.c_wchar_p]
+    get_attributes.restype = ctypes.c_uint32
+    get_drive_type = kernel32.GetDriveTypeW
+    get_drive_type.argtypes = [ctypes.c_wchar_p]
+    get_drive_type.restype = ctypes.c_uint32
+    invalid_attributes = 0xFFFFFFFF
+    reparse_point = 0x0400
+    drive_remote = 4
+
+    checked_paths = (
+        (required_root, candidate)
+        if required_root is not None
+        else (candidate,)
+    )
+    for checked in checked_paths:
+        anchor = checked.anchor
+        if (
+            not anchor
+            or anchor.startswith("\\\\")
+            or int(get_drive_type(anchor)) == drive_remote
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    def reject_reparse_ancestors(target: Path) -> None:
+        # Inspect the drive root and every original component without first
+        # resolving it.  This includes LOCALAPPDATA and the claims root.
+        for current in _windows_original_ancestors(target):
+            attributes = int(get_attributes(str(current)))
+            if attributes == invalid_attributes or attributes & reparse_point:
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    if required_root is not None:
+        reject_reparse_ancestors(required_root)
+    reject_reparse_ancestors(candidate.parent)
+
+    # If the final file already exists (Submit/Complete), it too must not be a
+    # symlink or other reparse point.  Absence is expected before Claim's
+    # create-exclusive open.
+    final_attributes = int(get_attributes(str(candidate)))
+    if (
+        final_attributes != invalid_attributes
+        and final_attributes & reparse_point
+    ):
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    # Only after the original path has passed the no-reparse scan may we
+    # resolve it for a second containment check.  Re-scan afterwards to catch
+    # an ancestor changed during resolution.
+    resolved_parent = candidate.parent.resolve(strict=True)
+    resolved_root = None
+    if required_root is not None:
+        resolved_root = required_root.resolve(strict=True)
+        try:
+            resolved_parent.relative_to(resolved_root)
+        except (TypeError, ValueError):
+            raise ValueError("TASK_CREDENTIAL_INVALID") from None
+        reject_reparse_ancestors(required_root)
+    reject_reparse_ancestors(candidate.parent)
+
+    resolved_paths = (
+        (resolved_root, resolved_parent)
+        if resolved_root is not None
+        else (resolved_parent,)
+    )
+    for current in resolved_paths:
+        attributes = int(get_attributes(str(current)))
+        if attributes == invalid_attributes or attributes & reparse_point:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+    return resolved_parent / candidate.name
+
+
+def _validated_task_file_path(
+    path: str,
+    *,
+    require_claims_root: bool = True,
+) -> Path:
+    if type(path) is not str or not path or "\x00" in path:
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    candidate = Path(path)
+    if os.name == "nt":
+        return _reject_windows_reparse_path(
+            candidate,
+            require_claims_root=require_claims_root,
+        )
+
+    absolute = Path(os.path.abspath(path))
+    parent = absolute.parent
+    if not parent.exists() or not parent.is_dir():
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    current = Path(parent.anchor)
+    for part in parent.parts[1:]:
+        current = current / part
+        info = os.lstat(str(current))
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+    parent_info = os.lstat(str(parent))
+    if (
+        parent_info.st_mode & 0o022
+        and not parent_info.st_mode & stat.S_ISVTX
+    ):
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    if (
+        hasattr(os, "geteuid")
+        and parent_info.st_uid != os.geteuid()
+        and not parent_info.st_mode & stat.S_ISVTX
+    ):
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    return absolute
+
+
+class _TaskCredentialReservation:
+    """Create-only claim file kept on one descriptor through final fsync."""
+
+    def __init__(self, path: str) -> None:
+        self.path = _validated_task_file_path(path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        if hasattr(os, "O_NOINHERIT"):
+            flags |= os.O_NOINHERIT
+        self.fd = os.open(str(self.path), flags, 0o600)
+        self.closed = False
+        try:
+            info = os.fstat(self.fd)
+            self.identity = (info.st_dev, info.st_ino)
+            if os.name != "nt":
+                os.fchmod(self.fd, 0o600)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+            self._require_identity()
+        except Exception:
+            try:
+                self.remove_own_reservation()
+            except (OSError, ValueError):
+                self.close()
+            except Exception:
+                self.close()
+                pass
+            raise
+
+    def _require_identity(self) -> None:
+        if self.closed:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        info = os.fstat(self.fd)
+        path_info = os.stat(str(self.path), follow_symlinks=False)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or (info.st_dev, info.st_ino) != self.identity
+            or not stat.S_ISREG(path_info.st_mode)
+            or path_info.st_nlink != 1
+            or (path_info.st_dev, path_info.st_ino) != self.identity
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        if os.name != "nt" and stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    def write_payload(self, payload: Dict[str, Any]) -> None:
+        self._require_identity()
+        try:
+            encoded = (
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("TASK_CREDENTIAL_INVALID") from None
+        if len(encoded) > _TASK_FILE_MAX_BYTES:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        os.lseek(self.fd, 0, os.SEEK_SET)
+        os.ftruncate(self.fd, 0)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(self.fd, view)
+            if written <= 0:
+                raise OSError
+            view = view[written:]
+        os.fsync(self.fd)
+        self._require_identity()
+
+    def close(self) -> None:
+        if not self.closed:
+            os.close(self.fd)
+            self.closed = True
+
+    def scrub_with_tombstone(self, payload: Dict[str, Any]) -> None:
+        """Best-effort secret removal through the original descriptor."""
+
+        if self.closed:
+            return
+        info = os.fstat(self.fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or (info.st_dev, info.st_ino) != self.identity
+        ):
+            return
+        encoded = (
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        os.lseek(self.fd, 0, os.SEEK_SET)
+        os.ftruncate(self.fd, 0)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(self.fd, view)
+            if written <= 0:
+                raise OSError
+            view = view[written:]
+        os.fsync(self.fd)
+
+    def remove_own_reservation(self) -> None:
+        self._require_identity()
+        if os.name == "nt":
+            identity = self.identity
+            self.close()
+            current = os.stat(str(self.path), follow_symlinks=False)
+            if (
+                not stat.S_ISREG(current.st_mode)
+                or current.st_nlink != 1
+                or (current.st_dev, current.st_ino) != identity
+            ):
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+            os.unlink(str(self.path))
+        else:
+            os.unlink(str(self.path))
+            self.close()
+
+
+class _TaskCheckpointFile(_TaskCredentialReservation):
+    """Private restart metadata held on one verified descriptor."""
+
+    def __init__(self, path: str) -> None:
+        self.path = _validated_task_file_path(path)
+        base_flags = os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            base_flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_BINARY"):
+            base_flags |= os.O_BINARY
+        if hasattr(os, "O_NOINHERIT"):
+            base_flags |= os.O_NOINHERIT
+        self.closed = False
+        self.created_new = False
+        self.written = False
+        self.locked = False
+        self._lock_module = None
+        try:
+            self.fd = os.open(
+                str(self.path),
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            self.created_new = True
+        except FileExistsError:
+            self.fd = os.open(str(self.path), base_flags)
+        try:
+            info = os.fstat(self.fd)
+            self.identity = (info.st_dev, info.st_ino)
+            self._acquire_exclusive_lock()
+            if self.created_new and os.name != "nt":
+                os.fchmod(self.fd, 0o600)
+            self._require_identity()
+        except Exception:
+            try:
+                if self.created_new:
+                    self.remove_own_reservation()
+                else:
+                    self.close()
+            except Exception:
+                self.close()
+            raise
+
+    def _acquire_exclusive_lock(self) -> None:
+        self._lock_module = self._lock_descriptor(self.fd)
+        self.locked = True
+
+    @staticmethod
+    def _lock_descriptor(descriptor: int) -> Any:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            return msvcrt
+        else:
+            import fcntl
+
+            fcntl.flock(
+                descriptor,
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+            return fcntl
+
+    @staticmethod
+    def _unlock_descriptor(descriptor: int, lock_module: Any) -> None:
+        if os.name == "nt":
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            lock_module.locking(
+                descriptor,
+                lock_module.LK_UNLCK,
+                1,
+            )
+        else:
+            lock_module.flock(
+                descriptor,
+                lock_module.LOCK_UN,
+            )
+
+    def _release_exclusive_lock(self) -> None:
+        if not self.locked:
+            return
+        try:
+            self._unlock_descriptor(
+                self.fd,
+                self._lock_module,
+            )
+        finally:
+            self.locked = False
+
+    def _require_identity(self) -> None:
+        super()._require_identity()
+        info = os.fstat(self.fd)
+        if (
+            os.name != "nt"
+            and hasattr(os, "geteuid")
+            and info.st_uid != os.geteuid()
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+
+    def read_payload(self) -> Dict[str, Any]:
+        self._require_identity()
+        before = os.fstat(self.fd)
+        if (
+            before.st_size <= 0
+            or before.st_size > _TASK_CHECKPOINT_FILE_MAX_BYTES
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        os.lseek(self.fd, 0, os.SEEK_SET)
+        content = bytearray()
+        while len(content) <= _TASK_CHECKPOINT_FILE_MAX_BYTES:
+            chunk = os.read(
+                self.fd,
+                min(
+                    64 * 1024,
+                    _TASK_CHECKPOINT_FILE_MAX_BYTES + 1 - len(content),
+                ),
+            )
+            if not chunk:
+                break
+            content.extend(chunk)
+        self._require_identity()
+        after = os.fstat(self.fd)
+        if (
+            (before.st_dev, before.st_ino)
+            != (after.st_dev, after.st_ino)
+            or len(content) > _TASK_CHECKPOINT_FILE_MAX_BYTES
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        parse_failed = False
+        value: Any = None
+        try:
+            value = json.loads(
+                bytes(content).decode("utf-8"),
+                object_pairs_hook=_reject_task_json_object_pairs,
+                parse_constant=_reject_task_json_constant,
+            )
+        except (
+            UnicodeDecodeError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            parse_failed = True
+        if parse_failed:
+            content.clear()
+            value = None
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        if type(value) is not dict:
+            content.clear()
+            value = None
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        return value
+
+    def write_payload(self, payload: Dict[str, Any]) -> None:
+        self._require_identity()
+        try:
+            encoded = (
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("TASK_CREDENTIAL_INVALID") from None
+        if len(encoded) > _TASK_CHECKPOINT_FILE_MAX_BYTES:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+
+        temporary_fd = -1
+        temporary_name: Optional[str] = None
+        temporary_lock_module: Any = None
+        temporary_locked = False
+        replaced = False
+        try:
+            temporary_fd, temporary_name = tempfile.mkstemp(
+                prefix=".%s." % self.path.name,
+                suffix=".tmp",
+                dir=str(self.path.parent),
+            )
+            if os.name != "nt":
+                os.fchmod(temporary_fd, 0o600)
+            info = os.fstat(temporary_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or (
+                    os.name != "nt"
+                    and stat.S_IMODE(info.st_mode) != 0o600
+                )
+                or (
+                    os.name != "nt"
+                    and hasattr(os, "geteuid")
+                    and info.st_uid != os.geteuid()
+                )
+            ):
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+
+            view = memoryview(encoded)
+            while view:
+                written = os.write(temporary_fd, view)
+                if written <= 0:
+                    raise OSError
+                view = view[written:]
+            os.fsync(temporary_fd)
+            temporary_lock_module = self._lock_descriptor(
+                temporary_fd
+            )
+            temporary_locked = True
+
+            # Keep the last-good checkpoint and its lock until the complete,
+            # fsynced replacement is also locked and ready for one atomic
+            # same-directory swap.
+            self._require_identity()
+            os.replace(temporary_name, str(self.path))
+            replaced = True
+
+            if os.name != "nt":
+                directory_flags = os.O_RDONLY
+                if hasattr(os, "O_DIRECTORY"):
+                    directory_flags |= os.O_DIRECTORY
+                if hasattr(os, "O_CLOEXEC"):
+                    directory_flags |= os.O_CLOEXEC
+                directory_fd = os.open(
+                    str(self.path.parent),
+                    directory_flags,
+                )
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+
+            new_info = os.fstat(temporary_fd)
+            path_info = os.stat(
+                str(self.path),
+                follow_symlinks=False,
+            )
+            new_identity = (new_info.st_dev, new_info.st_ino)
+            if (
+                not stat.S_ISREG(new_info.st_mode)
+                or new_info.st_nlink != 1
+                or (path_info.st_dev, path_info.st_ino)
+                != new_identity
+                or not stat.S_ISREG(path_info.st_mode)
+                or path_info.st_nlink != 1
+                or (
+                    os.name != "nt"
+                    and stat.S_IMODE(new_info.st_mode) != 0o600
+                )
+                or (
+                    os.name != "nt"
+                    and hasattr(os, "geteuid")
+                    and new_info.st_uid != os.geteuid()
+                )
+            ):
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+
+            old_fd = self.fd
+            self.fd = temporary_fd
+            temporary_fd = -1
+            self.identity = new_identity
+            self._lock_module = temporary_lock_module
+            self.locked = True
+            temporary_locked = False
+            self.written = True
+            os.close(old_fd)
+        finally:
+            if temporary_fd >= 0:
+                if temporary_locked:
+                    try:
+                        self._unlock_descriptor(
+                            temporary_fd,
+                            temporary_lock_module,
+                        )
+                    except OSError:
+                        pass
+                os.close(temporary_fd)
+            if not replaced and temporary_name is not None:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._release_exclusive_lock()
+            finally:
+                super().close()
+
+    def close_or_remove_empty_reservation(self) -> None:
+        if self.created_new and not self.written:
+            self.remove_own_reservation()
+        else:
+            self.close()
+
+
+def _reject_task_json_object_pairs(
+    pairs: List[Tuple[str, Any]],
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        result[key] = value
+    return result
+
+
+def _reject_task_json_constant(_value: str) -> None:
+    raise ValueError("TASK_CREDENTIAL_INVALID")
+
+
+def _read_task_json_file(path: str, *, require_private: bool) -> Dict[str, Any]:
+    candidate = _validated_task_file_path(
+        path,
+        require_claims_root=require_private,
+    )
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    if hasattr(os, "O_NOINHERIT"):
+        flags |= os.O_NOINHERIT
+    descriptor = os.open(str(candidate), flags)
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size > _TASK_FILE_MAX_BYTES
+            or (require_private and before.st_nlink != 1)
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+        if require_private and os.name != "nt":
+            if before.st_mode & 0o077:
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+            if hasattr(os, "geteuid") and before.st_uid != os.geteuid():
+                raise ValueError("TASK_CREDENTIAL_INVALID")
+        content = bytearray()
+        while len(content) <= _TASK_FILE_MAX_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(64 * 1024, _TASK_FILE_MAX_BYTES + 1 - len(content)),
+            )
+            if not chunk:
+                break
+            content.extend(chunk)
+        after = os.fstat(descriptor)
+        path_info = os.stat(str(candidate), follow_symlinks=False)
+        if (
+            (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or (after.st_dev, after.st_ino)
+            != (path_info.st_dev, path_info.st_ino)
+            or not stat.S_ISREG(path_info.st_mode)
+            or (require_private and path_info.st_nlink != 1)
+            or len(content) > _TASK_FILE_MAX_BYTES
+        ):
+            raise ValueError("TASK_CREDENTIAL_INVALID")
+    finally:
+        os.close(descriptor)
+    parse_failed = False
+    value: Any = None
+    try:
+        value = json.loads(
+            bytes(content).decode("utf-8"),
+            object_pairs_hook=_reject_task_json_object_pairs,
+            parse_constant=_reject_task_json_constant,
+        )
+    except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
+        parse_failed = True
+    if parse_failed:
+        content.clear()
+        value = None
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    if type(value) is not dict:
+        content.clear()
+        value = None
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    return value
 
 
 class _ChallengeParserOutcome(Enum):
@@ -949,7 +1780,8 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
     )
 
 def main():
-    parser = argparse.ArgumentParser(description="ln-church-agent CLI - Agentic Payment Runtime")
+    _reject_task_secret_cli_arguments(_task_sys.argv[1:])
+    parser = _TaskArgumentParser(description="ln-church-agent CLI - Agentic Payment Runtime")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # 1. Existing `inspect`
@@ -969,6 +1801,90 @@ def main():
     grant_inspect_parser.add_argument("--route", type=str, default="/api/agent/omikuji", help="Target route")
     grant_inspect_parser.add_argument("--method", type=str, default="POST", help="Target HTTP method")
     grant_inspect_parser.add_argument("--base-url", type=str, default="https://kari.mayim-mayim.com", help="Target base URL")
+
+    # Public, wallet-keyless Agent Task lifecycle. The official origin is fixed;
+    # no task command accepts a custom origin or a plaintext token argument.
+    task_parser = subparsers.add_parser(
+        "task", help="Discover and complete public Agent Tasks"
+    )
+    task_subparsers = task_parser.add_subparsers(
+        dest="task_command", required=True
+    )
+    task_list_parser = task_subparsers.add_parser("list", help="List Tasks")
+    task_list_parser.add_argument(
+        "--status",
+        choices=["OPEN"],
+        default="OPEN",
+    )
+    task_list_parser.add_argument("--limit", type=int, default=20)
+    task_list_parser.add_argument("--cursor", type=str)
+    task_list_parser.add_argument("--json", action="store_true")
+
+    task_get_parser = task_subparsers.add_parser("get", help="Get Task detail")
+    task_get_parser.add_argument("task_id", type=str)
+    task_get_parser.add_argument("--limit", type=int, default=20)
+    task_get_parser.add_argument("--cursor", type=str)
+    task_get_parser.add_argument("--json", action="store_true")
+
+    task_claim_parser = task_subparsers.add_parser(
+        "claim", help="Claim one Task"
+    )
+    task_claim_parser.add_argument("task_id", type=str)
+    task_claim_parser.add_argument("--agent-id", required=True)
+    task_claim_parser.add_argument("--reward-address", required=True)
+    task_claim_parser.add_argument("--credential-file", required=True)
+    task_claim_parser.add_argument("--json", action="store_true")
+
+    task_submit_parser = task_subparsers.add_parser(
+        "submit", help="Submit a public-safe domain Observation"
+    )
+    task_submit_parser.add_argument("task_id", type=str)
+    task_submit_parser.add_argument("--credential-file", required=True)
+    task_submit_parser.add_argument("--file", required=True)
+    task_submit_parser.add_argument("--json", action="store_true")
+
+    task_submit_complete_parser = task_subparsers.add_parser(
+        "submit-complete",
+        help="Register an Observation and report Completion in one operation",
+    )
+    task_submit_complete_parser.add_argument("task_id", type=str)
+    task_submit_complete_parser.add_argument(
+        "--credential-file", required=True
+    )
+    task_submit_complete_parser.add_argument("--file", required=True)
+    task_submit_complete_parser.add_argument(
+        "--checkpoint-file", required=True
+    )
+    task_submit_complete_parser.add_argument("--json", action="store_true")
+
+    task_complete_parser = task_subparsers.add_parser(
+        "complete", help="Report Task completion"
+    )
+    task_complete_parser.add_argument("task_id", type=str)
+    task_complete_parser.add_argument("--credential-file", required=True)
+    task_complete_parser.add_argument("--submission-id", required=True)
+    task_complete_parser.add_argument("--observation-id", required=True)
+    task_complete_parser.add_argument("--json", action="store_true")
+
+    task_status_parser = task_subparsers.add_parser(
+        "status", help="Get Task and reward status"
+    )
+    task_status_parser.add_argument("task_id", type=str)
+    task_status_parser.add_argument("--credential-file", required=True)
+    task_status_parser.add_argument("--submission-id", required=True)
+    task_status_parser.add_argument("--observation-id", required=True)
+    task_status_parser.add_argument("--json", action="store_true")
+
+    task_wait_parser = task_subparsers.add_parser(
+        "reward-wait", help="Wait for a terminal reward state"
+    )
+    task_wait_parser.add_argument("task_id", type=str)
+    task_wait_parser.add_argument("--credential-file", required=True)
+    task_wait_parser.add_argument("--submission-id", required=True)
+    task_wait_parser.add_argument("--observation-id", required=True)
+    task_wait_parser.add_argument("--timeout-seconds", type=float, default=300)
+    task_wait_parser.add_argument("--max-attempts", type=int, default=10)
+    task_wait_parser.add_argument("--json", action="store_true")
 
     # 💡 3. [NEW] Paid Registration & Read Models (`observe-domain`)
     obs_domain_parser = subparsers.add_parser("observe-domain", help="Manage paid domain observation slots")
@@ -1126,6 +2042,564 @@ def main():
         if diag.fallback_action:
             res["fallback_action"] = diag.fallback_action
         print(json.dumps(res, indent=2))
+
+    elif args.command == "task":
+        # Imports remain lazy so the existing inspect/payment CLI surface keeps
+        # importing normally when optional integrations are absent.
+        from .task_client import AgentTaskClient
+        from .task_models import (
+            TaskClaimCredential,
+            TaskDomainObservationCheckpoint,
+            TaskDomainObservationSubmission,
+        )
+        from .task_contract import (
+            validate_agent_id,
+            validate_reward_address,
+            validate_task_id,
+        )
+        from .task_transport import TaskError
+
+        def _print_task_reward(
+            reward: Any,
+            *,
+            label: str,
+            indent: str = "",
+        ) -> None:
+            print(
+                "%s%s: %s atomic %s on %s (%s)"
+                % (
+                    indent,
+                    label,
+                    reward.amount_atomic,
+                    reward.asset,
+                    reward.network,
+                    reward.asset_address,
+                )
+            )
+
+        def _print_task_offer_snapshot(
+            task: Any,
+            *,
+            indent: str = "",
+        ) -> None:
+            offer_fields = (
+                ("Active executions", "active_execution_count"),
+                ("Successful claims", "claim_count_total"),
+                ("Rewarded executions", "rewarded_execution_count"),
+                ("Paid total (atomic)", "reward_paid_total_minor"),
+                ("Capacity total", "capacity_total"),
+                ("Capacity remaining", "capacity_remaining"),
+                (
+                    "Maximum reward principal",
+                    "maximum_reward_principal_atomic",
+                ),
+                ("Claimable", "claimable"),
+            )
+            for label, field in offer_fields:
+                if hasattr(task, field):
+                    suffix = ""
+                    if field == "capacity_remaining":
+                        suffix = " (read-time snapshot; not a Claim guarantee)"
+                    print(
+                        "%s%-24s: %s%s"
+                        % (
+                            indent,
+                            label,
+                            getattr(task, field),
+                            suffix,
+                        )
+                    )
+            if hasattr(task, "reward"):
+                _print_task_reward(
+                    task.reward,
+                    label="Advertised reward (Hondo-provided)",
+                    indent=indent,
+                )
+            if hasattr(task, "poc_terms"):
+                terms = task.poc_terms
+                print(
+                    "%sCompletion 2xx      : %s"
+                    % (indent, terms.completion_2xx_meaning)
+                )
+                print(
+                    "%sPayout mode          : %s"
+                    % (indent, terms.payout_mode)
+                )
+                for label, field in (
+                    (
+                        "Evaluation approval",
+                        "completion_2xx_implies_evaluation_approval",
+                    ),
+                    (
+                        "Payment completion",
+                        "completion_2xx_implies_payment_completion",
+                    ),
+                    ("Payment SLA", "payment_completion_sla"),
+                    ("Individual investigation", "individual_investigation"),
+                    ("Manual resend", "manual_resend"),
+                    ("Compensation", "compensation"),
+                    ("Alternative payment", "alternative_payment"),
+                    (
+                        "Arbitrary non-payment",
+                        "arbitrary_non_payment_authorized",
+                    ),
+                ):
+                    print(
+                        "%s%-24s: %s"
+                        % (indent, label, getattr(terms, field))
+                    )
+                print(
+                    "%sRequired surfaces    : %s"
+                    % (
+                        indent,
+                        ", ".join(terms.required_public_surfaces),
+                    )
+                )
+
+        def _print_execution_summaries(
+            task: Any,
+            *,
+            indent: str = "",
+        ) -> None:
+            if not hasattr(task, "execution_summaries"):
+                return
+            summaries = task.execution_summaries
+            print("%sExecution summaries: %d" % (indent, len(summaries)))
+            for summary in summaries:
+                print(
+                    "%s  %s  %s  %s"
+                    % (
+                        indent,
+                        summary.submission_id,
+                        summary.task_status,
+                        summary.reward_state,
+                    )
+                )
+                print(
+                    "%s    Observation: %s"
+                    % (indent, summary.observation_id)
+                )
+                _print_task_reward(
+                    summary,
+                    label="Claim reward snapshot",
+                    indent=indent + "    ",
+                )
+                for label, field in (
+                    ("Evaluated", "evaluated_at"),
+                    ("Reward tx", "reward_tx_hash"),
+                    ("Rewarded", "rewarded_at"),
+                    ("Failure code", "failure_code"),
+                ):
+                    print(
+                        "%s    %-12s: %s"
+                        % (indent, label, getattr(summary, field))
+                    )
+            print(
+                "%sNext cursor        : %s"
+                % (
+                    indent,
+                    getattr(task, "execution_summaries_next_cursor", None),
+                )
+            )
+
+        def _print_task_result(value: Any, json_mode: bool) -> None:
+            payload = _task_public_payload(value)
+            if json_mode:
+                print(
+                    _task_json.dumps(
+                        payload,
+                        indent=2,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                )
+                return
+            if hasattr(value, "register_receipt"):
+                register_receipt = value.register_receipt
+                completion_receipt = getattr(
+                    value, "completion_receipt", None
+                )
+                matched_status = getattr(value, "matched_status", None)
+                print("Task ID             : %s" % register_receipt.task_id)
+                print(
+                    "Register receipt     : %s"
+                    % register_receipt.status
+                )
+                if completion_receipt is not None:
+                    print(
+                        "Completion receipt   : %s"
+                        % completion_receipt.status
+                    )
+                    print("Matched status       : not used")
+                else:
+                    print(
+                        "Completion receipt   : not returned "
+                        "(status reconciled)"
+                    )
+                    print(
+                        "Matched task status   : %s"
+                        % matched_status.task_status
+                    )
+                    print(
+                        "Matched reward state  : %s"
+                        % matched_status.reward_state
+                    )
+                return
+            if hasattr(value, "task_id"):
+                print("Task ID     : %s" % value.task_id)
+            if hasattr(value, "status"):
+                print("Status      : %s" % value.status)
+            if hasattr(value, "task_status"):
+                print("Task status : %s" % value.task_status)
+            if hasattr(value, "reward_state"):
+                print("Reward state: %s" % value.reward_state)
+            if hasattr(value, "failure_code"):
+                print("Failure code: %s" % value.failure_code)
+            if hasattr(value, "evaluated_at"):
+                print("Evaluated   : %s" % value.evaluated_at)
+            if hasattr(value, "reward_tx_hash"):
+                print("Reward tx   : %s" % value.reward_tx_hash)
+            if hasattr(value, "rewarded_at"):
+                print("Rewarded    : %s" % value.rewarded_at)
+            if hasattr(value, "observation_id"):
+                print("Observation : %s" % value.observation_id)
+            _print_task_offer_snapshot(value)
+            _print_execution_summaries(value)
+            if (
+                not hasattr(value, "reward")
+                and all(
+                    hasattr(value, field)
+                    for field in (
+                        "network",
+                        "asset",
+                        "asset_address",
+                        "amount_atomic",
+                    )
+                )
+            ):
+                _print_task_reward(
+                    value,
+                    label="Claim reward",
+                )
+
+        client = None
+        try:
+            client = AgentTaskClient()
+            if args.task_command == "list":
+                result = client.list_tasks(
+                    status=args.status,
+                    limit=args.limit,
+                    cursor=args.cursor,
+                )
+                if args.json:
+                    _print_task_result(result, True)
+                else:
+                    print("Tasks: %d" % len(result.tasks))
+                    for task in result.tasks:
+                        print(
+                            "  %s  %s  %s"
+                            % (task.task_id, task.status, task.task_type)
+                        )
+                        _print_task_offer_snapshot(task, indent="    ")
+
+            elif args.task_command == "get":
+                _print_task_result(
+                    client.get_task(
+                        args.task_id,
+                        limit=args.limit,
+                        cursor=args.cursor,
+                    ),
+                    args.json,
+                )
+
+            elif args.task_command == "claim":
+                try:
+                    claim_task_id = validate_task_id(args.task_id)
+                    claim_agent_id = validate_agent_id(args.agent_id)
+                    claim_reward_address = validate_reward_address(
+                        args.reward_address
+                    )
+                except (TypeError, ValueError):
+                    _task_cli_error("invalid_request")
+                try:
+                    reservation = _TaskCredentialReservation(
+                        args.credential_file
+                    )
+                except (OSError, ValueError):
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                try:
+                    claim = client.claim_task(
+                        claim_task_id,
+                        agent_id=claim_agent_id,
+                        reward_address=claim_reward_address,
+                    )
+                except TaskError as exc:
+                    can_remove = (
+                        getattr(exc, "request_bytes_sent", None) is False
+                        or getattr(exc, "mutation_free", None) is True
+                    )
+                    try:
+                        if can_remove:
+                            reservation.remove_own_reservation()
+                        else:
+                            reservation.write_payload(
+                                _task_tombstone(claim_task_id)
+                            )
+                            reservation.close()
+                    except (OSError, ValueError):
+                        if not can_remove:
+                            try:
+                                reservation.scrub_with_tombstone(
+                                    _task_tombstone(claim_task_id)
+                                )
+                            except (OSError, TypeError, ValueError):
+                                pass
+                        reservation.close()
+                        if can_remove:
+                            _task_cli_error("TASK_CREDENTIAL_INVALID")
+                    _task_cli_error(
+                        getattr(exc, "code", None)
+                        if can_remove
+                        else "CLAIM_OUTCOME_UNKNOWN"
+                    )
+                except Exception:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error("CLAIM_OUTCOME_UNKNOWN")
+
+                try:
+                    if (
+                        claim.task_id != claim_task_id
+                        or claim.credential.task_id != claim_task_id
+                        or claim.credential.agent_id != claim_agent_id
+                        or claim.credential.api_origin != _TASK_FIXED_ORIGIN
+                        or claim.credential.reward_address
+                        != claim_reward_address
+                    ):
+                        raise ValueError("TASK_CREDENTIAL_INVALID")
+                    reservation.write_payload(
+                        _task_active_credential_payload(claim.credential)
+                    )
+                    reservation.close()
+                except Exception:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                if args.json:
+                    public_claim = {
+                        "schema_version": claim.schema_version,
+                        "task_id": claim.task_id,
+                        "task_type": claim.task_type,
+                        "task_definition_version": (
+                            claim.task_definition.task_definition_version
+                        ),
+                        "task_definition_digest": (
+                            claim.task_definition.task_definition_digest
+                        ),
+                        "manifest_url": claim.task_definition.manifest_url,
+                        "manifest_sha256": (
+                            claim.task_definition.manifest_sha256
+                        ),
+                        "status": claim.status,
+                        "lease_duration_seconds": (
+                            claim.lease_duration_seconds
+                        ),
+                        "lease_expires_at": claim.lease_expires_at,
+                        "reward_address": claim.reward_address,
+                        "reward_address_control_verified": (
+                            claim.reward_address_control_verified
+                        ),
+                        "reward": _task_public_payload(claim.reward),
+                        "credential_file_written": True,
+                    }
+                    print(
+                        _task_json.dumps(
+                            public_claim,
+                            indent=2,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                    )
+                else:
+                    print("Task claimed; credential file written securely.")
+                    print("Task ID     : %s" % claim.task_id)
+                    print("Lease expiry: %s" % claim.lease_expires_at)
+                    _print_task_reward(
+                        claim.reward,
+                        label="Claim reward",
+                    )
+
+            elif args.task_command in {
+                "submit",
+                "submit-complete",
+                "complete",
+                "status",
+                "reward-wait",
+            }:
+                try:
+                    credential_payload = _read_task_json_file(
+                        args.credential_file, require_private=True
+                    )
+                    credential = _task_credential_from_payload(
+                        credential_payload,
+                        TaskClaimCredential,
+                    )
+                    if credential.task_id != args.task_id:
+                        raise ValueError("TASK_CREDENTIAL_INVALID")
+                    if (
+                        args.task_command
+                        in {"submit", "submit-complete", "complete"}
+                        and credential.is_expired()
+                    ):
+                        _task_cli_error("TASK_CREDENTIAL_EXPIRED")
+                except SystemExit:
+                    raise
+                except (OSError, ValueError):
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                if args.task_command == "submit":
+                    try:
+                        submission_payload = _read_task_json_file(
+                            args.file, require_private=False
+                        )
+                        submission = (
+                            TaskDomainObservationSubmission.model_validate(
+                                submission_payload
+                            )
+                        )
+                    except (OSError, ValueError):
+                        _task_cli_error("TASK_RESPONSE_INVALID")
+                    try:
+                        result = client.submit_domain_observation(
+                            credential, submission
+                        )
+                    except TaskError as exc:
+                        _task_cli_error(getattr(exc, "code", None))
+                elif args.task_command == "submit-complete":
+                    checkpoint_file = None
+                    try:
+                        checkpoint_file = _TaskCheckpointFile(
+                            args.checkpoint_file
+                        )
+                        checkpoint_type = TaskDomainObservationCheckpoint
+                        checkpoint = None
+                        if not checkpoint_file.created_new:
+                            checkpoint = checkpoint_type.model_validate(
+                                checkpoint_file.read_payload(),
+                                strict=True,
+                            )
+                            checkpoint = checkpoint._validated_snapshot()
+                        try:
+                            # Keep this as a raw bounded mapping.  On resume
+                            # the client first restores the checkpoint's
+                            # submission_id, then strictly validates the
+                            # reconstructed submission so omission of the ID
+                            # cannot generate a fresh identity.
+                            submission_payload = _read_task_json_file(
+                                args.file, require_private=False
+                            )
+                        except (OSError, ValueError):
+                            _task_cli_error("TASK_RESPONSE_INVALID")
+
+                        def persist_checkpoint(value: Any) -> None:
+                            try:
+                                if (
+                                    type(value)
+                                    is not checkpoint_type
+                                ):
+                                    raise ValueError
+                                snapshot = value._validated_snapshot()
+                                payload = snapshot.model_dump(
+                                    mode="json",
+                                    exclude_none=True,
+                                )
+                                if (
+                                    type(payload) is not dict
+                                    or _task_public_payload(payload) != payload
+                                ):
+                                    raise ValueError
+                                checkpoint_file.write_payload(payload)
+                            except Exception:
+                                raise ValueError(
+                                    "TASK_CREDENTIAL_INVALID"
+                                ) from None
+
+                        result = (
+                            client.submit_and_complete_domain_observation(
+                                credential,
+                                submission_payload,
+                                checkpoint=checkpoint,
+                                checkpoint_sink=persist_checkpoint,
+                            )
+                        )
+                    except TaskError as exc:
+                        _task_cli_error(getattr(exc, "code", None))
+                    except (OSError, TypeError, ValueError):
+                        _task_cli_error("TASK_CREDENTIAL_INVALID")
+                    finally:
+                        if checkpoint_file is not None:
+                            try:
+                                (
+                                    checkpoint_file
+                                    .close_or_remove_empty_reservation()
+                                )
+                            except (OSError, ValueError):
+                                try:
+                                    checkpoint_file.close()
+                                except OSError:
+                                    pass
+                elif args.task_command == "complete":
+                    try:
+                        result = client.complete_task(
+                            credential,
+                            submission_id=args.submission_id,
+                            observation_id=args.observation_id,
+                        )
+                    except TaskError as exc:
+                        _task_cli_error(getattr(exc, "code", None))
+                elif args.task_command == "status":
+                    result = client.get_reward_status(
+                        args.task_id,
+                        submission_id=args.submission_id,
+                        observation_id=args.observation_id,
+                        task_definition=credential.task_definition,
+                        reward=credential.reward,
+                    )
+                else:
+                    result = client.wait_for_reward(
+                        args.task_id,
+                        submission_id=args.submission_id,
+                        observation_id=args.observation_id,
+                        task_definition=credential.task_definition,
+                        reward=credential.reward,
+                        timeout_seconds=args.timeout_seconds,
+                        max_attempts=args.max_attempts,
+                    )
+                _print_task_result(result, args.json)
+        except SystemExit:
+            raise
+        except TaskError as exc:
+            _task_cli_error(getattr(exc, "code", None))
+        except Exception:
+            _task_cli_error("TASK_RESPONSE_INVALID")
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
     # 💡 [NEW] Paid Domain Observation Slot Management
     elif args.command == "observe-domain":

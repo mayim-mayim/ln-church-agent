@@ -86,7 +86,7 @@ _PUBLIC_HANDOFF_ITEMS = frozenset({
     "post_payment_artifact_unknown",
 })
 _OBSERVATION_AGENT_ID = "optional-agent-id"
-_OBSERVATION_SDK_VERSION = "1.16.4"
+_OBSERVATION_SDK_VERSION = "1.17.0"
 _PUBLIC_OBSERVATION_NETWORKS = frozenset({
     "unknown", "lightning", "btc",
     "eip155:1", "eip155:137", "eip155:196", "eip155:8453",

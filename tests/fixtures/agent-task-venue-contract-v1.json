@@ -1,0 +1,1603 @@
+{
+  "contract_id": "ln_church.agent_task_venue.v1",
+  "schema_version": "ln_church.agent_task_venue_contract_fixture.v1",
+  "contract_revision": "payment_surface_discovery_capacity_only_parallel_20260803",
+  "task_type": "payment_surface_discovery.v1",
+  "task_definition_version": "1.0.0",
+  "evaluator_id": "ln_church.payment_surface_discovery.read_only.v1",
+  "evaluator_version": "1.0.0",
+  "task_offer_request": {
+    "additional_properties": false,
+    "required_fields": [
+      "task_type"
+    ],
+    "exact_value": {
+      "task_type": "payment_surface_discovery.v1"
+    },
+    "unknown_fields_are_rejected_not_ignored": true,
+    "forbidden_fields": [
+      "domain",
+      "domain_anchor",
+      "seed_urls",
+      "parameters",
+      "instructions",
+      "crawler_settings",
+      "evaluation_overrides",
+      "reward_overrides"
+    ]
+  },
+  "task_semantics": {
+    "parameters": {},
+    "domain_anchor_present": false,
+    "seed_urls": [],
+    "title": "Discover a public HTTP 402 payment surface",
+    "summary": "Independently discover and report one public-safe HTTP service surface that returned HTTP 402, without paying or mutating the target.",
+    "task_level_domain_allowed_in_offer_task_claim_or_execution": false
+  },
+  "public_api_origin": "https://kari.mayim-mayim.com",
+  "routes": {
+    "create_task_offer": {
+      "method": "POST",
+      "path": "/api/bazaar/task-offers",
+      "payment": "x402_v2_exact"
+    },
+    "list_tasks": {
+      "method": "GET",
+      "path": "/api/agent/tasks",
+      "payment": "none"
+    },
+    "get_task": {
+      "method": "GET",
+      "path": "/api/agent/tasks/{task_id}",
+      "payment": "none"
+    },
+    "get_submission_status": {
+      "method": "GET",
+      "path": "/api/agent/tasks/{task_id}/submissions/{submission_id}/status",
+      "payment": "none",
+      "claim_header_required": false
+    },
+    "claim_task": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/claim",
+      "payment": "none"
+    },
+    "submit_domain_observation": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/domain-observations",
+      "payment": "none",
+      "claim_header_required": true
+    },
+    "complete_task": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/completion",
+      "payment": "none",
+      "claim_header_required": true
+    }
+  },
+  "claim_credential": {
+    "header": "X-LN-Task-Claim-Token",
+    "token_encoding": "base64url_no_padding",
+    "token_encoded_length": 43,
+    "minimum_entropy_bits": 256,
+    "plaintext_disclosure_count": 1,
+    "server_storage": "sha256_digest_only",
+    "digest_input": "UTF8(ln_church.task_claim_token.v1) || 0x00 || token_bytes",
+    "constant_time_compare": true,
+    "digest_test_vector": {
+      "token_bytes_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "claim_token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "stored_digest_hex": "418e992265b709de7a6b9261be3d68da4bec997ca6b9657744b76028d30a29cb"
+    },
+    "lease_duration_seconds": 3600,
+    "public_lease_expiry_field": null,
+    "claim_response_lease_expiry_field": "lease_expires_at",
+    "expiry_transition": "only_CLAIMED_before_durable_completion_transitions_to_EXPIRED",
+    "expiry_execution_transition": "CLAIMED_to_EXPIRED_before_durable_completion_only",
+    "expiry_releases_active_reservation_exactly_once": true,
+    "submitted_execution_claim_credential_expiry_changes_state": false,
+    "submitted_execution_claim_credential_expiry_releases_active_reservation": false,
+    "submitted_execution_pending_evaluation_is_preserved": true,
+    "expiry_changes_offer_status": false,
+    "new_claim_invalidates_prior_digest": false,
+    "usable_until_lease_expiry": true,
+    "automatic_claim_retry": false,
+    "ambiguous_delivery_code": "CLAIM_OUTCOME_UNKNOWN",
+    "binding_scope": "single_claim_execution",
+    "bound_snapshot_fields": [
+      "api_origin",
+      "task_id",
+      "task_type",
+      "agent_id",
+      "reward_address",
+      "lease_expires_at",
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_url",
+      "manifest_sha256",
+      "reward"
+    ],
+    "claim_bound_snapshot_immutable": true,
+    "claim_token_immutable": true,
+    "submission_and_completion_use_same_claim": true,
+    "old_credential_authorizes_new_claim": false,
+    "sibling_claim_executions_independent": true,
+    "same_execution_credential_revocation_may_invalidate_prior_digest": true
+  },
+  "private_claim_token_binding": {
+    "table": "AgentTaskExecutions",
+    "partition_key": "TASK_CLAIM_TOKEN#<namespaced_claim_token_hash>",
+    "sort_key": "BINDING",
+    "record_type": "TASK_CLAIM_TOKEN_BINDING",
+    "schema_version": "ln_church.task_claim_token_binding.v1",
+    "required_fields": [
+      "PK",
+      "SK",
+      "recordType",
+      "schema_version",
+      "task_id",
+      "execution_id",
+      "claim_token_hash",
+      "claim_expires_at",
+      "created_at"
+    ],
+    "plaintext_claim_token_stored": false,
+    "claim_transaction_conditional_put": true,
+    "overwrite_allowed": false,
+    "observation_lookup": "strongly_consistent_exact_Get_by_namespaced_claim_token_hash",
+    "completion_lookup": "strongly_consistent_exact_Get_of_claim_token_binding_intersected_with_exact_TASK_OBSERVATION_SUBMISSION_binding",
+    "completion_execution_id_source": "immutable_TASK_OBSERVATION_SUBMISSION_binding",
+    "completion_token_binding_must_match_same_task_and_execution": true,
+    "binding_task_execution_hash_and_expiry_all_verified": true,
+    "scan_or_filter_expression_allowed": false,
+    "latest_execution_inference_allowed": false,
+    "reward_address_or_agent_id_lookup_allowed": false,
+    "public_projection_allowed": false,
+    "legacy_fallback": "only_when_binding_is_absent_for_a_pre_correction_execution_then_exact_active_execution_id_pointer_and_constant_time_execution_hash_validation"
+  },
+  "claim_delivery_classification": {
+    "success_http_status": 200,
+    "reservation_removal_allowed_when": [
+      "transport_proves_no_http_request_byte_sent",
+      "complete_schema_valid_mutation_free_response"
+    ],
+    "mutation_free_responses": {
+      "400": [
+        "invalid_request"
+      ],
+      "404": [
+        "task_not_found"
+      ],
+      "409": [
+        "task_not_open",
+        "task_state_conflict"
+      ],
+      "429": [
+        "rate_limited"
+      ]
+    },
+    "claim_outcome_unknown_examples": [
+      "partial_write",
+      "disconnect",
+      "timeout",
+      "http_3xx",
+      "http_401",
+      "http_402",
+      "http_5xx",
+      "unlisted_or_malformed_4xx",
+      "malformed_oversized_encoded_or_truncated_2xx"
+    ],
+    "automatic_retry_after_unknown": false
+  },
+  "task_registration": {
+    "protocol": "x402",
+    "protocol_version": 2,
+    "scheme": "exact",
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "amount_atomic": "1000000"
+  },
+  "task_offer_settlement_activation": {
+    "standard_middleware_order_preserved": "verify_then_private_task_create_then_standard_settle_then_private_activation_then_external_success",
+    "initial_private_sponsor_payment_state": "PENDING_SETTLEMENT",
+    "initial_offer_status": "OPEN",
+    "initial_public_task_projection_allowed": false,
+    "initial_public_task_list_index_keys_written": false,
+    "activation_authority": "server_derived_success_result_from_standard_x402_middleware_not_client_body",
+    "activation_binding_fields": [
+      "task_id",
+      "verified_payment_authorization_hash",
+      "verified_payer",
+      "network",
+      "asset_address",
+      "amount_atomic",
+      "settlement_transaction_hash"
+    ],
+    "activation_required_values": {
+      "network": "eip155:8453",
+      "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "amount_atomic": "1000000"
+    },
+    "activation_writes": [
+      "set_private_sponsor_payment_state_SETTLED",
+      "store_minimal_verified_settlement_evidence",
+      "create_existing_public_task_list_index_keys",
+      "append_canonical_task_offer_published_event"
+    ],
+    "task_detail_projection_guard": "sponsor_payment_state == SETTLED",
+    "unsettled_public_list_or_detail_result": "not_projected_or_task_not_found",
+    "same_task_authorization_and_settlement_evidence": "idempotent",
+    "same_authorization_conflicting_task_or_settlement_evidence": "fail_closed",
+    "settlement_failure_result": "retain_private_OPEN_PENDING_SETTLEMENT_without_public_index_or_claimability",
+    "activation_failure_after_successful_settlement": "return_non_success_and_allow_same_exact_paid_request_to_replay_activation_idempotently",
+    "external_success_response_released_only_after_activation_commit": true,
+    "duplicate_task_activation_or_settlement_engine_allowed": false,
+    "new_public_route_header_body_field_or_identifier_allowed": false,
+    "new_public_offer_index_required": false,
+    "existing_public_task_list_index_activation_required": true
+  },
+  "economics": {
+    "task_offer_create_amount_atomic": "1000000",
+    "reward_per_eligible_execution_atomic": "10000",
+    "capacity_total": 50,
+    "maximum_reward_principal_atomic": "500000",
+    "maximum_reward_principal_formula": "reward_per_eligible_execution_atomic * capacity_total",
+    "reward_pricing_policy_id": "ln_church.v1_17_alpha_reward_policy.20260729",
+    "task_offer_create_payment_is_reward_escrow": false,
+    "sponsor_funds_are_distributed_as_agent_reward": false,
+    "reward_source": "ln_church_policy_and_dedicated_reward_wallet",
+    "gas_asset_assumption": "USDC_accounting_only",
+    "native_gas_provision_scope": "external_operator_infrastructure_not_v1_17_task_contract",
+    "eth_balance_or_reserve_required": false,
+    "eth_faucet_or_funding_gate_allowed": false,
+    "gas_deduction_from_agent_reward_allowed": false
+  },
+  "private_execution_reward_snapshot": {
+    "created_at": "successful_claim",
+    "immutable": true,
+    "required_fields": [
+      "network",
+      "asset",
+      "asset_address",
+      "amount_atomic",
+      "reward_address",
+      "reward_pricing_policy_id",
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_sha256",
+      "evaluator_pin"
+    ],
+    "evaluator_pin_source": "immutable_task_definition_manifest_bound_by_task_definition_digest_and_manifest_sha256",
+    "evaluator_pin_must_match_materialized_bundle_manifest": true,
+    "later_pricing_gas_or_retry_may_reduce_amount": false,
+    "public_execution_id_required": false
+  },
+  "agent_reward": {
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "amount_atomic": "10000",
+    "recipient_source": "reward_address_at_successful_claim",
+    "pricing_policy_id": "ln_church.v1_17_alpha_reward_policy.20260729",
+    "address_control_verified": false,
+    "address_hex_bytes": 20,
+    "zero_address_allowed": false,
+    "lower_or_upper_input": "canonicalize_to_eip55",
+    "mixed_case_input": "require_valid_eip55",
+    "rpc_or_signature_required": false
+  },
+  "offer_statuses": [
+    "OPEN"
+  ],
+  "offer_status_semantics": {
+    "OPEN": "internal_offer_state_public_projection_requires_SETTLED_and_is_not_claimability_proof",
+    "expired_or_capacity_exhausted_status": "OPEN",
+    "expired_or_capacity_exhausted_claimable": false,
+    "unsettled_OPEN_public_projection_allowed": false,
+    "list_status_OPEN_may_include_non_claimable_offers": true
+  },
+  "internal_execution_statuses": [
+    "CLAIMED",
+    "SUBMITTED",
+    "EXPIRED",
+    "ABANDONED",
+    "EVALUATION_REJECTED",
+    "REWARD_PENDING",
+    "REWARDED",
+    "REWARD_FAILED",
+    "REWARD_AMBIGUOUS"
+  ],
+  "public_claim_response_statuses": [
+    "CLAIMED"
+  ],
+  "public_submission_statuses": [
+    "SUBMITTED",
+    "EVALUATION_REJECTED",
+    "REWARD_PENDING",
+    "REWARDED",
+    "REWARD_FAILED",
+    "REWARD_AMBIGUOUS"
+  ],
+  "reward_states": [
+    "pending",
+    "not_eligible",
+    "approved_pending",
+    "paid",
+    "failed",
+    "ambiguous"
+  ],
+  "execution_status_transitions": {
+    "successful_claim": "CLAIMED",
+    "durable_completion_receipt": "SUBMITTED",
+    "claim_expiry_before_durable_completion": "EXPIRED",
+    "explicit_abandonment_before_durable_completion": "ABANDONED",
+    "evaluation_rejection": "EVALUATION_REJECTED",
+    "evaluation_approval": "REWARD_PENDING",
+    "settlement_paid_confirmed": "REWARDED",
+    "approved_settlement_failed": "REWARD_FAILED",
+    "approved_settlement_ambiguous": "REWARD_AMBIGUOUS"
+  },
+  "offer_execution_capacity": {
+    "agent_tasks_record": "one_record_per_task_offer",
+    "agent_task_executions_record": "one_record_per_successful_claim_generation",
+    "internal_execution_id_required": true,
+    "public_execution_id_allowed": false,
+    "separate_concurrency_limit_exists": false,
+    "lifetime_reward_capacity": 50,
+    "active_execution_count_range": "integer_0_through_50",
+    "rewarded_execution_count_range": "integer_0_through_50",
+    "capacity_invariant": "active_execution_count + rewarded_execution_count <= capacity_total",
+    "remaining_formula": "capacity_total - active_execution_count - rewarded_execution_count",
+    "maximum_active_formula": "capacity_total - rewarded_execution_count",
+    "claimable_formula": "status_is_OPEN_and_sponsor_payment_state_is_SETTLED_and_not_expired_at_server_time_and_capacity_remaining_above_0",
+    "claim_transaction_conditions": [
+      "status == OPEN",
+      "sponsor_payment_state == SETTLED",
+      "expires_at > server_now",
+      "rewarded_execution_count == expected_rewarded_execution_count_from_strongly_consistent_read",
+      "active_execution_count < capacity_total - expected_rewarded_execution_count"
+    ],
+    "claim_transaction_writes": [
+      "increment_active_execution_count_once",
+      "increment_claim_count_total_once",
+      "create_private_agent_task_execution_with_status_CLAIMED_and_CLAIM_EXPIRY_DUE",
+      "conditionally_create_private_claim_token_binding",
+      "append_canonical_claim_event"
+    ],
+    "claim_transaction_atomic": true,
+    "claim_uses_expected_active_execution_count_compare": false,
+    "new_claim_writes_active_execution_id": false,
+    "new_claim_expires_supersedes_or_terminalizes_sibling": false,
+    "same_reward_address_multiple_active_claims_allowed": true,
+    "same_agent_id_multiple_active_claims_allowed": true,
+    "reward_address_agent_id_or_ip_uniqueness_condition_allowed": false,
+    "claim_count_total": "monotonic_successful_claim_generation_count_may_exceed_capacity_total",
+    "claim_count_total_is_capacity": false,
+    "claim_count_total_is_distinct_agent_count": false,
+    "pre_submission_claimed_expiry_or_abandonment_or_evaluation_rejection_releases": "active_reservation_only",
+    "evaluation_approval_consumes_lifetime_capacity": true,
+    "settlement_failure_or_ambiguity_releases_lifetime_capacity": false,
+    "paid_aggregate_update_point": "PAID_CONFIRMED",
+    "first_completion_evaluation_or_reward_terminates_offer": false
+  },
+  "lifecycle_atomic_transition_sets": {
+    "task_offer_create_before_settlement": {
+      "conditions": [
+        "standard_x402_verify_succeeded",
+        "verified_payment_authorization_hash_is_new_or_maps_to_same_task",
+        "network_asset_and_amount_match_fixed_registration_terms"
+      ],
+      "writes": [
+        "create_or_return_same_private_OPEN_task_with_PENDING_SETTLEMENT",
+        "store_verified_payer_and_authorization_hash",
+        "omit_public_task_list_index_keys",
+        "prepare_provisional_handler_response"
+      ],
+      "same_authorization_same_content": "idempotent",
+      "same_authorization_different_content": "fail_closed"
+    },
+    "task_offer_post_settlement_activation": {
+      "conditions": [
+        "private_task_is_OPEN_and_PENDING_SETTLEMENT_or_already_same_SETTLED",
+        "server_derived_standard_middleware_settlement_succeeded",
+        "task_authorization_payer_network_asset_amount_and_settlement_evidence_match"
+      ],
+      "writes": [
+        "set_private_sponsor_payment_state_SETTLED",
+        "store_minimal_verified_settlement_evidence",
+        "create_existing_public_task_list_index_keys",
+        "append_canonical_task_offer_published_event"
+      ],
+      "same_task_authorization_and_settlement_evidence": "idempotent",
+      "conflicting_task_authorization_or_settlement_evidence": "fail_closed",
+      "external_success_released_after_all_writes_commit": true,
+      "settlement_or_activation_failure_public_projection_or_claim_write": false
+    },
+    "claim": {
+      "conditions": [
+        "offer_status_is_OPEN",
+        "sponsor_payment_state_is_SETTLED",
+        "offer_expires_at_greater_than_server_now",
+        "rewarded_execution_count_equals_strong_read_expected_rewarded_count",
+        "active_execution_count_below_capacity_total_minus_expected_rewarded_count"
+      ],
+      "writes": [
+        "increment_offer_active_execution_count_once",
+        "increment_offer_claim_count_total_once",
+        "create_private_execution_CLAIMED_with_immutable_claim_snapshot_and_CLAIM_EXPIRY_DUE",
+        "conditionally_create_private_claim_token_binding",
+        "append_canonical_claim_event"
+      ],
+      "expected_active_execution_count_compare": false,
+      "active_execution_id_write": false,
+      "sibling_execution_write": false
+    },
+    "durable_completion_receipt": {
+      "conditions": [
+        "private_execution_is_CLAIMED",
+        "exact_private_claim_token_binding_resolves_the_execution",
+        "matching_unexpired_claim_credential_and_task_observation_agent_binding",
+        "active_reservation_release_marker_is_absent",
+        "durable_observation_exists_and_matches_claim_task_execution_and_definition",
+        "no_prior_submission_for_execution_or_same_submission_id_and_same_canonical_submission_digest"
+      ],
+      "writes": [
+        "persist_immutable_submission_and_completion_receipt",
+        "set_private_execution_SUBMITTED_and_public_reward_pending",
+        "atomically_replace_sparse_CLAIM_EXPIRY_DUE_with_EVALUATION_DUE",
+        "create_public_summary_pk_TASK_task_id",
+        "create_immutable_public_summary_sk_submitted_at_submission_id",
+        "store_initial_exact_public_summary_allowlist_fields",
+        "append_canonical_completion_event"
+      ],
+      "offer_active_rewarded_and_paid_counters_change": false,
+      "same_submission_id_same_canonical_digest": "idempotent",
+      "same_submission_id_different_canonical_digest": "fail_closed",
+      "different_submission_id_for_same_execution": "fail_closed",
+      "all_writes_commit_or_abort_together": true
+    },
+    "expiry_or_abandonment": {
+      "conditions": [
+        "private_execution_is_CLAIMED_before_durable_completion",
+        "private_execution_evaluation_status_is_NOT_SUBMITTED",
+        "claim_expiry_is_due_for_EXPIRED_or_explicit_abandonment_is_authorized_for_ABANDONED",
+        "release_not_previously_applied"
+      ],
+      "writes": [
+        "decrement_offer_active_execution_count_once",
+        "set_private_execution_EXPIRED_or_ABANDONED",
+        "set_active_reservation_released_at_and_reason_once",
+        "remove_sparse_work_and_lease_attributes",
+        "append_matching_canonical_terminal_event"
+      ],
+      "completion_race": "exactly_one_of_completion_or_expiry_commits",
+      "expiry_release_reason_values": [
+        "CLAIM_EXPIRED",
+        "EXPIRED"
+      ],
+      "abandonment_release_reason": "ABANDONED",
+      "sibling_execution_write": false
+    },
+    "evaluation_rejection": {
+      "conditions": [
+        "private_execution_is_SUBMITTED",
+        "matching_unexpired_evaluation_lease",
+        "offer_active_execution_count_is_greater_than_zero",
+        "active_reservation_release_marker_is_absent",
+        "one_allowed_deterministic_rejection_reason_is_positively_proven"
+      ],
+      "writes": [
+        "decrement_offer_active_execution_count_once",
+        "set_private_execution_EVALUATION_REJECTED",
+        "set_active_reservation_released_at_and_reason_once",
+        "store_immutable_evaluation_evidence",
+        "remove_sparse_evaluation_work_keys",
+        "append_canonical_evaluation_rejection_event"
+      ],
+      "reward_entitlement_created": false
+    },
+    "evaluation_approval": {
+      "conditions": [
+        "private_execution_is_SUBMITTED",
+        "matching_unexpired_evaluation_lease",
+        "offer_active_execution_count_is_greater_than_zero",
+        "offer_rewarded_execution_count_is_below_capacity_total",
+        "active_reservation_release_marker_is_absent",
+        "all_authoritative_reads_completed_successfully_and_result_is_determinate",
+        "observation_exists",
+        "claim_task_and_observation_binding_match",
+        "declared_agent_id_matches_claim_snapshot",
+        "conditional_observation_id_uniqueness_consume_is_unbound_or_already_bound_to_same_private_execution"
+      ],
+      "writes": [
+        "decrement_offer_active_execution_count_once",
+        "increment_offer_rewarded_execution_count_once",
+        "set_private_execution_REWARD_PENDING",
+        "set_active_reservation_released_at_and_reason_once",
+        "store_immutable_evaluation_evidence",
+        "conditionally_create_or_confirm_same_execution_durable_observation_consumption_binding",
+        "atomically_replace_sparse_evaluation_due_with_settlement_due_on_same_gsi",
+        "append_canonical_evaluation_approval_event"
+      ],
+      "cross_execution_uniqueness_conflict": "abort_approval_transaction_then_reread_authoritative_binding_and_reject_only_with_positive_different_execution_evidence",
+      "sibling_execution_write": false
+    },
+    "evaluation_indeterminate": {
+      "conditions": [
+        "private_execution_is_SUBMITTED",
+        "matching_unexpired_evaluation_lease",
+        "reference_unavailable_or_timeout_or_internal_exception_or_other_indeterminate_result",
+        "no_allowed_rejection_reason_is_positively_proven"
+      ],
+      "writes": [
+        "retain_private_execution_SUBMITTED",
+        "retain_offer_active_execution_count",
+        "retain_offer_rewarded_execution_count",
+        "record_bounded_retry_metadata_and_safe_failure_evidence",
+        "retain_or_reschedule_sparse_due_work_only_while_retry_budget_remains",
+        "append_canonical_evaluation_deferred_event"
+      ],
+      "finite_retry_exhaustion": "remain_SUBMITTED_and_pending_with_recorded_evidence_without_rejection_or_capacity_change",
+      "finite_retry_exhaustion_writes": [
+        "clear_sparse_due_and_evaluation_lease_keys",
+        "retain_private_execution_SUBMITTED",
+        "retain_internal_evaluation_work_state_PENDING",
+        "retain_offer_active_execution_count",
+        "retain_offer_rewarded_execution_count",
+        "retain_safe_retry_exhaustion_evidence"
+      ]
+    },
+    "approved_settlement_failure": {
+      "conditions": [
+        "private_execution_has_durable_reward_entitlement",
+        "matching_unexpired_settlement_lease",
+        "definitive_failure_or_finite_settlement_retry_exhaustion"
+      ],
+      "writes": [
+        "set_private_execution_REWARD_FAILED",
+        "store_matching_settlement_evidence",
+        "remove_sparse_settlement_due_and_lease_keys",
+        "append_canonical_settlement_failure_event"
+      ],
+      "offer_capacity_or_paid_counter_write": false
+    },
+    "approved_settlement_retryable_failure": {
+      "conditions": [
+        "private_execution_has_durable_reward_entitlement",
+        "matching_unexpired_settlement_lease",
+        "retryable_known_failure",
+        "finite_settlement_retry_budget_remains"
+      ],
+      "writes": [
+        "retain_private_execution_REWARD_PENDING",
+        "retain_offer_rewarded_execution_count_and_reward_paid_total_minor",
+        "record_bounded_public_safe_settlement_attempt_evidence",
+        "clear_current_settlement_lease",
+        "reschedule_sparse_SETTLEMENT_DUE_on_same_gsi",
+        "append_idempotent_canonical_settlement_deferred_event"
+      ],
+      "duplicate_send_counter_or_entitlement_allowed": false
+    },
+    "approved_settlement_ambiguity": {
+      "conditions": [
+        "private_execution_has_durable_reward_entitlement",
+        "matching_unexpired_settlement_lease",
+        "settlement_outcome_is_ambiguous"
+      ],
+      "writes": [
+        "set_private_execution_REWARD_AMBIGUOUS",
+        "store_matching_settlement_evidence_without_overwriting_a_different_hash",
+        "clear_current_settlement_lease",
+        "retain_or_reschedule_sparse_settlement_reconciliation_due_on_same_gsi_only_while_finite_budget_remains",
+        "append_canonical_settlement_ambiguous_event"
+      ],
+      "automatic_resend_allowed": false,
+      "offer_capacity_or_paid_counter_write": false,
+      "finite_reconciliation_exhaustion_writes": [
+        "remove_sparse_settlement_due_and_lease_keys",
+        "retain_private_execution_REWARD_AMBIGUOUS",
+        "retain_matching_settlement_evidence"
+      ]
+    },
+    "paid_confirmed": {
+      "conditions": [
+        "private_execution_has_durable_reward_entitlement",
+        "matching_unexpired_settlement_lease",
+        "transaction_hash_matches_same_deterministic_settlement"
+      ],
+      "writes": [
+        "set_private_execution_REWARDED",
+        "store_same_transaction_hash_and_rewarded_at",
+        "increment_offer_reward_paid_total_minor_by_10000_once",
+        "remove_sparse_settlement_due_and_lease_keys",
+        "append_canonical_reward_confirmed_event"
+      ],
+      "same_key_same_content_replay": "idempotent",
+      "same_key_different_content_or_transaction_hash": "fail_closed"
+    },
+    "all_named_writes_are_one_transaction_per_transition": true,
+    "task_execution_and_event_consistency_required": true
+  },
+  "public_task_aggregate_invariants": {
+    "active_execution_count": "integer_0_through_50",
+    "claim_count_total": "non_negative_monotonic_integer",
+    "rewarded_execution_count": "integer_0_through_50_counted_at_evaluation_approval",
+    "reward_paid_total_minor": "integer_0_through_500000_counted_only_at_PAID_CONFIRMED",
+    "capacity_total": 50,
+    "active_plus_rewarded_not_above_capacity_total": true,
+    "capacity_remaining": "integer_0_through_50_equal_to_capacity_total_minus_active_execution_count_minus_rewarded_execution_count",
+    "maximum_reward_principal_atomic": "500000",
+    "claimable": "read_only_boolean_snapshot_for_publicly_projected_SETTLED_offer",
+    "sponsor_payment_state_is_private_and_not_a_new_public_field": true,
+    "task_list_and_detail_projection_require_sponsor_payment_state_SETTLED": true,
+    "public_field_names_are_normative_and_aliases_are_forbidden": true,
+    "task_claim_transaction_is_final_claimability_authority": true,
+    "reward_paid_total_may_be_less_than_rewarded_entitlement_total": true,
+    "reward_paid_total_minor_maximum_formula": "rewarded_execution_count * 10000",
+    "reward_paid_total_minor_multiple_of": 10000,
+    "reward_paid_total_minor_never_exceeds_maximum_reward_principal_atomic": true,
+    "sdk_or_taskboard_reaggregation_authoritative": false
+  },
+  "capacity_snapshot": {
+    "fields": [
+      "capacity_total",
+      "capacity_remaining"
+    ],
+    "capacity_total": "strict_positive_json_integer_with_alpha_policy_value_50",
+    "capacity_remaining": "strict_json_integer_0_to_capacity_total",
+    "source": "hon_den_response",
+    "read_time_snapshot": true,
+    "claim_guarantee": false,
+    "sdk_or_taskboard_decrements_or_reconstructs": false,
+    "task_claim_transaction_authoritative": true
+  },
+  "amount_atomic_validation": {
+    "json_type": "string",
+    "canonical_pattern": "^[1-9][0-9]*$",
+    "reject": [
+      "zero",
+      "negative",
+      "plus_sign",
+      "decimal",
+      "leading_zero",
+      "whitespace",
+      "non_string",
+      "missing"
+    ]
+  },
+  "reward_snapshot_binding": {
+    "advertised_task_reward": "hon_den_defined_per_eligible_execution_reward",
+    "claim_response_reward": "authoritative_immutable_execution_snapshot",
+    "task_get_claim_disagreement": "claim_response_wins_for_that_execution",
+    "submission_status_reward_must_equal_claim_snapshot": true,
+    "task_detail_execution_summary_reward_must_equal_claim_snapshot": true,
+    "sdk_calculates_reward": false
+  },
+  "interface_authority": {
+    "canonical_interface": "public_hon_den_api",
+    "sdk_role": "optional_supporting_client",
+    "sdk_source_of_truth": false,
+    "sdk_hardcodes_or_derives_A_B_N_or_remaining_capacity": false
+  },
+  "evaluation_and_settlement": {
+    "dispatch": "same_five_minute_scheduler_queries_same_sparse_gsi_for_claim_expiry_evaluation_and_settlement_due_work",
+    "schedule_minutes": 5,
+    "sparse_work_types": [
+      "CLAIM_EXPIRY_DUE",
+      "EVALUATION_DUE",
+      "SETTLEMENT_DUE",
+      "SETTLEMENT_RECONCILIATION_DUE"
+    ],
+    "sqs_call_count": 0,
+    "sqs_dependency_count": 0,
+    "lease_required_for_payout_preparation": true,
+    "lease_required_for_payout_confirmation": true,
+    "lease_must_be_unexpired": true,
+    "stale_lease_updates_rejected": true,
+    "claim_expiry_performs_external_evaluation_url_access_or_payment": false,
+    "claim_expiry_releases_only_the_exact_target_reservation_once": true,
+    "completion_atomically_replaces_claim_expiry_due_with_evaluation_due": true,
+    "evaluation_rejection_removes_sparse_work_keys": true,
+    "evaluation_approval_atomically_replaces_evaluation_due_with_settlement_due_on_same_gsi": true,
+    "evaluation_approval_crash_window_retains_durable_settlement_work": true,
+    "new_queue_or_scheduler_family_required": false,
+    "settlement_terminal_outcomes_remove_sparse_work_keys": true,
+    "retryable_known_settlement_failure_retains_REWARD_PENDING_and_reschedules_same_gsi": true,
+    "retryable_settlement_attempt_clears_lease_before_reschedule": true,
+    "ambiguous_reconciliation_uses_same_sparse_gsi_with_fresh_lease_and_no_automatic_resend": true,
+    "transition_authority": "lifecycle_atomic_transition_sets",
+    "evaluation_rejection_releases_active_reservation_only": true,
+    "settlement_failure_or_ambiguity_changes_evaluation_approval": false,
+    "settlement_failure_or_ambiguity_restores_capacity": false,
+    "paid_aggregate_update_point": "PAID_CONFIRMED",
+    "late_valid_transaction_hash_can_reconcile_ambiguous_execution": true,
+    "different_transaction_hash_conflict": "fail_closed"
+  },
+  "deterministic_payment_surface_discovery_evaluation": {
+    "domain_observation_register_acceptance_means_task_requirements_met": true,
+    "content_quality_or_usefulness_reevaluation_allowed": false,
+    "allowed_rejection_reasons": [
+      "observation_not_found",
+      "claim_task_or_observation_binding_mismatch",
+      "declared_agent_id_mismatch",
+      "proven_observation_reuse"
+    ],
+    "rejection_requires_positive_evidence": true,
+    "indeterminate_conditions": [
+      "reference_unavailable",
+      "timeout",
+      "internal_exception",
+      "other_indeterminate_result"
+    ],
+    "indeterminate_public_projection": {
+      "task_status": "SUBMITTED",
+      "reward_state": "pending"
+    },
+    "indeterminate_internal_work_state": "PENDING",
+    "indeterminate_releases_active_reservation": false,
+    "indeterminate_consumes_reward_entitlement": false,
+    "indeterminate_retry": "finite",
+    "finite_retry_exhaustion": "remain_pending_with_recorded_safe_evidence",
+    "false_rejection_priority": "zero_false_rejections_over_classification_precision",
+    "discretionary_scoring_heuristics_or_additional_rejection_criteria_allowed": false,
+    "llm_or_subjective_quality_judgment_allowed": false,
+    "observation_not_found_definition": "successful_complete_authoritative_read_proves_absence",
+    "unavailable_timeout_partial_or_error_read_is_observation_not_found": false,
+    "proven_observation_reuse_definition": "same_durable_observation_id_is_authoritatively_bound_or_consumed_by_a_different_private_claim_execution",
+    "reuse_proof_source": "authoritative_record_or_conditional_uniqueness_result",
+    "observation_id_uniqueness_consume_point": "evaluation_approval_same_atomic_transaction",
+    "observation_id_uniqueness_scope": "all_private_v1_17_claim_executions_including_different_task_offers",
+    "concurrent_cross_execution_uniqueness_conflict": "exactly_one_approval_then_authoritative_reread_proves_reuse_for_the_other_execution",
+    "approved_observation_consumption_binding_is_released_by_settlement_outcome": false,
+    "same_execution_idempotent_replay_is_reuse": false,
+    "similar_content_same_urls_same_domain_or_low_novelty_is_reuse": false,
+    "same_domain_or_url_with_distinct_observation_id_is_reuse": false,
+    "declared_agent_id_comparison": "immutable_claim_agent_id_equals_server_derived_stored_observation_provenance",
+    "client_observer_field_is_authority": false,
+    "reward_address_is_evaluation_rejection_criterion": false
+  },
+  "settlement_idempotency": {
+    "scope": "private_claim_execution",
+    "deterministic_settlement_identity_required": true,
+    "same_key_same_content": "idempotent_replay",
+    "same_key_different_content": "fail_closed",
+    "duplicate_transfer_allowed": false,
+    "duplicate_entitlement_allowed": false,
+    "duplicate_counter_update_allowed": false,
+    "duplicate_evidence_allowed": false,
+    "maximum_reward_principal_atomic": "500000"
+  },
+  "provenance_and_event_correlation": {
+    "client_provided_marker_is_authority": false,
+    "complete_claim_token_task_and_key_control_binding_required": true,
+    "partial_forged_or_mismatched_binding": "fail_closed",
+    "canonical_boundary_predicate_reused_by_completion_and_evaluation": true,
+    "completion_evaluation_and_reward_events_must_not_be_dropped_for_consumer_only_identifiers": true,
+    "consumer_only_incident_id_required": false,
+    "consumer_only_settlement_attempt_id_required": false,
+    "existing_private_task_execution_and_settlement_identities_are_sufficient": true,
+    "new_public_correlation_identifier_allowed": false
+  },
+  "taskboard": {
+    "read_only": true,
+    "active_execution_count_values_above_one_render_without_clamping": true,
+    "task_level_domain_displayed_or_inferred": false,
+    "task_label": "generic_http_402_discovery",
+    "observed_domain_if_displayed_source": "execution_or_submission_only",
+    "authoritative_browser_reaggregation": false,
+    "missing_value_inference": false,
+    "execution_summary_source": "get_task_detail_execution_summary_page",
+    "n_plus_one_execution_queries_allowed": false,
+    "mutations_allowed": [],
+    "separate_backend_values": [
+      "capacity_total",
+      "capacity_remaining",
+      "claimable",
+      "active_execution_count",
+      "claim_count_total",
+      "rewarded_execution_count",
+      "reward_paid_total_minor",
+      "execution_summaries"
+    ]
+  },
+  "graph_projection": {
+    "agent_task_domain_property_allowed": false,
+    "task_submission_observed_domain_allowed": true,
+    "observation_run_domain_authority": "server_recorded_domain_observation",
+    "task_observation_run_id": "task_observation:{observation_id}",
+    "task_request_id": "task:{task_id}",
+    "same_task_sibling_executions_with_distinct_observation_ids_share_run": false,
+    "task_status_402_rail": "Payment",
+    "task_public_safe": true,
+    "domain_observation_result_recorded_infrastructure_preserved": true
+  },
+  "task_detail_execution_summary_page": {
+    "route": "GET /api/agent/tasks/{task_id}",
+    "query_source": {
+      "table": "AgentTaskExecutions",
+      "index": "AgentTaskExecutionPublicSummaryIndex",
+      "index_purpose": "bounded_read_only_public_summary_not_due_work_or_scheduler",
+      "partition_key_attribute": "public_summary_pk",
+      "partition_key_value": "TASK#<task_id>",
+      "sort_key_attribute": "public_summary_sk",
+      "sort_key_value": "<submitted_at_rfc3339_utc_fixed_millis>#<submission_id>",
+      "submitted_at_sort_component": "YYYY-MM-DDTHH:mm:ss.sssZ",
+      "sort_order": "descending_newest_first",
+      "index_keys_created_at": "durable_completion_same_transaction",
+      "index_keys_retained_through_terminal_status": true,
+      "status_reward_and_evidence_projection_updated_with_each_lifecycle_transaction": true,
+      "due_work_gsi_is_separate": true,
+      "query_operation": "single_bounded_Query_with_key_condition",
+      "scan_filter_or_n_plus_one_allowed": false,
+      "cursor_binding": "opaque_structurally_validated_task_id_and_last_public_summary_sort_key",
+      "cursor_resume_condition": "public_summary_sk < cursor_last_sort_key",
+      "cursor_rejects": "malformed_or_cross_task_value",
+      "cursor_requires_new_secret_or_credential": false,
+      "cursor_or_projection_exposes_private_execution_id": false,
+      "task_get_projection_expression_is_exact_public_summary_allowlist": true
+    },
+    "query_fields_reused": [
+      "limit",
+      "cursor"
+    ],
+    "default_limit": 20,
+    "minimum_limit": 1,
+    "maximum_limit": 50,
+    "cursor": "opaque_optional",
+    "task_detail_only_fields": [
+      "execution_summaries",
+      "execution_summaries_next_cursor"
+    ],
+    "task_list_items_include_execution_summaries": false,
+    "execution_summaries_type": "array",
+    "execution_summaries_next_cursor_type": "string_or_null",
+    "summary_required_fields": [
+      "submission_id",
+      "observation_id",
+      "task_status",
+      "reward_state",
+      "network",
+      "asset",
+      "asset_address",
+      "amount_atomic",
+      "evaluated_at",
+      "reward_tx_hash",
+      "rewarded_at",
+      "failure_code"
+    ],
+    "summary_field_types": {
+      "submission_id": "string_matching_submission_id_pattern",
+      "observation_id": "string_matching_observation_id_pattern",
+      "task_status": "public_submission_status",
+      "reward_state": "reward_state",
+      "network": "string",
+      "asset": "string",
+      "asset_address": "string",
+      "amount_atomic": "canonical_positive_integer_string",
+      "evaluated_at": "rfc3339_utc_or_null",
+      "reward_tx_hash": "canonical_0x_64_lowercase_hex_or_null",
+      "rewarded_at": "rfc3339_utc_or_null",
+      "failure_code": "finite_public_safe_code_or_null"
+    },
+    "failure_code_values": [
+      "observation_not_found",
+      "claim_task_or_observation_binding_mismatch",
+      "declared_agent_id_mismatch",
+      "proven_observation_reuse",
+      "settlement_retry_exhausted",
+      "settlement_ambiguous",
+      "settlement_conflict",
+      "settlement_lease_expired",
+      "settlement_unavailable"
+    ],
+    "failure_code_required_for_statuses": [
+      "EVALUATION_REJECTED",
+      "REWARD_FAILED",
+      "REWARD_AMBIGUOUS"
+    ],
+    "evaluated_at_required_for_statuses": [
+      "EVALUATION_REJECTED",
+      "REWARD_PENDING",
+      "REWARDED",
+      "REWARD_FAILED",
+      "REWARD_AMBIGUOUS"
+    ],
+    "reward_tx_hash_required_for_statuses": [
+      "REWARDED"
+    ],
+    "reward_tx_hash_optional_for_statuses": [
+      "REWARD_AMBIGUOUS"
+    ],
+    "rewarded_at_required_for_statuses": [
+      "REWARDED"
+    ],
+    "forbidden_fields": [
+      "execution_id",
+      "claim_token",
+      "claim_token_hash",
+      "agent_id",
+      "reward_address",
+      "secret",
+      "free_form_error"
+    ],
+    "backend_provided_without_browser_reaggregation": true,
+    "one_backend_page_per_task_detail_request": true,
+    "durable_terminal_rows_remain_queryable": true
+  },
+  "failure_code_values_by_status": {
+    "SUBMITTED": null,
+    "EVALUATION_REJECTED": [
+      "observation_not_found",
+      "claim_task_or_observation_binding_mismatch",
+      "declared_agent_id_mismatch",
+      "proven_observation_reuse"
+    ],
+    "REWARD_PENDING": null,
+    "REWARDED": null,
+    "REWARD_FAILED": [
+      "settlement_retry_exhausted",
+      "settlement_conflict",
+      "settlement_lease_expired",
+      "settlement_unavailable"
+    ],
+    "REWARD_AMBIGUOUS": [
+      "settlement_ambiguous"
+    ],
+    "cross_status_failure_code_allowed": false
+  },
+  "task_definition_publication": {
+    "replacement_bundle_required": true,
+    "digest_addressed": true,
+    "existing_bundle_overwrite_or_delete_allowed": false,
+    "component_hash_manifest_digest_evaluator_pin_and_source_ancestor_must_match": true
+  },
+  "poc_terms": {
+    "completion_2xx_meaning": "durable_receipt_only",
+    "completion_2xx_implies_evaluation_approval": false,
+    "completion_2xx_implies_payment_completion": false,
+    "payout_mode": "automatic_best_effort_with_finite_retry_and_recorded_evidence",
+    "payment_completion_sla": false,
+    "individual_investigation": false,
+    "manual_resend": false,
+    "compensation": false,
+    "alternative_payment": false,
+    "arbitrary_non_payment_authorized": false,
+    "required_public_surfaces": [
+      "task_get",
+      "task_definition",
+      "openapi_and_agent_documentation",
+      "taskboard",
+      "sdk_documentation"
+    ]
+  },
+  "status_field_scopes": {
+    "task_status": "offer_level",
+    "claim_response_status": "public_claim_response_projection",
+    "completion_response_status": "public_submission_projection",
+    "submission_status_task_status": "public_submission_projection",
+    "task_detail_execution_summary_task_status": "public_submission_projection",
+    "expired_and_abandoned": "private_internal_execution_states_without_submission_status_resource"
+  },
+  "schema_versions": {
+    "task": "ln_church.agent_task.v1",
+    "task_page": "ln_church.agent_task_page.v1",
+    "task_offer_create_response": "ln_church.task_offer_create_response.v1",
+    "claim_request": "ln_church.agent_task_claim_request.v1",
+    "claim_response": "ln_church.agent_task_claim_response.v1",
+    "claim_token_binding": "ln_church.task_claim_token_binding.v1",
+    "observation_submission": "ln_church.task_domain_observation_submission.v1",
+    "observation_response": "ln_church.task_domain_observation_response.v1",
+    "completion_request": "ln_church.agent_task_completion_request.v1",
+    "completion_response": "ln_church.agent_task_completion_response.v1",
+    "reward_status": "ln_church.agent_task_reward_status.v1",
+    "credential_file": "ln_church.task_claim_credential_file.v1",
+    "error": "ln_church.agent_task_error.v1"
+  },
+  "task_detail_query": {
+    "default_limit": 20,
+    "minimum_limit": 1,
+    "maximum_limit": 50,
+    "cursor": "opaque_optional",
+    "pagination_target": "execution_summaries"
+  },
+  "list_query": {
+    "task_type": "payment_surface_discovery.v1",
+    "default_status": "OPEN",
+    "source": "existing_public_task_list_index_keys_created_only_by_SETTLED_activation",
+    "unsettled_internal_rows_queryable": false,
+    "default_limit": 20,
+    "minimum_limit": 1,
+    "maximum_limit": 50,
+    "cursor": "opaque_optional"
+  },
+  "identifier_constraints": {
+    "task_id_pattern": "^[A-Za-z0-9._~-]{1,128}$",
+    "submission_id_pattern": "^sub_[a-f0-9]{32}$",
+    "observation_id_pattern": "^[A-Za-z0-9._~-]{1,128}$",
+    "observed_domain": "lowercase_public_idna_alabel_without_trailing_dot_max_253"
+  },
+  "task_definition_reference": {
+    "required_fields": [
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_url",
+      "manifest_sha256"
+    ],
+    "task_definition_version": "1.0.0",
+    "task_definition_digest_pattern": "^[a-f0-9]{64}$",
+    "manifest_url": "absolute_https_exactly_as_returned_by_api",
+    "manifest_sha256_pattern": "^[a-f0-9]{64}$",
+    "source": "api_response_only",
+    "mutable_aliases_allowed": false,
+    "sdk_constructs_reference_or_storage_key": false,
+    "sdk_model_frozen": true,
+    "sdk_downloads_bundle": false,
+    "sdk_executes_bundle": false,
+    "claim_snapshots_reference": true,
+    "status_echoes_claim_snapshot": true,
+    "response_mismatch_error": "TASK_RESPONSE_INVALID"
+  },
+  "required_task_fields": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_url",
+    "manifest_sha256",
+    "status",
+    "seed_urls",
+    "observation_profile",
+    "constraints",
+    "reward",
+    "created_at",
+    "expires_at",
+    "active_execution_count",
+    "claim_count_total",
+    "rewarded_execution_count",
+    "reward_paid_total_minor",
+    "capacity_total",
+    "capacity_remaining",
+    "maximum_reward_principal_atomic",
+    "claimable",
+    "poc_terms"
+  ],
+  "required_task_detail_only_fields": [
+    "execution_summaries",
+    "execution_summaries_next_cursor"
+  ],
+  "required_task_offer_response_fields": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "status",
+    "task_url"
+  ],
+  "required_claim_request_fields": [
+    "schema_version",
+    "agent_id",
+    "reward_address"
+  ],
+  "required_claim_response_fields": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_url",
+    "manifest_sha256",
+    "status",
+    "claim_token",
+    "lease_duration_seconds",
+    "lease_expires_at",
+    "reward_address",
+    "reward_address_control_verified",
+    "reward"
+  ],
+  "required_observation_submission_fields": [
+    "schema_version",
+    "submission_id",
+    "observed_domain",
+    "observed_urls",
+    "discovered_surfaces",
+    "errors",
+    "safety_profile",
+    "no_payment_to_target",
+    "not_a_security_scan",
+    "verification_cost_vector"
+  ],
+  "required_completion_request_fields": [
+    "schema_version",
+    "submission_id",
+    "observation_id"
+  ],
+  "required_completion_response_fields": [
+    "schema_version",
+    "accepted",
+    "task_id",
+    "submission_id",
+    "observation_id",
+    "status"
+  ],
+  "required_reward_status_fields": [
+    "schema_version",
+    "task_id",
+    "submission_id",
+    "observation_id",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_url",
+    "manifest_sha256",
+    "task_status",
+    "reward_state",
+    "network",
+    "asset",
+    "asset_address",
+    "amount_atomic",
+    "reward_tx_hash",
+    "rewarded_at",
+    "failure_code"
+  ],
+  "agent_binding": {
+    "agent_id_pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    "submission_observer_field_allowed": false,
+    "observer_name_source": "claim_agent_id",
+    "reporter_verification": "self_reported"
+  },
+  "observed_url_entry": {
+    "additional_fields": false,
+    "required_fields": [
+      "url",
+      "method",
+      "status_code",
+      "media_family",
+      "observed_at"
+    ],
+    "url_maximum_utf8_bytes": 2048,
+    "url_schemes": [
+      "http",
+      "https"
+    ],
+    "url_host_scope": "observed_domain_or_subdomain",
+    "url_userinfo_allowed": false,
+    "url_query_allowed": false,
+    "url_fragment_allowed": false,
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "status_code_minimum": 100,
+    "status_code_maximum": 599,
+    "media_families": [
+      "html",
+      "json",
+      "text",
+      "image",
+      "other",
+      "unknown"
+    ],
+    "observed_at": "rfc3339_utc"
+  },
+  "discovered_surface_entry": {
+    "additional_fields": false,
+    "required_fields": [
+      "url",
+      "method",
+      "status_code",
+      "surface_type",
+      "observed_at"
+    ],
+    "url_rule": "observed_url_entry",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "status_code_minimum": 100,
+    "status_code_maximum": 599,
+    "surface_types": [
+      "http_402",
+      "x402",
+      "l402",
+      "mpp",
+      "agent_commerce",
+      "unknown"
+    ],
+    "observed_at": "rfc3339_utc",
+    "surface_type_is_eligibility_gate": false,
+    "unknown_surface_type_with_status_402_is_eligible": true,
+    "server_derived_fields_for_status_402": {
+      "rail": "Payment",
+      "public_safe": true
+    }
+  },
+  "error_entry": {
+    "additional_fields": false,
+    "required_fields": [
+      "url",
+      "stage",
+      "error_code",
+      "observed_at"
+    ],
+    "url_rule": "observed_url_entry",
+    "stages": [
+      "dns",
+      "connect",
+      "tls",
+      "request",
+      "response",
+      "validation"
+    ],
+    "error_codes": [
+      "timeout",
+      "dns_failure",
+      "connection_failure",
+      "tls_failure",
+      "http_error",
+      "response_too_large",
+      "unsupported_content",
+      "invalid_public_target",
+      "unknown"
+    ],
+    "free_form_message_allowed": false,
+    "observed_at": "rfc3339_utc"
+  },
+  "verification_cost_vector": {
+    "additional_fields": false,
+    "http_requests_integer_range": [
+      0,
+      100
+    ],
+    "tool_calls_integer_range": [
+      0,
+      100
+    ],
+    "payment_attempts": 0,
+    "personal_data_required": false,
+    "human_confirmation_required": "boolean",
+    "irreversible_action_attempted": false,
+    "login_attempted": false,
+    "form_submission_attempted": false,
+    "vulnerability_scan_attempted": false
+  },
+  "submission_canonicalization": {
+    "algorithm": "RFC8785_JCS",
+    "encoding": "UTF-8",
+    "strings_must_be": "Unicode_NFC_without_control_characters",
+    "numbers": "integers_only",
+    "array_order": "significant",
+    "digest": "SHA-256",
+    "digest_scope": "entire_validated_request_including_schema_version_and_submission_id"
+  },
+  "claim_execution_binding": {
+    "new_claim_id_added": false,
+    "public_execution_id_added": false,
+    "internal_execution_id_required": true,
+    "internal_execution_id_exposed": false,
+    "private_binding_table": "AgentTaskExecutions",
+    "private_binding_key": "TASK_CLAIM_TOKEN#<namespaced_claim_token_hash>/BINDING",
+    "private_binding_lookup": "strongly_consistent_exact_Get",
+    "private_binding_publicly_exposed": false,
+    "private_binding_scan_or_latest_execution_inference": false,
+    "result_identity_fields": [
+      "task_id",
+      "submission_id",
+      "observation_id"
+    ],
+    "status_path_identifier_fields": [
+      "task_id",
+      "submission_id"
+    ],
+    "status_response_definition_fields": [
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_url",
+      "manifest_sha256"
+    ],
+    "status_sdk_required_identifiers": [
+      "task_id",
+      "submission_id",
+      "observation_id"
+    ],
+    "status_sdk_expected_definition_source": "claim_time_task_definition_reference",
+    "status_task_status_scope": "claim_execution_public_projection",
+    "submission_id_reuse_across_claim_executions": "reject_submission_conflict_even_when_digest_matches",
+    "same_claim_execution_same_submission_id_same_digest": "idempotent_replay",
+    "submission_and_completion_use_same_claim_credential": true,
+    "old_credential_authorizes_new_claim_execution": false,
+    "task_detail_is_claim_specific_reward_receipt": false,
+    "response_mismatch_error": "TASK_RESPONSE_INVALID",
+    "one_task_offer_to_many_executions": true,
+    "one_successful_claim_creates_one_execution": true,
+    "sibling_claim_executions_independent": true,
+    "claim_reward_snapshot_required": true,
+    "status_and_summary_reward_must_equal_claim_snapshot": true
+  },
+  "completion_semantics": {
+    "success_http_requires": "durable_submission_and_completion_report_acceptance",
+    "success_response_accepted": true,
+    "success_response_status": "SUBMITTED",
+    "success_meaning": "durable_receipt_only",
+    "success_does_not_mean": [
+      "evaluation_accepted",
+      "settlement_started",
+      "reward_paid"
+    ],
+    "fallback": "one_submission_status_read",
+    "fallback_proves_completion_for_task_statuses": [
+      "SUBMITTED",
+      "EVALUATION_REJECTED",
+      "REWARD_PENDING",
+      "REWARDED",
+      "REWARD_FAILED",
+      "REWARD_AMBIGUOUS"
+    ],
+    "fallback_without_matching_proof": "preserve_COMPLETION_OUTCOME_UNKNOWN"
+  },
+  "public_safe_constraints": {
+    "allowed_methods": [
+      "GET",
+      "HEAD"
+    ],
+    "no_login": true,
+    "no_forms": true,
+    "no_vulnerability_scan": true,
+    "no_payment_to_target": true,
+    "no_personal_data": true,
+    "not_a_security_scan": true,
+    "payment_attempts": 0,
+    "irreversible_action_attempted": false,
+    "maximum_observed_urls": 50,
+    "maximum_discovered_surfaces": 50,
+    "maximum_errors": 20,
+    "minimum_actual_status_402_surfaces": 1,
+    "classification_precision_is_eligibility_gate": false,
+    "server_derived_status_402_rail": "Payment",
+    "server_derived_public_safe_after_validation": true
+  },
+  "reward_status_invariants": {
+    "SUBMITTED": "pending",
+    "EVALUATION_REJECTED": "not_eligible_with_allowed_deterministic_failure_code_and_null_reward_tx_hash_and_rewarded_at",
+    "REWARD_PENDING": "approved_pending_with_consumed_capacity_and_null_failure_code_reward_tx_hash_and_rewarded_at",
+    "REWARDED": "paid_with_null_failure_code_and_required_reward_tx_hash_and_rewarded_at",
+    "REWARD_FAILED": "failed_with_public_safe_settlement_failure_code_and_null_reward_tx_hash_and_rewarded_at",
+    "REWARD_AMBIGUOUS": "ambiguous_with_settlement_ambiguous_failure_code_optional_valid_reward_tx_hash_and_required_null_rewarded_at"
+  },
+  "reward_status_transitions": {
+    "AMBIGUOUS_TO_REWARDED": "later_PAID_CONFIRMED_with_same_or_previously_null_reward_tx_hash_and_non_null_rewarded_at",
+    "AMBIGUOUS_DIFFERENT_TRANSACTION_HASH": "fail_closed"
+  },
+  "reward_polling": {
+    "status_source": "submission_status_route",
+    "terminal_reward_states": [
+      "not_eligible",
+      "paid",
+      "failed",
+      "ambiguous"
+    ],
+    "bounded_exhaustion_after_valid_pending_or_approved_pending": "return_last_valid_nonterminal_status",
+    "bounded_exhaustion_without_valid_status": "TASK_TIMEOUT_or_applicable_finite_transport_error",
+    "explicit_status_refetch_allowed": true,
+    "unlimited_polling_allowed": false,
+    "default_timeout_is_hon_den_sla": false
+  },
+  "transport": {
+    "fixed_origin": "https://kari.mayim-mayim.com",
+    "custom_origin_allowed": false,
+    "tls_verification_disable_allowed": false,
+    "public_ip_answers_required": true,
+    "per_request_dns_validation_and_ip_pinning": true,
+    "preserve_host_and_tls_sni": true,
+    "follow_redirects": false,
+    "trust_env": false,
+    "use_netrc": false,
+    "use_cookies": false,
+    "maximum_json_request_bytes": 262144,
+    "request_content_encoding": "none_only",
+    "accept_encoding": "identity",
+    "other_content_encoding": "reject_before_body_read",
+    "maximum_json_response_bytes": 262144,
+    "connect_timeout_seconds": 5,
+    "read_timeout_seconds": 10,
+    "write_timeout_seconds": 10,
+    "pool_timeout_seconds": 5,
+    "total_operation_timeout_seconds": 20,
+    "worker_route_402": "error_without_payment",
+    "unknown_response_fields": "discard"
+  },
+  "retry": {
+    "list_and_detail_maximum_attempts": 3,
+    "list_and_detail_backoff_milliseconds": [
+      250,
+      500
+    ],
+    "list_and_detail_retryable_statuses": [
+      429,
+      502,
+      503,
+      504
+    ],
+    "claim_maximum_attempts": 1,
+    "observation_maximum_attempts": 2,
+    "observation_retry_condition": "same_submission_id_and_identical_rfc8785_digest",
+    "completion_maximum_attempts": 2,
+    "completion_fallback": "one_submission_status_read",
+    "reward_poll_default_timeout_seconds": 300,
+    "reward_poll_maximum_attempts": 10,
+    "reward_poll_maximum_http_exchanges": 10,
+    "reward_poll_http_exchange_budget_includes_retries": true,
+    "reward_poll_initial_backoff_seconds": 1,
+    "reward_poll_maximum_backoff_seconds": 30,
+    "reward_poll_maximum_jitter_milliseconds": 250,
+    "reward_poll_maximum_retry_after_seconds": 30,
+    "client_side_payout": "forbidden"
+  },
+  "local_ambiguous_delivery_codes": [
+    "CLAIM_OUTCOME_UNKNOWN",
+    "SUBMISSION_OUTCOME_UNKNOWN",
+    "COMPLETION_OUTCOME_UNKNOWN"
+  ],
+  "local_error_codes": [
+    "TASK_ORIGIN_INVALID",
+    "TASK_DNS_POLICY_REJECTED",
+    "TASK_TLS_ERROR",
+    "TASK_TIMEOUT",
+    "TASK_TRANSPORT_ERROR",
+    "TASK_REDIRECT_REJECTED",
+    "TASK_PAYMENT_UNEXPECTED",
+    "TASK_RESPONSE_ENCODING_REJECTED",
+    "TASK_RESPONSE_TOO_LARGE",
+    "TASK_RESPONSE_INVALID",
+    "TASK_API_ERROR",
+    "TASK_CREDENTIAL_INVALID",
+    "TASK_CREDENTIAL_EXPIRED"
+  ],
+  "public_error_codes": {
+    "400": [
+      "invalid_request",
+      "unsupported_task_type",
+      "domain_mismatch"
+    ],
+    "401": [
+      "claim_token_invalid"
+    ],
+    "404": [
+      "task_not_found"
+    ],
+    "409": [
+      "task_not_open",
+      "task_state_conflict",
+      "submission_conflict"
+    ],
+    "410": [
+      "claim_lease_expired"
+    ],
+    "413": [
+      "payload_too_large"
+    ],
+    "429": [
+      "rate_limited"
+    ],
+    "500": [
+      "internal_error"
+    ]
+  },
+  "public_error_scopes": {
+    "task_offer_400": [
+      "invalid_request",
+      "unsupported_task_type"
+    ],
+    "domain_observation_register_400": [
+      "invalid_request",
+      "domain_mismatch"
+    ]
+  },
+  "credential_file": {
+    "active_required_fields": [
+      "schema_version",
+      "state",
+      "api_origin",
+      "task_id",
+      "task_type",
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_url",
+      "manifest_sha256",
+      "agent_id",
+      "reward_address",
+      "reward",
+      "lease_expires_at",
+      "claim_token"
+    ],
+    "active_state": "ACTIVE",
+    "ambiguous_required_fields": [
+      "schema_version",
+      "state",
+      "api_origin",
+      "task_id",
+      "created_at"
+    ],
+    "ambiguous_state": "CLAIM_OUTCOME_UNKNOWN",
+    "claim_path_reserved_before_network": true,
+    "path_reopened_after_claim": false,
+    "existing_path_overwrite": false,
+    "posix_mode": "0600",
+    "windows_root": "%LOCALAPPDATA%\\\\ln-church-agent\\\\claims",
+    "windows_unc_network_path_allowed": false,
+    "windows_reparse_junction_ancestor_allowed": false,
+    "cli_observation_file_maximum_bytes": 262144,
+    "active_additional_fields": false,
+    "active_claim_bound_snapshot_immutable": true
+  },
+  "internal_interfaces_unchanged": {
+    "claim_path": "/api/agent/external/observation-targets",
+    "submit_path": "/api/agent/external/domain-observation-results",
+    "header": "X-Internal-Secret"
+  },
+  "status_semantics": {
+    "task_offer_status_values": [
+      "OPEN"
+    ],
+    "public_claim_response_status_values": [
+      "CLAIMED"
+    ],
+    "public_submission_status_values": [
+      "SUBMITTED",
+      "EVALUATION_REJECTED",
+      "REWARD_PENDING",
+      "REWARDED",
+      "REWARD_FAILED",
+      "REWARD_AMBIGUOUS"
+    ],
+    "private_only_execution_status_values": [
+      "EXPIRED",
+      "ABANDONED"
+    ],
+    "task_offer_status_is_execution_status": false
+  },
+  "owner_policy_example": {
+    "policy_owner": "hon_den",
+    "task_offer_create_amount_atomic_A": "1000000",
+    "per_eligible_execution_reward_atomic_B": "10000",
+    "task_offer_capacity_N": 50,
+    "maximum_reward_principal_atomic": "500000",
+    "sdk_hardcodes_or_derives_A_B_N": false
+  },
+  "task_offer_cardinality": {
+    "agent_tasks_record": "one_task_offer",
+    "task_capacity": "N_homogeneous_execution_entitlements",
+    "agent_task_executions_record": "one_successful_claim_execution",
+    "task_offer_contains_individual_execution_state": false,
+    "internal_execution_id_publicly_exposed": false
+  },
+  "legacy_active_execution_id_compatibility": {
+    "new_task_or_claim_writes_pointer": false,
+    "pointer_is_claim_mutex": false,
+    "pointer_presence_requires_active_count_at_most_one": false,
+    "binding_absent_legacy_lookup_only": true,
+    "fallback_requires_exact_pointer_and_constant_time_execution_token_hash_match": true,
+    "legacy_terminal_transition_removes_pointer_only_on_exact_execution_match": true,
+    "new_binding_backfill_uses_existing_namespaced_hash_without_plaintext_token": true,
+    "runtime_migration_required": true,
+    "runtime_migration": [
+      "legacy_CLAIMED_not_submitted_backfill_private_token_binding_and_CLAIM_EXPIRY_DUE",
+      "legacy_CLAIMED_expired_apply_exact_once_EXPIRED_and_active_decrement",
+      "legacy_SUBMITTED_preserve_existing_EVALUATION_DUE",
+      "terminal_or_approved_verify_counters_and_pointer",
+      "remove_active_execution_id_after_all_legacy_executions_are_reachable"
+    ],
+    "runtime_gate_reads_checkpoint_plaintext_claim_token_or_wallet_credential": false
+  },
+  "reward_delivery_disclosure": {
+    "sending": "automatic_best_effort",
+    "payment_sla": false,
+    "individual_investigation": false,
+    "manual_resend": false,
+    "compensation": false,
+    "alternative_payment": false,
+    "finite_automatic_retry": true,
+    "exact_status": true,
+    "verifiable_evidence": true,
+    "arbitrary_non_payment_authorized": false
+  }
+}
