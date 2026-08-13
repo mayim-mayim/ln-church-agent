@@ -206,7 +206,7 @@ def test_release_version_identities_are_consistent(monkeypatch):
     assert server_metadata["packages"][0]["identifier"] == "ln-church-agent"
     assert server_metadata["packages"][0]["version"] == EXPECTED_VERSION
 
-    headings = re.findall(r"^## \\[([^]]+)\\].*$", changelog, re.MULTILINE)
+    headings = re.findall(r"^## \[([^]]+)\].*$", changelog, re.MULTILINE)
     assert headings[0] == EXPECTED_VERSION
     release_prefix, next_heading, _older_entries = changelog.partition(
         "## [1.17.0]"

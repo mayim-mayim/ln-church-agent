@@ -5993,18 +5993,58 @@ def test_windows_python_314_known_limitation_is_documented_consistently():
     release_note = (
         root / "docs" / "release_notes" / "v1.17.1.md"
     ).read_text(encoding="utf-8")
-    required_wording = (
-        "Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、"
-        "通常のpip installが完了しない。SDK v1.17.1ではWindows＋Python 3.14を"
-        "サポート対象外とし、WindowsではPython 3.11を推奨する。"
+    shared_documentation = (
+        "Linux is the Tier 1 release-blocking environment.",
+        "Native Windows is a Tier 2 nonblocking compatibility lane.",
+        "Native Windows with Python 3.11 has best-effort limited support.",
+        "Native Windows with Python 3.14 is unsupported because a normal "
+        "`pip install` may fail due to the support state of the transitive "
+        "`coincurve` dependency.",
+        "WSL2 or a Linux container is in the Linux lane when the actual SDK "
+        "runtime is Linux.",
+        "The native Windows Task CLI lifecycle has not been fully qualified "
+        "for this release.",
+        "Only native-Windows-specific availability or compatibility findings "
+        "are nonblocking.",
+        "Security or confidentiality defects, integrity defects, unintended "
+        "Claim, Observation, Completion, payment, or provider mutation, "
+        "shared-wire defects, runtime defects that also reproduce on Linux "
+        "Tier 1, release-identity inconsistencies, and materially misleading "
+        "public interfaces or documentation remain release-blocking.",
+        "%LOCALAPPDATA%\\ln-church-agent\\claims",
+        "The runtime does not create this root automatically; create it "
+        "before running the Task CLI.",
+        "In PowerShell 5.1:",
+        '$claimsRoot = Join-Path $env:LOCALAPPDATA "ln-church-agent\\claims"',
+        "New-Item -ItemType Directory -Path $claimsRoot -Force | Out-Null",
+        '$credentialFile = Join-Path $claimsRoot "TASK_ID.json"',
+        '$checkpointFile = Join-Path $claimsRoot "TASK_ID.checkpoint.json"',
+        "--credential-file $credentialFile",
+        "--checkpoint-file $checkpointFile",
+        "The relative paths `./claims/TASK_ID.json` and "
+        "`./claims/TASK_ID.checkpoint.json` are Linux examples, including "
+        "WSL2 or Linux containers whose actual runtime is Linux; they are "
+        "not generally valid native Windows examples.",
     )
 
     assert "## Supported environments" in readme
-    assert "| Windows | 3.11.x | Supported and recommended |" in readme
-    assert "| Windows | 3.14.x | Unsupported |" in readme
+    assert "| Linux | 3.11.x | Tier 1 — release-blocking |" in readme
+    assert (
+        "| Native Windows | 3.11.x | Tier 2 — best-effort limited support |"
+        in readme
+    )
+    assert "| Native Windows | 3.14.x | Unsupported |" in readme
+    assert (
+        "| WSL2 / Linux container | 3.11.x | Linux lane when the actual SDK "
+        "runtime is Linux |"
+        in readme
+    )
+    assert "| Windows | 3.11.x | Supported and recommended |" not in readme
     assert "## Known limitations" in release_note
-    assert required_wording in readme
-    assert required_wording in release_note
+    assert "Windows＋Python 3.14" in release_note
+    for required in shared_documentation:
+        assert required in readme
+        assert required in release_note
 
 
 def test_inspect_only_mcp_exposes_no_task_mutation_tools():
