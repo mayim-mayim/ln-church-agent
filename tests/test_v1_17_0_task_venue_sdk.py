@@ -3411,7 +3411,7 @@ def test_transport_httpx_configuration_has_no_ambient_credentials(monkeypatch):
     assert stream_kwargs["headers"]["Accept-Encoding"] == "identity"
     assert (
         stream_kwargs["headers"]["User-Agent"]
-        == "ln-church-agent-task/1.17.0"
+        == "ln-church-agent-task/1.17.1"
     )
     assert "Cookie" not in stream_kwargs["headers"]
     assert "Authorization" not in stream_kwargs["headers"]
@@ -3988,8 +3988,22 @@ def test_cli_claim_reserves_mode_0600_and_never_prints_token(tmp_path, capsys):
     assert CLAIM_TOKEN not in captured.out
     assert CLAIM_TOKEN not in captured.err
     public_data = json.loads(captured.out)
-    assert public_data["task_type"] == TASK_TYPE
-    assert "domain" not in public_data
+    assert public_data == {
+        "schema_version": "ln_church.agent_task_claim_response.v1",
+        "task_id": "task_example",
+        "task_type": TASK_TYPE,
+        "task_definition_version": TASK_DEFINITION_VERSION,
+        "task_definition_digest": TASK_DEFINITION_DIGEST,
+        "manifest_url": MANIFEST_URL,
+        "manifest_sha256": MANIFEST_SHA256,
+        "status": "CLAIMED",
+        "lease_duration_seconds": 3600,
+        "lease_expires_at": "2099-07-27T01:00:00Z",
+        "reward_address": REWARD_ADDRESS,
+        "reward_address_control_verified": False,
+        "reward": _reward(),
+        "credential_file_written": True,
+    }
     private_data = json.loads(output_path.read_text(encoding="utf-8"))
     assert private_data["claim_token"] == CLAIM_TOKEN
     assert "domain" not in private_data
@@ -5977,11 +5991,11 @@ def test_windows_python_314_known_limitation_is_documented_consistently():
     root = Path(__file__).parents[1]
     readme = (root / "README.md").read_text(encoding="utf-8")
     release_note = (
-        root / "docs" / "release_notes" / "v1.17.0.md"
+        root / "docs" / "release_notes" / "v1.17.1.md"
     ).read_text(encoding="utf-8")
     required_wording = (
         "Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、"
-        "通常のpip installが完了しない。SDK v1.17.0ではWindows＋Python 3.14を"
+        "通常のpip installが完了しない。SDK v1.17.1ではWindows＋Python 3.14を"
         "サポート対象外とし、WindowsではPython 3.11を推奨する。"
     )
 
@@ -6324,6 +6338,302 @@ def test_task_get_cli_displays_exact_server_page_and_disclosure(capsys):
         "Next cursor        : next-page",
     ):
         assert exact_server_value in captured.out
+
+
+def _assert_reward_destination_education_text(value):
+    normalized = " ".join(value.split()).lower()
+    normalized = normalized.replace("- ", "-")
+    for required in (
+        "task execution and observation require no private key, signer, "
+        "or payment-wallet credential",
+        "non-zero evm",
+        "reward_address",
+        "usdc",
+        "base",
+        "eip155:8453",
+        "fixed",
+        "cannot be changed",
+        "hondo does not verify",
+        "lightning",
+        "lnurl",
+        "bolt11",
+        "not authority",
+        "eligibility",
+        "entitlement",
+        "does not guarantee claim, acceptance, reward, payout, or settlement",
+        "actual claim validation",
+        "immutable claim snapshot",
+        "authoritative",
+    ):
+        assert required in normalized
+
+
+def _read_front_documentation_section():
+    readme = (
+        Path(__file__).resolve().parents[1] / "README.md"
+    ).read_text(encoding="utf-8")
+    start_marker = "### Agent earning: first job and first reward"
+    end_marker = "### Public Agent Task worker boundary"
+    start = readme.index(start_marker)
+    end = readme.index(end_marker, start)
+    assert start < end
+    return readme[start:end]
+
+
+def test_readme_front_documents_agent_earning_lifecycle_and_boundaries():
+    section = _read_front_documentation_section()
+    for slogan in (
+        "あなたのAI Agentに、最初の仕事と報酬を。",
+        "Give your AI Agent its first job — and its first reward.",
+        "Complete tasks. Earn USDC.",
+    ):
+        assert section.count(slogan) == 1
+
+    lifecycle = (
+        "Discover → Read Definition → Claim → Execute → "
+        "Register Observations → Complete → Check Evaluation → Check Reward"
+    )
+    assert lifecycle in section
+
+    ordered_labels = (
+        "**Input**",
+        "**Required action**",
+        "**Prohibited action**",
+        "**Acceptance condition**",
+        "**Status transition**",
+        "**Reward condition**",
+        "**Retry / resume rule**",
+    )
+    positions = [section.index(label) for label in ordered_labels]
+    assert positions == sorted(positions)
+
+    normalized = " ".join(section.split()).lower()
+    for required in (
+        "not guarantees of task availability, capacity, claim success, "
+        "income, reward, or payout",
+        "`open`, `claimable`, a capacity snapshot, and remaining capacity",
+        "the sdk does not resolve `latest`, fetch a definition bundle, "
+        "or execute it",
+        "`execute` is work performed by the host agent",
+        "the sdk does not crawl, browse, log in, submit forms, scan for "
+        "vulnerabilities, or pay or mutate the target",
+        "`register observations` and `complete` remain separate stages",
+        "non-zero evm `reward_address`",
+        "usdc on base (`eip155:8453`)",
+        "no private key, signer, or payment-wallet credential",
+        "wallet secret, private key, seed phrase, signer credential, or "
+        "wallet-control proof",
+        "hondo does not verify control of the reward address",
+        "lightning, lnurl, and bolt11 invoices are not task reward "
+        "destinations",
+        "claim success does not establish evaluation acceptance or reward "
+        "entitlement",
+        "completion http 2xx with `accepted=true` means only",
+        "durably received",
+        "`accepted` and `paid` are not interchangeable",
+        "evaluation determines eligible",
+        "fixed in the immutable claim snapshot and cannot be changed",
+        "best-effort with finite retry, not a payment sla",
+        "existing bounded transport, checkpoint, and reward-polling behavior",
+    ):
+        assert required in normalized
+
+
+def test_readme_documents_reward_destination_education_boundary():
+    readme = (
+        Path(__file__).resolve().parents[1] / "README.md"
+    ).read_text(encoding="utf-8")
+    _assert_reward_destination_education_text(readme)
+    assert (
+        "Never enter, store, or send a wallet secret, private key, "
+        "seed phrase, or signer credential."
+    ) in readme
+    assert "Task reward destinations do not support" in readme
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["ln-church-agent", "task", "--help"],
+        ["ln-church-agent", "task", "claim", "--help"],
+    ],
+)
+def test_task_help_educates_without_wallet_secret_arguments(
+    argv, capsys
+):
+    with patch.object(sys, "argv", argv):
+        from ln_church_agent.cli import main
+
+        with pytest.raises(SystemExit) as caught:
+            main()
+
+    assert caught.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    _assert_reward_destination_education_text(captured.out)
+    for prohibited_argument in (
+        "--private-key",
+        "--wallet-secret",
+        "--seed-phrase",
+        "--signer-credential",
+        "--payment-wallet-credential",
+    ):
+        assert prohibited_argument not in captured.out
+    if argv[-2:] == ["claim", "--help"]:
+        assert "--reward-address" in captured.out
+        assert "Required non-zero EVM payout address" in captured.out
+
+
+def test_task_list_and_get_human_output_educate_before_claim(capsys):
+    page = AgentTaskPage.model_validate(
+        {
+            "schema_version": "ln_church.agent_task_page.v1",
+            "tasks": [_task()],
+            "next_cursor": None,
+        }
+    )
+    task = AgentTask.model_validate(_task())
+
+    class FakeClient:
+        def list_tasks(self, **kwargs):
+            return page
+
+        def get_task(self, task_id, **kwargs):
+            return task
+
+        def close(self):
+            pass
+
+    for argv in (
+        ["ln-church-agent", "task", "list"],
+        ["ln-church-agent", "task", "get", "task_example"],
+    ):
+        with patch("ln_church_agent.task_client.AgentTaskClient", FakeClient):
+            with patch.object(sys, "argv", argv):
+                from ln_church_agent.cli import main
+
+                main()
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        _assert_reward_destination_education_text(captured.out)
+        assert CLAIM_TOKEN not in captured.out
+
+
+def test_task_list_and_get_json_output_remain_exactly_compatible(capsys):
+    page = AgentTaskPage.model_validate(
+        {
+            "schema_version": "ln_church.agent_task_page.v1",
+            "tasks": [_task()],
+            "next_cursor": None,
+        }
+    )
+    task = AgentTask.model_validate(_task())
+
+    class FakeClient:
+        def list_tasks(self, **kwargs):
+            return page
+
+        def get_task(self, task_id, **kwargs):
+            return task
+
+        def close(self):
+            pass
+
+    cases = (
+        (
+            ["ln-church-agent", "task", "list", "--json"],
+            page.model_dump(mode="json"),
+        ),
+        (
+            [
+                "ln-church-agent",
+                "task",
+                "get",
+                "task_example",
+                "--json",
+            ],
+            task.model_dump(mode="json"),
+        ),
+    )
+    for argv, expected in cases:
+        with patch("ln_church_agent.task_client.AgentTaskClient", FakeClient):
+            with patch.object(sys, "argv", argv):
+                from ln_church_agent.cli import main
+
+                main()
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert captured.out == (
+            json.dumps(
+                expected,
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        assert "Reward destination education" not in captured.out
+
+
+def test_cli_claim_human_confirmation_educates_without_wallet_secrets(
+    tmp_path, capsys
+):
+    claim = AgentTaskClaimResponse.model_validate(
+        _claim_response()
+    ).to_claim("external-agent")
+    calls = []
+
+    class FakeClient:
+        def claim_task(self, task_id, **kwargs):
+            calls.append((task_id, kwargs))
+            return claim
+
+        def close(self):
+            pass
+
+    credential_path = tmp_path / "claim.json"
+    argv = [
+        "ln-church-agent",
+        "task",
+        "claim",
+        "task_example",
+        "--agent-id",
+        "external-agent",
+        "--reward-address",
+        REWARD_ADDRESS,
+        "--credential-file",
+        str(credential_path),
+    ]
+    with patch("ln_church_agent.task_client.AgentTaskClient", FakeClient):
+        with patch.object(sys, "argv", argv):
+            from ln_church_agent.cli import main
+
+            main()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    _assert_reward_destination_education_text(captured.out)
+    assert REWARD_ADDRESS in captured.out
+    assert "fixed for this Claim" in captured.out
+    assert CLAIM_TOKEN not in captured.out
+    assert calls == [
+        (
+            "task_example",
+            {
+                "agent_id": "external-agent",
+                "reward_address": REWARD_ADDRESS,
+            },
+        )
+    ]
+    stored = json.loads(credential_path.read_text(encoding="utf-8"))
+    for prohibited_field in (
+        "private_key",
+        "wallet_secret",
+        "seed_phrase",
+        "signer_credential",
+        "payment_wallet_credential",
+    ):
+        assert prohibited_field not in stored
 
 
 def test_windows_reparse_scan_keeps_original_root_and_every_ancestor():

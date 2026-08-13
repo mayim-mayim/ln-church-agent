@@ -31,6 +31,28 @@ _TASK_FILE_MAX_BYTES = 256 * 1024
 _TASK_CHECKPOINT_FILE_MAX_BYTES = 3 * _TASK_FILE_MAX_BYTES
 _TASK_CREDENTIAL_SCHEMA = "ln_church.task_claim_credential_file.v1"
 _TASK_FIXED_ORIGIN = "https://kari.mayim-mayim.com"
+_TASK_REWARD_DESTINATION_EDUCATION = (
+    "Task execution and observation require no private key, signer, or "
+    "payment-wallet credential. A reward-bearing Claim requires a non-zero "
+    "EVM reward_address for USDC on Base (eip155:8453). The reward_address "
+    "is fixed at Claim and cannot be changed afterward; Hondo does not "
+    "verify address control. Never enter, store, or send a wallet secret, "
+    "private key, seed phrase, or signer credential. Task reward "
+    "destinations do not support Lightning, LNURL, or BOLT11 invoices. "
+    "This education is not authority for Claim availability, eligibility, "
+    "or entitlement and does not guarantee Claim, acceptance, reward, "
+    "payout, or settlement. Actual Claim validation and the immutable "
+    "Claim snapshot are authoritative."
+)
+_TASK_REWARD_ADDRESS_HELP = (
+    "Required non-zero EVM payout address for USDC on Base "
+    "(eip155:8453). It is fixed at Claim, cannot be changed afterward, "
+    "and its control is not verified by Hondo. Enter an address only, not "
+    "a wallet secret, private key, seed phrase, signer credential, "
+    "Lightning destination, LNURL, or BOLT11 invoice. Actual Claim "
+    "validation and the immutable Claim snapshot are authoritative; no "
+    "Claim, acceptance, reward, payout, or settlement is guaranteed."
+)
 _TASK_ERROR_CODES = frozenset(
     {
         "CLAIM_OUTCOME_UNKNOWN",
@@ -1895,7 +1917,9 @@ def main():
     # Public, wallet-keyless Agent Task lifecycle. The official origin is fixed;
     # no task command accepts a custom origin or a plaintext token argument.
     task_parser = subparsers.add_parser(
-        "task", help="Discover and complete public Agent Tasks"
+        "task",
+        help="Discover and complete public Agent Tasks",
+        description=_TASK_REWARD_DESTINATION_EDUCATION,
     )
     task_subparsers = task_parser.add_subparsers(
         dest="task_command", required=True
@@ -1917,11 +1941,17 @@ def main():
     task_get_parser.add_argument("--json", action="store_true")
 
     task_claim_parser = task_subparsers.add_parser(
-        "claim", help="Claim one Task"
+        "claim",
+        help="Claim one Task",
+        description=_TASK_REWARD_DESTINATION_EDUCATION,
     )
     task_claim_parser.add_argument("task_id", type=str)
     task_claim_parser.add_argument("--agent-id", required=True)
-    task_claim_parser.add_argument("--reward-address", required=True)
+    task_claim_parser.add_argument(
+        "--reward-address",
+        required=True,
+        help=_TASK_REWARD_ADDRESS_HELP,
+    )
     task_claim_parser.add_argument("--credential-file", required=True)
     task_claim_parser.add_argument("--json", action="store_true")
 
@@ -2167,6 +2197,12 @@ def main():
                 )
             )
 
+        def _print_task_reward_destination_education() -> None:
+            print(
+                "Reward destination education: %s"
+                % _TASK_REWARD_DESTINATION_EDUCATION
+            )
+
         def _print_task_offer_snapshot(
             task: Any,
             *,
@@ -2384,6 +2420,7 @@ def main():
                 if args.json:
                     _print_task_result(result, True)
                 else:
+                    _print_task_reward_destination_education()
                     print("Tasks: %d" % len(result.tasks))
                     for task in result.tasks:
                         print(
@@ -2393,14 +2430,14 @@ def main():
                         _print_task_offer_snapshot(task, indent="    ")
 
             elif args.task_command == "get":
-                _print_task_result(
-                    client.get_task(
-                        args.task_id,
-                        limit=args.limit,
-                        cursor=args.cursor,
-                    ),
-                    args.json,
+                result = client.get_task(
+                    args.task_id,
+                    limit=args.limit,
+                    cursor=args.cursor,
                 )
+                if not args.json:
+                    _print_task_reward_destination_education()
+                _print_task_result(result, args.json)
 
             elif args.task_command == "claim":
                 try:
@@ -2526,10 +2563,15 @@ def main():
                     print("Task claimed; credential file written securely.")
                     print("Task ID     : %s" % claim.task_id)
                     print("Lease expiry: %s" % claim.lease_expires_at)
+                    print(
+                        "Reward address: %s (fixed for this Claim)"
+                        % claim.reward_address
+                    )
                     _print_task_reward(
                         claim.reward,
                         label="Claim reward",
                     )
+                    _print_task_reward_destination_education()
 
             elif args.task_command in {
                 "submit",

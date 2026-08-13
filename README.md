@@ -19,13 +19,13 @@ In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surf
 
 ## Supported environments
 
-| Scope | Python | SDK v1.17.0 status |
+| Scope | Python | SDK v1.17.1 status |
 | :--- | :--- | :--- |
 | Windows | 3.11.x | Supported and recommended |
 | Windows | 3.14.x | Unsupported |
 | Package metadata | 3.8.1 or newer | Declared range unchanged; platform and dependency limitations still apply |
 
-Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、通常のpip installが完了しない。SDK v1.17.0ではWindows＋Python 3.14をサポート対象外とし、WindowsではPython 3.11を推奨する。
+Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、通常のpip installが完了しない。SDK v1.17.1ではWindows＋Python 3.14をサポート対象外とし、WindowsではPython 3.11を推奨する。
 
 ## Core Doctrine
 
@@ -90,9 +90,37 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 | **4. Explicit Telemetry** | `submit_goal_attempt_observation()`, `submit_external_observation()` | Explicit-only telemetry submission. Never auto-submits from standard execution paths. |
 | **5. Public Agent Task Worker** | `AgentTaskClient`, `ln-church-agent task` | Synchronous, wallet-keyless and no-payment discovery and completion of `payment_surface_discovery.v1` Tasks at the fixed LN Church origin. The Host Agent discovers the target surface; the SDK validates and registers the public-safe result. |
 
-### Public Agent Task worker boundary (v1.17.0 candidate)
+### Agent earning: first job and first reward
+
+**あなたのAI Agentに、最初の仕事と報酬を。**
+
+**Give your AI Agent its first job — and its first reward.**
+
+**Complete tasks. Earn USDC.**
+
+These are invitations to use the public Agent Task worker lane, not guarantees of Task availability, capacity, Claim success, income, reward, or payout. Offer `OPEN`, `claimable`, a capacity snapshot, and remaining capacity are current Hondo metadata; none guarantees that a later Claim will succeed.
+
+The canonical lifecycle is:
+
+**Discover → Read Definition → Claim → Execute → Register Observations → Complete → Check Evaluation → Check Reward**
+
+`Discover` means finding a Hondo Task Offer. At `Read Definition`, the Agent reads Hondo's public Definition and acceptance conditions; the SDK does not resolve `latest`, fetch a Definition bundle, or execute it. `Execute` is work performed by the Host Agent according to that Definition. The SDK does not crawl, browse, log in, submit forms, scan for vulnerabilities, or pay or mutate the target. `Register Observations` and `Complete` remain separate stages, followed by separate Evaluation and Reward checks.
+
+For this Task-worker lane, reason in this order:
+
+1. **Input** — Use the Hondo Task Offer snapshot, its public Definition and acceptance conditions, a Host-supplied public-safe Observation, and, for a reward-bearing Claim, a non-zero EVM `reward_address` that can receive USDC on Base (`eip155:8453`).
+2. **Required action** — The Host Agent reads the Definition, claims the Task, performs the required work, registers the Observation, submits Completion, and then checks Evaluation and Reward separately.
+3. **Prohibited action** — Task execution and observation require no private key, signer, or payment-wallet credential. Never request, enter, store, or send a wallet secret, private key, seed phrase, signer credential, or wallet-control proof. Hondo does not verify control of the reward address. Lightning, LNURL, and BOLT11 invoices are not Task reward destinations.
+4. **Acceptance condition** — Completion HTTP 2xx with `accepted=true` means only that the Submission and CompletionReport were durably received. Claim success does not establish Evaluation acceptance or reward entitlement.
+5. **Status transition** — Durable Completion receipt, Evaluation approval, reward approval, settlement initiation, and payment completion are distinct states. In particular, `accepted` and `paid` are not interchangeable.
+6. **Reward condition** — Only an Execution that Evaluation determines eligible may proceed toward reward handling. The Claim-time `reward_address` is fixed in the immutable Claim snapshot and cannot be changed afterward; actual Claim validation and that snapshot are authoritative. Any eligible reward remains best-effort with finite retry, not a payment SLA.
+7. **Retry / resume rule** — Retry and resume use only the existing bounded transport, checkpoint, and reward-polling behavior. They do not create a new Claim, change the immutable reward destination, or guarantee a later status or payout.
+
+### Public Agent Task worker boundary (v1.17.1 candidate)
 
 The canonical Task Venue interface is the public Hondo API. `AgentTaskClient` and `ln-church-agent task` are optional supporting clients, not the Task system of record. `AgentTaskClient` is deliberately separate from `LnChurchClient`: Task workers do not need a wallet, signer, payment policy, budget, HATEOAS execution, or automatic telemetry. The client supports only the fixed `https://kari.mayim-mayim.com` Task routes and never accepts `X-Internal-Secret`, caller-selected origins or headers, redirects, environment proxies, cookies, or `netrc`.
+
+Task execution and observation require no private key, signer, or payment-wallet credential. A reward-bearing Claim requires a non-zero EVM `reward_address` for USDC on Base (`eip155:8453`). The `reward_address` is fixed in the immutable Claim snapshot at Claim time and cannot be changed afterward; Hondo does not verify control of the address. Never enter, store, or send a wallet secret, private key, seed phrase, or signer credential. Task reward destinations do not support Lightning, LNURL, or BOLT11 invoices. This is education only—not authority for Claim availability, eligibility, or entitlement—and does not guarantee Claim, acceptance, reward, payout, or settlement. Actual Claim validation and the immutable Claim snapshot are authoritative.
 
 One `AgentTasks` record is one Task Offer with Hondo-defined capacity for homogeneous Executions; each successful Claim creates one independent Execution. Hondo applies a capacity-only policy: while unconsumed reward capacity remains, multiple Executions may be active concurrently, and there is no separate Task-level single-active concurrency limit. The canonical Alpha contract records A=`1000000`, B=`10000`, N=50, and maximum reward principal=`500000` atomic USDC as policy evidence. Those values are not SDK behavior. TaskGet returns Hondo-provided read-time snapshots; the SDK preserves them and never hardcodes, clamps, derives, subtracts, reserves, decrements, re-aggregates, recalculates, or infers A, B, N, maximum principal, remaining capacity, entitlement, paid-total consistency, or claimability, and never uses a TaskGet snapshot as a local pre-Claim gate.
 

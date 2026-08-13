@@ -22,7 +22,7 @@ from ln_church_agent.integrations import mcp_inspect
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.17.0"
+EXPECTED_VERSION = "1.17.1"
 EXPECTED_MCP_SPECIFIER = SpecifierSet(">=1.2.0,<2.0.0")
 TASK_SUBCOMMANDS = (
     "list",
@@ -191,7 +191,7 @@ def test_release_version_identities_are_consistent(monkeypatch):
     )
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     release_note = (
-        ROOT / "docs" / "release_notes" / "v1.17.0.md"
+        ROOT / "docs" / "release_notes" / "v1.17.1.md"
     ).read_text(encoding="utf-8")
 
     def _missing_distribution(_name):
@@ -206,44 +206,58 @@ def test_release_version_identities_are_consistent(monkeypatch):
     assert server_metadata["packages"][0]["identifier"] == "ln-church-agent"
     assert server_metadata["packages"][0]["version"] == EXPECTED_VERSION
 
-    headings = re.findall(r"^## \[([^]]+)\].*$", changelog, re.MULTILINE)
+    headings = re.findall(r"^## \\[([^]]+)\\].*$", changelog, re.MULTILINE)
     assert headings[0] == EXPECTED_VERSION
     release_prefix, next_heading, _older_entries = changelog.partition(
-        "## [1.16.4]"
+        "## [1.17.0]"
     )
-    assert next_heading == "## [1.16.4]"
-    release_heading = "## [1.17.0] - 2026-08-05 (Agent Task Venue SDK)"
+    assert next_heading == "## [1.17.0]"
+    release_heading = (
+        "## [1.17.1] - 2026-08-13 "
+        "(Reward Destination Education and Agent-Earning Documentation)"
+    )
     release_start = release_prefix.index(release_heading)
     release_section = release_prefix[release_start:]
     assert release_section.startswith(release_heading)
-    assert (
-        "Public release promoted from the independently audited Private "
-        "candidate"
-    ) in release_section
-    assert (
-        "the two release-status documents are updated for Public release."
-    ) in release_section
-    assert "docs/release_notes/v1.17.0.md" in release_section
-    assert "payment_surface_discovery.v1" in release_section
-    assert "claim_task_or_observation_binding_mismatch" in release_section
-    assert "Private Source Candidate is pending independent audit" not in (
-        release_section
-    )
-    assert "pending independent re-audit" not in release_section
+    for required in (
+        "reward_address",
+        "Base (`eip155:8453`)",
+        "wallet-control proof",
+        "Agent-earning front",
+        "JSON, wire, and Claim request payloads are unchanged",
+        "Completion receipt, Evaluation, reward approval, and payout",
+        "package, User-Agent, and MCP Observation identities",
+        "Windows plus Python 3.14 remains unsupported",
+        "docs/release_notes/v1.17.1.md",
+        "Public release promotes the independently audited Private integrated candidate",
+    ):
+        assert required in release_section
+    assert "Private Integrated Candidate" not in release_section
+    assert "Candidate status" not in release_section
 
     assert release_note.startswith(
-        "# Release v1.17.0 — Agent Task Venue SDK"
+        "# Release v1.17.1 — Reward Destination Education and "
+        "Agent-Earning Documentation"
     )
-    assert (
-        "Version 1.17.0 is the public release of the Agent Task Venue SDK."
-    ) in release_note
-    assert "It promotes the independently audited Private candidate" in release_note
-    assert "real-world SDK runtime acceptance is not inferred" in release_note
-    assert "Private candidate behavior only" not in release_note
-    assert "does not claim formal independent-audit approval" not in release_note
-    assert "payment_surface_discovery.v1" in release_note
-    assert "Host Agent" in release_note
-    assert "claim_task_or_observation_binding_mismatch" in release_note
+    for required in (
+        "Public release of the Agent SDK",
+        "independently audited Private integrated candidate",
+        "Public release date: 2026-08-13.",
+        "reward_address",
+        "wallet secret",
+        "wallet-control proof",
+        "Agent-earning front-documentation reframe",
+        "JSON output, wire fields, and the Claim request payload are unchanged",
+        "immutable Claim snapshot",
+        "Completion receipt, Evaluation approval, reward approval, settlement "
+        "initiation, and payout completion are distinct states",
+        "Windows＋Python 3.14",
+        "does not implement or deploy a Hondo runtime change",
+        "Package publication remains a separate Human-operated release action",
+    ):
+        assert required in release_note
+    assert "Private integrated source candidate" not in release_note
+    assert "does not declare Public promotion, release, publication, or deployment" not in release_note
 
     observation = mcp_inspect.build_mcp_observation_payload(
         {
@@ -263,6 +277,13 @@ def test_release_version_identities_are_consistent(monkeypatch):
         has_body=False,
     )["User-Agent"]
     assert inspect_user_agent == "ln-church-agent-inspect/" + EXPECTED_VERSION
+    task_transport_source = (
+        ROOT / "ln_church_agent" / "task_transport.py"
+    ).read_text(encoding="utf-8")
+    assert (
+        '"User-Agent": "ln-church-agent-task/' + EXPECTED_VERSION + '"'
+        in task_transport_source
+    )
     assert client.SDK_VERSION == EXPECTED_VERSION
     assert client.CUSTOM_USER_AGENT == "ln-church-agent/" + EXPECTED_VERSION
 
