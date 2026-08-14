@@ -1,0 +1,53 @@
+{
+  "schema_version": "ln_church.sdk_release_retrospective_receipt.v1",
+  "record_class": "RETROSPECTIVE_READ_ONLY_VERIFICATION",
+  "operation_equivalent": "Test-GitHubReleaseAssets",
+  "result": "GITHUB_RELEASE_ASSET_READBACK: PASS",
+  "observed_at_utc": "2026-08-14T09:35:12Z",
+  "manifest_sha256": "2451dc3cc5dbd6185b8dd8d492ec1bde8e587484dce868fa72003beb278e4a0a",
+  "repository": "mayim-mayim/ln-church-agent",
+  "source_commit": "64520b2692c25db8675bb235eb431401aa5006a4",
+  "source_tree": "5772e8eb30e8ba4431cce0037303fa91ec0445ff",
+  "tag": {
+    "name": "v1.17.1",
+    "target_commit": "64520b2692c25db8675bb235eb431401aa5006a4"
+  },
+  "release": {
+    "id": 370321398,
+    "name": "v1.17.1 — Reward Destination Education and Agent-Earning Documentation",
+    "html_url": "https://github.com/mayim-mayim/ln-church-agent/releases/tag/v1.17.1",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-08-14T01:54:33Z",
+    "published_at": "2026-08-14T02:54:34Z"
+  },
+  "assets": [
+    {
+      "id": 513840286,
+      "name": "ln_church_agent-1.17.1-py3-none-any.whl",
+      "size": 256403,
+      "github_digest": "sha256:5e2ed291d693c4b78c2c8362604eeeb30b3c242422dcfa9da85b4d188bd566a1",
+      "downloaded_sha256": "5e2ed291d693c4b78c2c8362604eeeb30b3c242422dcfa9da85b4d188bd566a1",
+      "created_at": "2026-08-14T03:01:43Z",
+      "updated_at": "2026-08-14T03:01:45Z"
+    },
+    {
+      "id": 513840336,
+      "name": "ln_church_agent-1.17.1.tar.gz",
+      "size": 564305,
+      "github_digest": "sha256:b78e2461cbcae35058cc21cccfdb1b7fcc4502a530b4172408d559631a88fa76",
+      "downloaded_sha256": "b78e2461cbcae35058cc21cccfdb1b7fcc4502a530b4172408d559631a88fa76",
+      "created_at": "2026-08-14T03:01:45Z",
+      "updated_at": "2026-08-14T03:01:46Z"
+    }
+  ],
+  "canonical_operation_executed": false,
+  "canonical_operation_script_sha256": "c97ff14d65f5a4f67fcec159a0c79715fd306d227e582459c1c09ecd51b6ab88",
+  "provider_read_count": 5,
+  "provider_mutation_count": 0,
+  "remote_git_mutation_count": 0,
+  "limitations": [
+    "This read-back used direct read-only Git and GitHub HTTPS requests, not the later generic operation candidate.",
+    "It is therefore not accepted as ln_church.sdk_release_receipt.v1 by downstream tooling."
+  ]
+}

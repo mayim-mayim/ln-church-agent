@@ -1,0 +1,45 @@
+{
+  "schema_version": "ln_church.sdk_release_retrospective_receipt.v1",
+  "record_class": "RETROSPECTIVE_NONCANONICAL",
+  "operation_equivalents": [
+    "Test-SdkSourceIdentity",
+    "Test-SdkArtifactMetadata",
+    "Test-SdkFreshInstall"
+  ],
+  "result": "PUBLIC_V1_17_1_REPORTED_QUALIFICATION_RECORDED",
+  "recorded_at_utc": "2026-08-14T09:35:12Z",
+  "manifest_sha256": "2451dc3cc5dbd6185b8dd8d492ec1bde8e587484dce868fa72003beb278e4a0a",
+  "release_version": "1.17.1",
+  "source_commit": "64520b2692c25db8675bb235eb431401aa5006a4",
+  "source_tree": "5772e8eb30e8ba4431cce0037303fa91ec0445ff",
+  "audited_candidate": "fda978c6d2af8833a9126dbbaa9df05db844cbd3",
+  "audited_candidate_tree": "5772e8eb30e8ba4431cce0037303fa91ec0445ff",
+  "evidence_source": "https://github.com/mayim-mayim/ln-church-agent/pull/14",
+  "reported_checks": {
+    "private_lane_r_focused_audit": "PASS",
+    "public_phase2_focused_audit": "PASS",
+    "linux_cpython_3_11_full_suite": {
+      "result": "PASS",
+      "passed": 1651
+    },
+    "fresh_build_install_version_import_cli_smoke_pip_check": "PASS"
+  },
+  "support_boundary": {
+    "linux": "TIER_1_RELEASE_BLOCKING",
+    "native_windows": "TIER_2_NONBLOCKING_COMPATIBILITY",
+    "native_windows_python_3_11": "BEST_EFFORT_LIMITED_SUPPORT",
+    "native_windows_python_3_14": "UNSUPPORTED",
+    "native_windows_task_cli_lifecycle": "NOT_FULLY_QUALIFIED"
+  },
+  "canonical_operations_executed": false,
+  "canonical_operation_receipts_available": false,
+  "windows_powershell_5_1_operation_parse_qualification": "NOT_ESTABLISHED",
+  "windows_powershell_5_1_operation_runtime_qualification": "NOT_ESTABLISHED",
+  "limitations": [
+    "This record preserves reported release evidence; it is not an operation-generated PASS receipt.",
+    "Raw JUnit, build, metadata, and fresh-install receipt chains were not retained in the proposed canonical format.",
+    "It must not be used to claim native-Windows SDK qualification or PS5.1 release-operation qualification."
+  ],
+  "provider_mutation_count": 0,
+  "remote_git_mutation_count": 0
+}

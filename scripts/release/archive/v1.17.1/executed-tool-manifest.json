@@ -1,0 +1,104 @@
+{
+  "schema_version": "ln_church.sdk_executed_tool_manifest.v1",
+  "record_status": "RETROSPECTIVE_TOOL_GAP_RECORDED",
+  "release_version": "1.17.1",
+  "source_commit": "64520b2692c25db8675bb235eb431401aa5006a4",
+  "source_tree": "5772e8eb30e8ba4431cce0037303fa91ec0445ff",
+  "release_manifest": {
+    "path": "release-manifest.json",
+    "sha256": "2451dc3cc5dbd6185b8dd8d492ec1bde8e587484dce868fa72003beb278e4a0a",
+    "was_fixed_before_release": false
+  },
+  "intended_operation_order": [
+    "Test-SdkSourceIdentity",
+    "Build-SdkArtifacts",
+    "Test-SdkArtifactMetadata",
+    "Test-SdkFreshInstall",
+    "Test-GitHubReleaseAssets"
+  ],
+  "generic_operation_candidates": [
+    {
+      "operation": "Test-SdkSourceIdentity",
+      "path": "../../sdk/operations/Test-SdkSourceIdentity.ps1",
+      "sha256": "13ff332837e7afe77049ede127068048117571456a78d57e47f4a8631d0da6ae",
+      "executed_for_v1_17_1": false
+    },
+    {
+      "operation": "Build-SdkArtifacts",
+      "path": "../../sdk/operations/Build-SdkArtifacts.ps1",
+      "sha256": "217c2a1d2ac1ee51c288a67501af8ce2fbd59cf220507bf40176630f7d61f2cb",
+      "executed_for_v1_17_1": false
+    },
+    {
+      "operation": "Test-SdkArtifactMetadata",
+      "path": "../../sdk/operations/Test-SdkArtifactMetadata.ps1",
+      "sha256": "9c41c33fb2fb7b79d830eabecbef89a37a5b28a80401327675264e0bb0e62c6a",
+      "executed_for_v1_17_1": false
+    },
+    {
+      "operation": "Test-SdkFreshInstall",
+      "path": "../../sdk/operations/Test-SdkFreshInstall.ps1",
+      "sha256": "3de87dab50d7f620984a0573d913f8aa02cff172d80cb440bb282527e8a2f4a6",
+      "executed_for_v1_17_1": false
+    },
+    {
+      "operation": "Test-GitHubReleaseAssets",
+      "path": "../../sdk/operations/Test-GitHubReleaseAssets.ps1",
+      "sha256": "c97ff14d65f5a4f67fcec159a0c79715fd306d227e582459c1c09ecd51b6ab88",
+      "executed_for_v1_17_1": false
+    }
+  ],
+  "operation_candidate_qualification": {
+    "static_validation": "PASS",
+    "windows_powershell_5_1_parse": "NOT_RUN",
+    "windows_powershell_5_1_safe_stop": "NOT_RUN",
+    "windows_powershell_5_1_normal_path": "NOT_RUN",
+    "release_qualification": "NOT_ESTABLISHED"
+  },
+  "retrospective_records": [
+    {
+      "path": "receipts/artifact-identity.json",
+      "sha256": "3863885c945bee48e3a16dc8d801b971fa8503733224c890e2f6d682e8aa1bd3"
+    },
+    {
+      "path": "receipts/qualification-summary.json",
+      "sha256": "0e07c542392a91d0399d4bb26f2b8e450bc83f0e242fc0f50ffabf435591ae14"
+    },
+    {
+      "path": "receipts/github-release-readback.json",
+      "sha256": "fdf9c0b57912b627762869cd60ff7dd2cf64aa7d78fa10d05f1551ea8f88852d"
+    }
+  ],
+  "diagnostic_rebuild": {
+    "purpose": "Determine whether the published v1.17.1 artifacts can be reconstructed as operation receipts after publication.",
+    "environment": "Linux CPython 3.11.15 semantic emulation; not Windows PowerShell 5.1",
+    "source_commit": "64520b2692c25db8675bb235eb431401aa5006a4",
+    "tool_versions": {
+      "build": "1.5.0",
+      "setuptools": "84.0.0",
+      "wheel": "0.48.0"
+    },
+    "observed_artifacts": [
+      {
+        "filename": "ln_church_agent-1.17.1-py3-none-any.whl",
+        "size": 256403,
+        "sha256": "41ec09a53b3f10ab22c39ea5d205f5b6727b94d00a56a70c11d0495fc0e49cba",
+        "matches_published_bytes": false
+      },
+      {
+        "filename": "ln_church_agent-1.17.1.tar.gz",
+        "size": 564262,
+        "sha256": "7e9791926cf7a4c46a9e8fae7229e583d0da3e024a9f047c88df63eb8d5eefc7",
+        "matches_published_bytes": false
+      }
+    ],
+    "disposition": "DO_NOT_SUBSTITUTE_OR_FABRICATE_CANONICAL_BUILD_RECEIPT"
+  },
+  "publication_boundary": {
+    "github_tag": "COMPLETE",
+    "github_release": "COMPLETE",
+    "github_release_assets": "COMPLETE",
+    "pypi": "NOT_PERFORMED_OUT_OF_SCOPE",
+    "mcp_registry": "NOT_PERFORMED_OUT_OF_SCOPE"
+  }
+}
