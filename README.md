@@ -21,11 +21,15 @@ In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surf
 
 | Scope | Python | SDK v1.17.1 status |
 | :--- | :--- | :--- |
-| Windows | 3.11.x | Supported and recommended |
-| Windows | 3.14.x | Unsupported |
+| Linux | 3.11.x | Tier 1 — release-blocking |
+| Native Windows | 3.11.x | Tier 2 — best-effort limited support |
+| Native Windows | 3.14.x | Unsupported |
+| WSL2 / Linux container | 3.11.x | Linux lane when the actual SDK runtime is Linux |
 | Package metadata | 3.8.1 or newer | Declared range unchanged; platform and dependency limitations still apply |
 
-Windows上のPython 3.14では、推移依存するcoincurveの対応状況により、通常のpip installが完了しない。SDK v1.17.1ではWindows＋Python 3.14をサポート対象外とし、WindowsではPython 3.11を推奨する。
+Linux is the Tier 1 release-blocking environment. Native Windows is a Tier 2 nonblocking compatibility lane. Native Windows with Python 3.11 has best-effort limited support. Native Windows with Python 3.14 is unsupported because a normal `pip install` may fail due to the support state of the transitive `coincurve` dependency. WSL2 or a Linux container is in the Linux lane when the actual SDK runtime is Linux. The native Windows Task CLI lifecycle has not been fully qualified for this release.
+
+Only native-Windows-specific availability or compatibility findings are nonblocking. Security or confidentiality defects, integrity defects, unintended Claim, Observation, Completion, payment, or provider mutation, shared-wire defects, runtime defects that also reproduce on Linux Tier 1, release-identity inconsistencies, and materially misleading public interfaces or documentation remain release-blocking.
 
 ## Core Doctrine
 
@@ -151,7 +155,9 @@ Only Task detail can include `execution_summaries` and `execution_summaries_next
 
 Task-detail parsing validates summary wire structure without a Claim credential, so a summary by itself is public metadata rather than a Claim-bound reward receipt. The network-free `verify_task_execution_summary(credential, task, summary, submission_id=..., observation_id=...)` operation binds a matching summary by the expected existing Task, Submission, and Observation identities, compares the Task identity/Definition and summary reward only with the known validated Claim snapshot, and returns no inferred reward or aggregate. It fails closed on missing or mismatched values and never treats a possibly stale TaskGet advertised reward as Claim authority.
 
-The standard worker path is the guided Register-to-Completion bridge. It validates the domainless Claim credential and Observation once, saves a secret-free `REGISTER_PENDING` checkpoint before Register, verifies the exact Register receipt, saves `REGISTERED` before Completion, and derives the Completion IDs mechanically from that receipt. The validated submission snapshot and RFC 8785 digest bind its `observed_domain`, URLs, discovered surfaces, and safety evidence across resume. The caller never reads or re-enters a Submission or Observation ID:
+The standard worker path is the guided Register-to-Completion bridge. It validates the domainless Claim credential and Observation once, saves a secret-free `REGISTER_PENDING` checkpoint before Register, verifies the exact Register receipt, saves `REGISTERED` before Completion, and derives the Completion IDs mechanically from that receipt. The validated submission snapshot and RFC 8785 digest bind its `observed_domain`, URLs, discovered surfaces, and safety evidence across resume. The caller never reads or re-enters a Submission or Observation ID.
+
+On Linux, including WSL2 or a Linux container whose actual SDK runtime is Linux, a Task CLI invocation can use Linux-relative paths:
 
 ```bash
 ln-church-agent task submit-complete TASK_ID \
@@ -159,6 +165,23 @@ ln-church-agent task submit-complete TASK_ID \
   --file ./observations/TASK_ID.json \
   --checkpoint-file ./claims/TASK_ID.checkpoint.json
 ```
+
+On native Windows, private credential and checkpoint files must be stored under the canonical claims root `%LOCALAPPDATA%\ln-church-agent\claims`. The runtime does not create this root automatically; create it before running the Task CLI. In PowerShell 5.1:
+
+```powershell
+$claimsRoot = Join-Path $env:LOCALAPPDATA "ln-church-agent\claims"
+New-Item -ItemType Directory -Path $claimsRoot -Force | Out-Null
+
+$credentialFile = Join-Path $claimsRoot "TASK_ID.json"
+$checkpointFile = Join-Path $claimsRoot "TASK_ID.checkpoint.json"
+
+ln-church-agent task submit-complete TASK_ID `
+  --credential-file $credentialFile `
+  --file .\observations\TASK_ID.json `
+  --checkpoint-file $checkpointFile
+```
+
+The relative paths `./claims/TASK_ID.json` and `./claims/TASK_ID.checkpoint.json` are Linux examples, including WSL2 or Linux containers whose actual runtime is Linux; they are not generally valid native Windows examples.
 
 The Observation file may omit `submission_id`; the initial guided invocation generates it once. Re-running the same command resumes deterministically: a pending checkpoint restores that saved ID before validating the same Observation content, while a registered checkpoint skips Register and continues from its verified receipt. A resume never generates a replacement identity. The CLI holds a dedicated sibling lock file exclusively and non-blockingly for the invocation so concurrent guided processes fail before overwriting one another. Replaceable checkpoint data handles are closed before each same-directory atomic swap, including on Windows. The checkpoint contains no Claim token or usable credential. Its dedicated finite envelope is 768 KiB; public wire bodies, Observation files, and credential files remain limited to 256 KiB. A local sink or filesystem failure returns the finite `TASK_CHECKPOINT_PERSISTENCE_ERROR`, not `TASK_TRANSPORT_ERROR`. It is protected restart metadata for reconnecting the local operation to Hondo—not Hondo state, SDK authority, a public Execution identifier, proof of Evaluation acceptance, or proof of reward payment.
 
