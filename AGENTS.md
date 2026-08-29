@@ -9,7 +9,7 @@
 
 ## Allowed work
 
-- Authorized promotion of frozen, independently audited private source.
+- Authorized promotion of an exact frozen private candidate that Development Control read back from its dedicated GitHub candidate ref and that passed the required independent Release Readiness Gate.
 - Package metadata, release notes, tags, and release assets tied to the frozen candidate.
 - Narrow public-only documentation corrections under explicit bounded authority.
 - Explicit Human-authorized emergency promotion, rollback, or publication work.
@@ -17,7 +17,7 @@
 ## Prohibited work
 
 - Do not implement normal features directly in this repository.
-- Release AI does not repair source.
+- Release AI does not repair source, stage a missing private candidate, or recreate one as a new commit.
 - Do not publish content that cannot be traced to audited private source or an explicitly authorized public-only correction.
 - Do not infer tag, GitHub Release, PyPI, MCP Registry, merge, or publication authority from permission to create a branch or PR.
 
@@ -25,7 +25,7 @@
 
 Preserve traceability among:
 
-- private source commit, tree, and relevant blobs;
+- private candidate ref, source commit, tree, parent, and relevant blobs;
 - independent audit or Human-approved emergency-waiver authority;
 - promoted public commit, tree, and blobs;
 - built wheel and sdist plus digests;
@@ -33,7 +33,9 @@ Preserve traceability among:
 - PyPI and MCP Registry publication;
 - post-release verification.
 
-Stop the Release lane and return to Development Control and the private implementation repository when source repair is required or private-to-public identity cannot be proven.
+The candidate-ref requirement applies prospectively. An unchanged pre-adoption exact ref is handled under the Development Charter transition rule and is not renamed, recreated, or source-reaudited solely because staging occurred before adoption.
+
+When source repair is required or the private candidate ref／identity cannot be proven, hold the affected promotion and report through the Development Charter Audit release-problem assessment route. Release does not stage or recreate the private candidate and does not dispatch directly to Development Control or Implementation. A missing／mismatched Release Readiness ref is an identity／handoff `STOP_HANDOFF`／`STOP`, not a Product-source failure.
 
 ## Change control
 
