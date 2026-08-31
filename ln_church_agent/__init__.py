@@ -111,6 +111,91 @@ from .failures import (
 
 from .capabilities import get_capability_matrix
 
+
+# v1.18's Task-v2 surface is lazy so importing the keyless inspect-only MCP
+# does not initialize the scheduled worker or its secret-bearing models.  A
+# normal explicit import (``from ln_church_agent import AgentTaskV2Client``)
+# resolves and caches exactly the requested public symbol.
+_V18_LAZY_EXPORTS = {
+    "AgentTaskV2Client": ("task_v2_client", "AgentTaskV2Client"),
+    "ScheduledTaskClaimCredential": (
+        "task_v2_models",
+        "ScheduledTaskClaimCredential",
+    ),
+    "ScheduledTaskReadiness": (
+        "task_v2_models",
+        "ScheduledTaskReadiness",
+    ),
+    "ScheduledCompletionReport": (
+        "task_v2_models",
+        "ScheduledCompletionReport",
+    ),
+    "ScheduledCompletionReceipt": (
+        "task_v2_models",
+        "ScheduledCompletionReceipt",
+    ),
+    "ScheduledRewardStatus": (
+        "task_v2_models",
+        "ScheduledRewardStatus",
+    ),
+    "ScheduledCompletionAcknowledgement": (
+        "task_v2_models",
+        "ScheduledCompletionAcknowledgement",
+    ),
+    "TaskV2Error": ("task_v2_transport", "TaskV2Error"),
+    "TaskV2TransportError": (
+        "task_v2_transport",
+        "TaskV2TransportError",
+    ),
+    "TaskV2APIError": ("task_v2_transport", "TaskV2APIError"),
+    "ClaimOutcomeUnknownError": (
+        "task_v2_transport",
+        "ClaimOutcomeUnknownError",
+    ),
+    "CompletionOutcomeUnknownError": (
+        "task_v2_transport",
+        "CompletionOutcomeUnknownError",
+    ),
+    "ScheduledExecutionContext": (
+        "scheduled_http_get_batch",
+        "ScheduledExecutionContext",
+    ),
+    "FrozenCompletionReport": (
+        "scheduled_http_get_batch",
+        "FrozenCompletionReport",
+    ),
+    "ScheduledExecutionError": (
+        "scheduled_http_get_batch",
+        "ScheduledExecutionError",
+    ),
+    "ScheduledHTTPGetBatchExecutor": (
+        "scheduled_http_get_batch",
+        "ScheduledHTTPGetBatchExecutor",
+    ),
+    "ScheduledHttpGetBatchExecutor": (
+        "scheduled_http_get_batch",
+        "ScheduledHttpGetBatchExecutor",
+    ),
+    "TaskJournal": ("task_journal", "TaskJournal"),
+    "JournalError": ("task_journal", "JournalError"),
+}
+
+
+def __getattr__(name):
+    target = _V18_LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    from importlib import import_module
+
+    module = import_module(".%s" % target[0], __name__)
+    value = getattr(module, target[1])
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_V18_LAZY_EXPORTS))
+
 # 汎用別名
 Http402Client = Payment402Client 
 
@@ -207,4 +292,23 @@ __all__ = [
     "TaskTransportError",
     "TaskAPIError",
     "TaskAmbiguousOutcomeError",
+    "AgentTaskV2Client",
+    "ScheduledTaskClaimCredential",
+    "ScheduledTaskReadiness",
+    "ScheduledCompletionReport",
+    "ScheduledCompletionReceipt",
+    "ScheduledRewardStatus",
+    "ScheduledCompletionAcknowledgement",
+    "TaskV2Error",
+    "TaskV2TransportError",
+    "TaskV2APIError",
+    "ClaimOutcomeUnknownError",
+    "CompletionOutcomeUnknownError",
+    "ScheduledExecutionContext",
+    "FrozenCompletionReport",
+    "ScheduledExecutionError",
+    "ScheduledHTTPGetBatchExecutor",
+    "ScheduledHttpGetBatchExecutor",
+    "TaskJournal",
+    "JournalError",
 ]

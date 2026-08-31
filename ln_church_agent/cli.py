@@ -84,6 +84,54 @@ _TASK_ERROR_CODES = frozenset(
         "payload_too_large",
         "rate_limited",
         "internal_error",
+        "invalid_manifest",
+        "invalid_control_key",
+        "invalid_claim_token",
+        "origin_mismatch",
+        "offer_not_manageable",
+        "not_found",
+        "idempotency_conflict",
+        "registration_intent_conflict",
+        "payment_authorization_conflict",
+        "campaign_capacity_unavailable",
+        "offer_not_claimable",
+        "wallet_guard_conflict",
+        "claim_outcome_unknown",
+        "offer_not_cancellable",
+        "claim_expired",
+        "report_closed",
+        "report_binding_invalid",
+        "report_not_open",
+        "manifest_not_yet_available",
+        "settlement_reconciliation_pending",
+        "temporarily_unavailable",
+        "TASK_V2_REQUEST_INVALID",
+        "TASK_V2_RESPONSE_INVALID",
+        "TASK_V2_CREDENTIAL_INVALID",
+        "TASK_V2_REPORT_INVALID",
+        "TASK_V2_REPORT_BINDING_INVALID",
+        "TASK_V2_DNS_POLICY_REJECTED",
+        "TASK_V2_RESPONSE_TOO_LARGE",
+        "TASK_V2_RESPONSE_ENCODING_REJECTED",
+        "TASK_V2_TIMEOUT",
+        "TASK_V2_TRANSPORT_ERROR",
+        "TASK_V2_TRANSPORT_CLOSED",
+        "TASK_V2_CLIENT_CLOSED",
+        "TASK_V2_CLOCK_INVALID",
+        "TASK_V2_STATUS_UNAVAILABLE",
+        "TASK_V2_EXECUTION_CONTEXT_INVALID",
+        "TASK_V2_API_ERROR",
+        "COMPLETION_OUTCOME_UNKNOWN",
+        "EXECUTION_CONTEXT_INVALID",
+        "EXECUTION_UNAVAILABLE",
+        "EXECUTION_JOURNAL_INVALID",
+        "EXECUTION_JOURNAL_PERSISTENCE_AMBIGUOUS",
+        "EXECUTION_REPORT_INVALID",
+        "JOURNAL_INVALID",
+        "JOURNAL_MISSING",
+        "JOURNAL_LOCKED",
+        "JOURNAL_PERSISTENCE_AMBIGUOUS",
+        "JOURNAL_STATE_CONFLICT",
     }
 )
 _TASK_SECRET_FIELD_NAMES = frozenset(
@@ -134,7 +182,11 @@ def _task_public_payload(value: Any) -> Any:
             compact = normalized.replace("-", "").replace("_", "")
             if (
                 normalized in _TASK_SECRET_FIELD_NAMES
-                or compact in {"claimtoken", "xlntaskclaimtoken"}
+                or compact
+                in {
+                    "claimtoken",
+                    "xlntaskclaimtoken",
+                }
             ):
                 continue
             public[str(key)] = _task_public_payload(item)
@@ -182,6 +234,16 @@ def _task_tombstone(task_id: str) -> Dict[str, Any]:
     }
 
 
+def _task_v2_tombstone(task_id: str) -> Dict[str, Any]:
+    return {
+        "schema_version": "ln_church.task_v2_claim_credential_file.v1",
+        "state": "CLAIM_OUTCOME_UNKNOWN",
+        "api_origin": _TASK_FIXED_ORIGIN,
+        "task_id": task_id,
+        "created_at": _task_now_rfc3339(),
+    }
+
+
 def _reject_task_secret_cli_arguments(argv: List[str]) -> None:
     """Reject token-like Task options without letting argparse echo a secret."""
 
@@ -192,7 +254,12 @@ def _reject_task_secret_cli_arguments(argv: List[str]) -> None:
             continue
         option = argument.split("=", 1)[0].lstrip("-")
         compact = option.lower().replace("-", "").replace("_", "")
-        if compact in {"claimtoken", "xlntaskclaimtoken"}:
+        if compact in {
+            "claimtoken",
+            "xlntaskclaimtoken",
+            "manifesturl",
+            "signedmanifesturl",
+        }:
             _task_cli_error("TASK_CREDENTIAL_INVALID")
 
 
@@ -2006,6 +2073,29 @@ def main():
     task_wait_parser.add_argument("--max-attempts", type=int, default=10)
     task_wait_parser.add_argument("--json", action="store_true")
 
+    task_claim_v2_parser = task_subparsers.add_parser(
+        "claim-v2",
+        help="Claim one scheduled HTTP GET batch Task",
+    )
+    task_claim_v2_parser.add_argument("task_id", type=str)
+    task_claim_v2_parser.add_argument("--agent-id", required=True)
+    task_claim_v2_parser.add_argument(
+        "--reward-address",
+        required=True,
+        help=_TASK_REWARD_ADDRESS_HELP,
+    )
+    task_claim_v2_parser.add_argument("--credential-file", required=True)
+    task_claim_v2_parser.add_argument("--journal-file", required=True)
+    task_claim_v2_parser.add_argument("--json", action="store_true")
+
+    task_run_v2_parser = task_subparsers.add_parser(
+        "run-scheduled-http-get-batch",
+        help="Run or resume a claimed scheduled HTTP GET batch Task",
+    )
+    task_run_v2_parser.add_argument("--credential-file", required=True)
+    task_run_v2_parser.add_argument("--journal-file", required=True)
+    task_run_v2_parser.add_argument("--json", action="store_true")
+
     # 💡 3. [NEW] Paid Registration & Read Models (`observe-domain`)
     obs_domain_parser = subparsers.add_parser("observe-domain", help="Manage paid domain observation slots")
     obs_domain_sub = obs_domain_parser.add_subparsers(dest="obs_cmd", required=True)
@@ -2407,6 +2497,312 @@ def main():
                     value,
                     label="Claim reward",
                 )
+
+        if args.task_command == "claim-v2":
+            from .task_v2_client import AgentTaskV2Client
+            from .task_journal import JournalError, TaskJournal
+            from .task_v2_contract import (
+                validate_agent_id as validate_v2_agent_id,
+                validate_reward_address as validate_v2_reward_address,
+                validate_task_id as validate_v2_task_id,
+            )
+            from .task_v2_transport import (
+                ClaimOutcomeUnknownError,
+                TaskV2APIError,
+                TaskV2Error,
+            )
+
+            reservation = None
+            v2_client = None
+            try:
+                try:
+                    claim_task_id = validate_v2_task_id(args.task_id)
+                    claim_agent_id = validate_v2_agent_id(args.agent_id)
+                    claim_reward_address = validate_v2_reward_address(
+                        args.reward_address
+                    )
+                except (TypeError, ValueError):
+                    _task_cli_error("invalid_request")
+                try:
+                    reservation = _TaskCredentialReservation(
+                        args.credential_file
+                    )
+                except (OSError, ValueError):
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                v2_client = AgentTaskV2Client()
+                try:
+                    credential = v2_client.claim_task(
+                        claim_task_id,
+                        agent_id=claim_agent_id,
+                        reward_address=claim_reward_address,
+                    )
+                except ClaimOutcomeUnknownError:
+                    try:
+                        reservation.write_payload(
+                            _task_v2_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        try:
+                            reservation.scrub_with_tombstone(
+                                _task_v2_tombstone(claim_task_id)
+                            )
+                        except (OSError, TypeError, ValueError):
+                            pass
+                    reservation.close()
+                    _task_cli_error("CLAIM_OUTCOME_UNKNOWN")
+                except TaskV2Error as exc:
+                    try:
+                        reservation.remove_own_reservation()
+                    except (OSError, ValueError):
+                        reservation.close()
+                    code = (
+                        exc.public_error_code
+                        if isinstance(exc, TaskV2APIError)
+                        else exc.code
+                    )
+                    _task_cli_error(code)
+                except Exception:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_v2_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error("CLAIM_OUTCOME_UNKNOWN")
+
+                try:
+                    journal = TaskJournal(
+                        args.journal_file,
+                        task_id=credential.task_id,
+                        local_claim_credential_handle=(
+                            credential.local_claim_credential_handle
+                        ),
+                        task_type=credential.task_type,
+                        task_definition_version=(
+                            credential.task_definition_version
+                        ),
+                        task_definition_digest=(
+                            credential.task_definition_digest
+                        ),
+                    )
+                    journal.create()
+                except JournalError as exc:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_v2_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error(exc.code)
+                except Exception:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_v2_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error("JOURNAL_INVALID")
+
+                try:
+                    reservation.write_payload(
+                        _task_active_credential_payload(credential)
+                    )
+                    reservation.close()
+                except Exception:
+                    try:
+                        reservation.scrub_with_tombstone(
+                            _task_v2_tombstone(claim_task_id)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        pass
+                    reservation.close()
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                public_claim = _task_public_payload(credential)
+                if type(public_claim) is not dict:
+                    _task_cli_error("TASK_RESPONSE_INVALID")
+                public_claim["credential_file_written"] = True
+                public_claim["journal_initialized"] = True
+                if args.json:
+                    print(
+                        _task_json.dumps(
+                            public_claim,
+                            indent=2,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                    )
+                else:
+                    print(
+                        "Scheduled Task claimed; private credential file "
+                        "written securely."
+                    )
+                    print("Task ID     : %s" % credential.task_id)
+                    print("Lease expiry: %s" % credential.claim_expires_at)
+            finally:
+                if v2_client is not None:
+                    try:
+                        v2_client.close()
+                    except Exception:
+                        pass
+            return
+
+        if args.task_command == "run-scheduled-http-get-batch":
+            from .scheduled_http_get_batch import (
+                ScheduledExecutionError,
+                ScheduledHTTPGetBatchExecutor,
+            )
+            from .task_journal import JournalError, TaskJournal
+            from .task_v2_client import AgentTaskV2Client
+            from .task_v2_models import (
+                ScheduledCompletionReport,
+                ScheduledTaskClaimCredential,
+            )
+            from .task_v2_transport import (
+                TaskV2APIError,
+                TaskV2Error,
+                TaskV2TransportError,
+            )
+
+            v2_client = None
+            try:
+                try:
+                    credential_payload = _read_task_json_file(
+                        args.credential_file, require_private=True
+                    )
+                    credential = _task_credential_from_payload(
+                        credential_payload,
+                        ScheduledTaskClaimCredential,
+                    )
+                except (OSError, ValueError):
+                    _task_cli_error("TASK_CREDENTIAL_INVALID")
+
+                try:
+                    credential_handle = (
+                        credential.local_claim_credential_handle
+                    )
+                    journal = TaskJournal(
+                        args.journal_file,
+                        task_id=credential.task_id,
+                        local_claim_credential_handle=credential_handle,
+                        task_type=credential.task_type,
+                        task_definition_version=(
+                            credential.task_definition_version
+                        ),
+                        task_definition_digest=(
+                            credential.task_definition_digest
+                        ),
+                    )
+                    # Run/resume is load-only.  Missing state is not
+                    # reconstructible from a bearer credential.
+                    snapshot = journal.load()
+                    v2_client = AgentTaskV2Client()
+
+                    state = snapshot.state
+                    if state in {
+                        "COMPOUND_COMPLETION_ACKED",
+                        "TERMINAL_STATUS",
+                    }:
+                        try:
+                            report = ScheduledCompletionReport.model_validate_json(
+                                journal.frozen_report_bytes(), strict=True
+                            )
+                        except Exception:
+                            raise JournalError("JOURNAL_INVALID") from None
+                        acknowledgement = v2_client.recover_completion(
+                            credential, report, journal=journal
+                        )
+                        if (
+                            getattr(acknowledgement, "source", None)
+                            != "status"
+                            or getattr(acknowledgement, "status", None)
+                            is None
+                        ):
+                            raise TaskV2TransportError(
+                                "TASK_V2_RESPONSE_INVALID",
+                                request_bytes_sent=True,
+                            )
+                        result = acknowledgement.status
+                        submission_id = report.submission_id
+                    elif state == "REPORT_FROZEN":
+                        try:
+                            report = ScheduledCompletionReport.model_validate_json(
+                                journal.frozen_report_bytes()
+                            )
+                        except Exception:
+                            raise JournalError("JOURNAL_INVALID") from None
+                        result = v2_client.complete_task(
+                            credential, report, journal=journal
+                        )
+                        submission_id = report.submission_id
+                    elif state == "MANIFEST_FETCH_STARTED":
+                        frozen = (
+                            v2_client.recover_interrupted_manifest_fetch(
+                                credential, journal=journal
+                            )
+                        )
+                        result = v2_client.complete_task(
+                            credential, frozen, journal=journal
+                        )
+                        submission_id = frozen.submission_id
+                    elif state in {
+                        "INIT",
+                        "OFFER_RECHECKED",
+                        "MANIFEST_VERIFIED",
+                        "ATTEMPT_STARTED",
+                        "RESULT_RECORDED",
+                    }:
+                        readiness = v2_client.get_readiness(
+                            credential, journal=journal
+                        )
+                        context = v2_client.build_execution_context(
+                            credential, readiness, journal=journal
+                        )
+                        frozen = ScheduledHTTPGetBatchExecutor().execute(
+                            context, journal=journal
+                        )
+                        result = v2_client.complete_task(
+                            credential, frozen, journal=journal
+                        )
+                        submission_id = frozen.submission_id
+                    else:
+                        raise ScheduledExecutionError(
+                            "EXECUTION_JOURNAL_INVALID"
+                        )
+                except TaskV2APIError as exc:
+                    _task_cli_error(exc.public_error_code)
+                except (TaskV2Error, ScheduledExecutionError, JournalError) as exc:
+                    _task_cli_error(getattr(exc, "code", None))
+
+                public_result = _task_public_payload(result)
+                if args.json:
+                    print(
+                        _task_json.dumps(
+                            public_result,
+                            indent=2,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        )
+                    )
+                else:
+                    print("Scheduled HTTP GET batch Completion acknowledged.")
+                    print("Task ID      : %s" % credential.task_id)
+                    print("Submission ID: %s" % submission_id)
+                    if hasattr(result, "source"):
+                        print("Recovered via: %s" % result.source)
+                    elif hasattr(result, "submission_status"):
+                        print("Status       : %s" % result.submission_status)
+            finally:
+                if v2_client is not None:
+                    try:
+                        v2_client.close()
+                    except Exception:
+                        pass
+            return
 
         client = None
         try:

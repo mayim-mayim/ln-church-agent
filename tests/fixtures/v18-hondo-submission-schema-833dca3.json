@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ln-church:schema:scheduled_http_get_batch.v1:1.0.0:submission",
+  "title": "scheduled_http_get_batch.v1 compound Completion request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "submission_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_sha256",
+    "manifest_fetch",
+    "results",
+    "completed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.scheduled_http_get_batch_completion.v1"
+    },
+    "submission_id": {
+      "type": "string",
+      "pattern": "^sub_[a-f0-9]{32}$"
+    },
+    "task_type": {
+      "const": "scheduled_http_get_batch.v1"
+    },
+    "task_definition_version": {
+      "const": "1.0.0"
+    },
+    "task_definition_digest": {
+      "$ref": "#/$defs/lowercaseSha256"
+    },
+    "manifest_sha256": {
+      "$ref": "#/$defs/lowercaseSha256"
+    },
+    "manifest_fetch": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "http_status", "observed_sha256"],
+          "properties": {
+            "outcome": {"const": "retrieved"},
+            "http_status": {"const": 200},
+            "observed_sha256": {"$ref": "#/$defs/lowercaseSha256"},
+            "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 5000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "http_status"],
+          "properties": {
+            "outcome": {"const": "release_http_unexpected_status"},
+            "http_status": {
+              "type": "integer",
+              "minimum": 201,
+              "maximum": 599
+            },
+            "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 5000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "http_status", "observed_sha256"],
+          "properties": {
+            "outcome": {"const": "release_digest_mismatch"},
+            "http_status": {"const": 200},
+            "observed_sha256": {"$ref": "#/$defs/lowercaseSha256"},
+            "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 5000}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome"],
+          "properties": {
+            "outcome": {
+              "enum": [
+                "release_timeout",
+                "release_dns_error",
+                "release_tls_error",
+                "release_connection_error",
+                "release_protocol_error",
+                "release_response_too_large",
+                "release_encoding_unsupported",
+                "release_invalid_json",
+                "release_schema_invalid",
+                "release_interrupted"
+              ]
+            },
+            "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 5000}
+          }
+        }
+      ]
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/targetResult"
+      }
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "manifest_fetch": {
+            "properties": {"outcome": {"const": "retrieved"}},
+            "required": ["outcome"]
+          }
+        }
+      },
+      "then": {
+        "properties": {"results": {"minItems": 1}}
+      },
+      "else": {
+        "properties": {"results": {"maxItems": 0}}
+      }
+    }
+  ],
+  "$defs": {
+    "lowercaseSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "targetResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "target_url", "outcome"],
+      "properties": {
+        "position": {"type": "integer", "minimum": 0, "maximum": 9},
+        "target_url": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "outcome": {
+          "enum": [
+            "http_response",
+            "dns_error",
+            "tls_error",
+            "connection_error",
+            "timeout",
+            "protocol_error",
+            "interrupted_indeterminate",
+            "not_attempted_interrupted",
+            "not_attempted_deadline"
+          ]
+        },
+        "http_status": {"type": "integer", "minimum": 200, "maximum": 599},
+        "elapsed_ms": {"type": "integer", "minimum": 0, "maximum": 12000}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"outcome": {"const": "http_response"}}, "required": ["outcome"]},
+          "then": {"required": ["http_status"]},
+          "else": {"not": {"required": ["http_status"]}}
+        }
+      ]
+    }
+  }
+}

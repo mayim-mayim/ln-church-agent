@@ -197,6 +197,40 @@ Alpha is a proof of concept: Hondo sends eligible rewards automatically on a bes
 
 The existing OpenClaw worker endpoints and `X-Internal-Secret` remain internal and unchanged. The inspect-only MCP remains keyless and exposes no Task mutation tools. Bazaar registration and the paid Task Offer route are outside this SDK worker candidate; it exposes no Task Offer creation model, payment wrapper, or registration command.
 
+### Scheduled HTTP GET Batch worker boundary (v1.18.0)
+
+The v1.18.0 release adds a strict generic-v2 Task layer and a dedicated adapter for `scheduled_http_get_batch.v1`. Released v1 Tasks remain on their existing client, models, flat error envelope, routes, and retry rules. For a known v2 Task, Claim is sent once only. An indeterminate Claim is reported as `CLAIM_OUTCOME_UNKNOWN` and is never replayed. Readiness is the immediate schedule-time authority; it provides the Claim-bound Manifest information to the adapter without turning that information into public model data.
+
+The Claim token and signed Manifest URL are secrets. They are excluded from ordinary dumps, representations, errors, logs, inspect results, MCP messages, CLI arguments, CLI output, Completion reports, and journal payloads. Signed query bytes live only in private slotted transport state; ordinary dataclass, `vars()`, and pickle serialization fail closed without exposing them. The private credential-file codec is the only local serialization boundary for the Claim credential. `task claim-v2` requires both a credential path and a journal path, and creates the definition-bound journal exactly once after Claim succeeds and before it writes a usable credential. The run/resume command only loads that journal: a missing journal is never reconstructed and causes zero readiness, Manifest, target, Completion, or status I/O. Callers never paste a Claim token or signed URL into a command line or model prompt. The inspect-only MCP remains keyless and has no Task mutation or execution tool.
+
+The official adapter fetches the exact signed Manifest URL with fresh A and AAAA resolution for each attempt. IPv6 eligibility is fail-closed against a runtime-network-free pinned IANA allocation and special-purpose snapshot, not `ipaddress.is_global` or a finite denylist. One forbidden answer rejects the entire DNS answer set before socket creation. It pins a vetted numeric peer, checks that the connected peer is exactly that pin, and keeps the canonical hostname for TLS SNI, certificate verification, and the `Host` header. It disables redirects, environment proxies, cookies, `Authorization`, proxy authorization, `netrc`, ambient sessions, request bodies, caller headers, and automatic content decoding. Only identity encoding is accepted; the signed query is redacted and is never forwarded to a target.
+
+Manifest fetching is bounded to three attempts inside one five-second operation window. A later attempt starts only when its complete per-attempt budget remains. Response headers and a successful Manifest body are each limited to 32 KiB, while a non-200 body is never read. Policy checks precede retry classification: for example, `503` plus `Content-Encoding: gzip` is an encoding failure after one attempt and zero body bytes.
+
+Targets run sequentially in Manifest order. Before each target I/O, the SDK durably writes `ATTEMPT_STARTED`. Every target is attempted at most once; an indeterminate dispatch is never resent. At T+5, the adapter stops starting new targets and records typed `not_attempted_deadline` results for the remainder. Target response bodies and body digests are not stored.
+
+The local journal is versioned, checksummed, locked, and irreversibly bound at genesis to the Task ID, complete Task Definition tuple, a one-way local Claim handle, and a deterministically derived Execution ID; it binds the readiness Manifest digest durably at T. It uses same-directory atomic replacement, flushes durable file state, closes replace participants before replacement on native Windows, and flushes directory metadata where supported. Missing, corrupt, legacy-unbound, definition-mismatched, or ambiguously bound state fails closed before network I/O. Recovery retains exact frozen canonical report bytes and distinguishes each crash boundary through terminal `COMPOUND_COMPLETION_ACKED`.
+
+Compound Completion recovery checks Submission status first. A stable sibling cross-process operation guard covers the fresh journal read, status/close decision, dispatch reservation, POST, ambiguity recovery, and acknowledgement persistence as one continuous critical section. Fresh Completion may reserve its first POST only at zero prior attempts; recovery is status-first even at zero. A second POST is possible only after one prior reservation, canonical absent status, and before close, and always reuses the same Submission ID and exact frozen bytes. A stored on-time receipt remains recoverable after close; an absent receipt is never newly accepted at or after close. Completion receipt remains distinct from Evaluation, reward approval, settlement, and payout.
+
+Once the journal atomically records `COMPOUND_COMPLETION_ACKED`, the dispatch boundary is terminal. Every later resume uses only the persisted nonsecret receipt binding and tokenless Submission-status transport; it does not call Claim readiness, refetch the Manifest, execute targets, or resend Completion. A bound status with `terminal=true` is passed back to the journal, which validates every frozen-report and acknowledgement identity before atomically persisting the public-safe status evidence as `TERMINAL_STATUS`; a nonterminal or mismatched status cannot cross that boundary.
+
+```python
+from ln_church_agent import AgentTaskV2Client
+
+# See examples/scheduled_http_get_batch.py for the complete private-credential
+# and durable-journal flow. Do not copy a Claim token or signed Manifest URL
+# into application logs, a model prompt, or command-line arguments.
+client = AgentTaskV2Client()
+tasks = client.list_tasks()
+```
+
+The canonical fixture ships at `ln_church_agent/contracts/v18-scheduled-http-get-batch-contract-v1.json` with SHA-256 `09eb478e30b56fec6efb462cfb43733b1e907bb247943f8fe6336af73d362785`. Wheels and sdists must contain the exact bytes and final LF. No dependency is added for this feature.
+
+Linux release evidence covers the deterministic suite, fixture parity, v1 regression, secret scan, journal crash matrix, and an exact fixture-driven 42-row network matrix: every one of the 21 required vectors runs through `ControlledHTTPSConnector.fetch` for both SDK-owned Manifest and target scopes with resolver/connect/send/read counts. It also covers package identity. Native macOS and native Windows remain separate qualification lanes for their filesystem locking and durability, DNS, socket-peer, and TLS behavior; mocks do not qualify a native platform. Native Windows qualification tests closed-handle-before-replace behavior and does not require PowerShell 5.1. WSL2 is Linux evidence when the SDK runtime is Linux.
+
+This Public SDK release promotes the independently audited exact candidate paired with Hondō commit `833dca3b804f5b82ca0607c524d9c354f2d62378`. It does not itself deploy Hondō or claim Evaluation acceptance, reward approval, or payout.
+
 ### Explicit MCP Routes and Telemetry Boundaries
 
 `ln-church-agent` provides two distinct Model Context Protocol (MCP) entrypoints:

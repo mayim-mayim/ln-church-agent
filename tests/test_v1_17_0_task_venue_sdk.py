@@ -74,9 +74,10 @@ from ln_church_agent.task_transport import (
 
 CLAIM_TOKEN = "A" * 43
 FIXTURE_SHA256 = (
-    "a2ec940297ad4a342596b06ef3024a4c3799f64c4a72fdb5d91c690e9fab47f1"
+    "de12773c0a49dd65815f743bc3b579373874bb02b69b56116469908a40242dbe"
 )
 REWARD_ADDRESS = "0x1111111111111111111111111111111111111111"
+SECOND_REWARD_ADDRESS = "0x2222222222222222222222222222222222222222"
 TASK_TYPE = "payment_surface_discovery.v1"
 TASK_DEFINITION_VERSION = "1.0.0"
 TASK_DEFINITION_DIGEST = (
@@ -310,6 +311,7 @@ def _claim_response(
     task_id="task_example",
     claim_token=CLAIM_TOKEN,
     reward_amount="10000",
+    reward_address=REWARD_ADDRESS,
 ):
     return {
         "schema_version": "ln_church.agent_task_claim_response.v1",
@@ -320,7 +322,7 @@ def _claim_response(
         "claim_token": claim_token,
         "lease_duration_seconds": 3600,
         "lease_expires_at": "2099-07-27T01:00:00Z",
-        "reward_address": REWARD_ADDRESS,
+        "reward_address": reward_address,
         "reward_address_control_verified": False,
         "reward": _reward(reward_amount),
     }
@@ -541,7 +543,7 @@ def test_canonical_fixture_bytes_and_hash():
     assert hashlib.sha256(data).hexdigest() == FIXTURE_SHA256
     fixture = json.loads(data)
     assert fixture["contract_revision"] == (
-        "payment_surface_discovery_capacity_only_parallel_20260803"
+        "v17_per_offer_reward_address_single_flight_sdk_contract_20260830"
     )
     assert fixture["task_type"] == TASK_TYPE
     assert fixture["task_definition_version"] == TASK_DEFINITION_VERSION
@@ -622,8 +624,79 @@ def test_canonical_fixture_bytes_and_hash():
     assert fixture["capacity_snapshot"][
         "sdk_or_taskboard_decrements_or_reconstructs"
     ] is False
+    single_flight = fixture["v17_per_offer_reward_address_single_flight"]
+    assert single_flight["policy_id"] == (
+        "V17_REWARD_ADDRESS_CLAIM_SINGLE_FLIGHT_20260830"
+    )
+    assert single_flight["applies_to_task_type"] == TASK_TYPE
+    assert single_flight["version_namespace"] == "v1.17"
+    assert single_flight["identity_dimensions"] == [
+        "version_namespace",
+        "task_id",
+        "reward_network",
+        "canonical_reward_address",
+    ]
+    assert single_flight["reward_network"] == "eip155:8453"
+    assert single_flight["maximum_guard_held_claims_per_identity"] == 1
+    assert single_flight[
+        "server_guard_unconditionally_holding_execution_statuses"
+    ] == [
+        "CLAIMED",
+        "SUBMITTED",
+        "REWARD_PENDING",
+        "REWARD_AMBIGUOUS",
+    ]
+    assert single_flight[
+        "server_guard_unconditionally_releasing_execution_statuses"
+    ] == [
+        "EXPIRED",
+        "ABANDONED",
+        "EVALUATION_REJECTED",
+        "REWARDED",
+    ]
+    assert single_flight[
+        "reward_failed_without_server_releasable_classification_guard_disposition"
+    ] == "held_fail_closed"
+    assert single_flight[
+        "same_task_different_canonical_reward_address_concurrent_subject_to_offer_capacity_and_claimability"
+    ] is True
+    assert single_flight[
+        "different_task_same_canonical_reward_address_independent"
+    ] is True
+    assert single_flight["agent_id_is_identity_dimension"] is False
+    assert single_flight[
+        "reward_address_change_between_claim_attempts_allowed"
+    ] is True
+    assert single_flight["reward_address_ownership_proof_required"] is False
+    assert single_flight["wallet_rpc_or_signature_required"] is False
+    assert single_flight["wallet_history_quarantine_allowed"] is False
+    assert single_flight[
+        "offer_claimable_and_capacity_semantics_unchanged"
+    ] is True
+    assert single_flight["collision_http_status"] == 409
+    assert single_flight["collision_error_code"] == "task_state_conflict"
+    assert single_flight["collision_authority"] == "server"
+    assert single_flight["collision_is_mutation_free"] is True
+    assert single_flight["sdk_local_admission_allowed"] is False
+    assert single_flight["sdk_local_claim_history_guard_allowed"] is False
+    assert single_flight[
+        "sdk_reward_address_ownership_proof_allowed"
+    ] is False
+    assert single_flight["sdk_wallet_rpc_lookup_allowed"] is False
+    assert single_flight["sdk_wallet_quarantine_allowed"] is False
+    assert single_flight["sdk_agent_id_or_ip_uniqueness_allowed"] is False
+    assert single_flight[
+        "sdk_automatic_address_substitution_allowed"
+    ] is False
+    assert single_flight[
+        "sdk_automatic_claim_retry_after_collision_allowed"
+    ] is False
+    assert single_flight["sdk_runtime_change_required"] is False
+    assert single_flight["sdk_runtime_change_allowed"] is False
     offer_capacity = fixture["offer_execution_capacity"]
-    assert offer_capacity["separate_concurrency_limit_exists"] is False
+    assert offer_capacity[
+        "separate_offer_level_concurrency_limit_exists"
+    ] is False
     assert offer_capacity["active_execution_count_range"] == (
         "integer_0_through_50"
     )
@@ -631,14 +704,20 @@ def test_canonical_fixture_bytes_and_hash():
         "capacity_total - rewarded_execution_count"
     )
     assert offer_capacity[
-        "same_agent_id_multiple_active_claims_allowed"
-    ] is True
-    assert offer_capacity[
-        "same_reward_address_multiple_active_claims_allowed"
-    ] is True
-    assert offer_capacity[
-        "reward_address_agent_id_or_ip_uniqueness_condition_allowed"
+        "same_task_same_canonical_reward_address_multiple_guard_held_claims_allowed"
     ] is False
+    assert offer_capacity[
+        "same_task_different_canonical_reward_address_multiple_active_claims_allowed_subject_to_capacity"
+    ] is True
+    assert offer_capacity[
+        "same_agent_id_with_different_canonical_reward_addresses_multiple_active_claims_allowed_subject_to_capacity"
+    ] is True
+    assert offer_capacity[
+        "agent_id_or_ip_uniqueness_condition_allowed"
+    ] is False
+    assert offer_capacity[
+        "server_reward_address_single_flight_condition_required"
+    ] is True
     assert offer_capacity[
         "claim_uses_expected_active_execution_count_compare"
     ] is False
@@ -1725,8 +1804,16 @@ def test_sibling_claims_keep_independent_credentials_submissions_and_statuses():
     second_submission = "sub_" + ("2" * 32)
     transport = _FakeTransport(
         [
-            _claim_response(claim_token=first_token, reward_amount="1"),
-            _claim_response(claim_token=second_token, reward_amount="9999"),
+            _claim_response(
+                claim_token=first_token,
+                reward_amount="1",
+                reward_address=REWARD_ADDRESS,
+            ),
+            _claim_response(
+                claim_token=second_token,
+                reward_amount="9999",
+                reward_address=SECOND_REWARD_ADDRESS,
+            ),
             _reward_status(
                 submission_id=first_submission,
                 observation_id="obs_first",
@@ -1751,7 +1838,7 @@ def test_sibling_claims_keep_independent_credentials_submissions_and_statuses():
     second = client.claim_task(
         "task_example",
         agent_id="external-agent",
-        reward_address=REWARD_ADDRESS,
+        reward_address=SECOND_REWARD_ADDRESS,
     )
     assert [(call[0], call[1]) for call in transport.calls[:2]] == [
         ("POST", task_claim_path("task_example")),
@@ -1766,12 +1853,14 @@ def test_sibling_claims_keep_independent_credentials_submissions_and_statuses():
         {
             "schema_version": "ln_church.agent_task_claim_request.v1",
             "agent_id": "external-agent",
-            "reward_address": REWARD_ADDRESS,
+            "reward_address": SECOND_REWARD_ADDRESS,
         },
     ]
     assert first.credential._validated_snapshot() == first_snapshot
     assert first.credential._claim_token_value() == first_token
     assert second.credential._claim_token_value() == second_token
+    assert first.credential.reward_address == REWARD_ADDRESS
+    assert second.credential.reward_address == SECOND_REWARD_ADDRESS
     assert first.credential.reward.amount_atomic == "1"
     assert second.credential.reward.amount_atomic == "9999"
 
@@ -1816,10 +1905,12 @@ def test_sibling_claims_can_report_different_or_repeated_observed_domains(
     transport = _FakeTransport(
         [
             _claim_response(
-                claim_token="AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+                claim_token="AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+                reward_address=REWARD_ADDRESS,
             ),
             _claim_response(
-                claim_token="AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI"
+                claim_token="AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+                reward_address=SECOND_REWARD_ADDRESS,
             ),
             _register_response(
                 submission_id=first_submission_id,
@@ -1840,8 +1931,10 @@ def test_sibling_claims_can_report_different_or_repeated_observed_domains(
     second_claim = client.claim_task(
         "task_example",
         agent_id="external-agent-two",
-        reward_address=REWARD_ADDRESS,
+        reward_address=SECOND_REWARD_ADDRESS,
     )
+    assert first_claim.credential.reward_address == REWARD_ADDRESS
+    assert second_claim.credential.reward_address == SECOND_REWARD_ADDRESS
     first_submission = TaskDomainObservationSubmission(
         submission_id=first_submission_id,
         observed_domain="example.com",
@@ -3411,7 +3504,7 @@ def test_transport_httpx_configuration_has_no_ambient_credentials(monkeypatch):
     assert stream_kwargs["headers"]["Accept-Encoding"] == "identity"
     assert (
         stream_kwargs["headers"]["User-Agent"]
-        == "ln-church-agent-task/1.17.1"
+        == "ln-church-agent-task/1.18.0"
     )
     assert "Cookie" not in stream_kwargs["headers"]
     assert "Authorization" not in stream_kwargs["headers"]
@@ -6489,6 +6582,22 @@ def test_readme_documents_reward_destination_education_boundary():
         "seed phrase, or signer credential."
     ) in readme
     assert "Task reward destinations do not support" in readme
+    normalized = " ".join(readme.split()).lower()
+    for required in (
+        "for one v1.17 `task_id` and one canonical base `reward_address`, "
+        "at most one guard-held claim may exist",
+        "different canonical reward addresses remain concurrently available, "
+        "subject to hondo-owned offer capacity and claimability",
+        "`agent_id` is not part of the guard identity",
+        "reward-address ownership proof is not required",
+        "server-authoritative http 409 `task_state_conflict`",
+        "the sdk performs no local admission, wallet rpc, wallet quarantine, "
+        "address substitution, or automatic retry",
+        "not a task-wide single-active-claim restriction",
+    ):
+        assert required in normalized
+    assert "hondo applies a capacity-only policy" not in normalized
+    assert "same `reward_address`, or both" not in normalized
 
 
 @pytest.mark.parametrize(

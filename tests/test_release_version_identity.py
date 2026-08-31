@@ -1,6 +1,7 @@
 import ast
 from email.parser import BytesParser
 from email.policy import compat32
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,14 +17,22 @@ from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
+import ln_church_agent
 from ln_church_agent import client
 from ln_church_agent import inspect_transport
 from ln_church_agent.integrations import mcp_inspect
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.17.1"
+EXPECTED_VERSION = "1.18.0"
 EXPECTED_MCP_SPECIFIER = SpecifierSet(">=1.2.0,<2.0.0")
+CONTRACT_FIXTURE_PATH = (
+    "ln_church_agent/contracts/"
+    "v18-scheduled-http-get-batch-contract-v1.json"
+)
+CONTRACT_FIXTURE_SHA256 = (
+    "09eb478e30b56fec6efb462cfb43733b1e907bb247943f8fe6336af73d362785"
+)
 TASK_SUBCOMMANDS = (
     "list",
     "get",
@@ -33,6 +42,8 @@ TASK_SUBCOMMANDS = (
     "complete",
     "status",
     "reward-wait",
+    "claim-v2",
+    "run-scheduled-http-get-batch",
 )
 
 
@@ -130,6 +141,25 @@ def _read_sdist_metadata(path: Path):
         return BytesParser(policy=compat32).parsebytes(extracted.read())
 
 
+def _read_wheel_member(path: Path, member_name: str) -> bytes:
+    with zipfile.ZipFile(str(path)) as archive:
+        assert archive.namelist().count(member_name) == 1
+        return archive.read(member_name)
+
+
+def _read_sdist_member(path: Path, member_suffix: str) -> bytes:
+    with tarfile.open(str(path), mode="r:gz") as archive:
+        members = [
+            member
+            for member in archive.getmembers()
+            if member.isfile() and member.name.endswith("/" + member_suffix)
+        ]
+        assert len(members) == 1
+        extracted = archive.extractfile(members[0])
+        assert extracted is not None
+        return extracted.read()
+
+
 def _fresh_environment(path: Path):
     venv.EnvBuilder(with_pip=True, clear=True).create(str(path))
     scripts = path / ("Scripts" if os.name == "nt" else "bin")
@@ -185,22 +215,105 @@ def _setup_version() -> str:
     raise AssertionError("setup.py does not declare a literal setup(version=...)")
 
 
+def _client_fallback_version_literal() -> str:
+    tree = ast.parse(
+        (ROOT / "ln_church_agent" / "client.py").read_text(encoding="utf-8")
+    )
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "get_sdk_version"
+    ]
+    assert len(functions) == 1
+    handlers = [
+        node
+        for node in ast.walk(functions[0])
+        if (
+            isinstance(node, ast.ExceptHandler)
+            and isinstance(node.type, ast.Attribute)
+            and node.type.attr == "PackageNotFoundError"
+        )
+    ]
+    assert len(handlers) == 1
+    returns = [
+        node.value.value
+        for node in ast.walk(handlers[0])
+        if (
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    ]
+    assert len(returns) == 1
+    return returns[0]
+
+
+def _assert_client_import_time_fallback_in_child_process() -> None:
+    program = "\n".join(
+        (
+            "import importlib.metadata",
+            "import sys",
+            "sys.path.insert(0, %r)" % str(ROOT),
+            "not_found = importlib.metadata.PackageNotFoundError",
+            "metadata_version = importlib.metadata.version",
+            "def missing_distribution(name):",
+            "    if name == 'ln-church-agent':",
+            "        raise not_found(name)",
+            "    return metadata_version(name)",
+            "importlib.metadata.version = missing_distribution",
+            "import ln_church_agent",
+            "from ln_church_agent import client",
+            "assert client.get_sdk_version() == %r" % EXPECTED_VERSION,
+            "assert client.SDK_VERSION == %r" % EXPECTED_VERSION,
+            "assert client.CUSTOM_USER_AGENT == %r"
+            % ("ln-church-agent/" + EXPECTED_VERSION),
+            "assert ln_church_agent.LnChurchClient is client.LnChurchClient",
+        )
+    )
+    _run_checked((sys.executable, "-c", program), cwd=ROOT)
+
+
 def test_release_version_identities_are_consistent(monkeypatch):
+    client_class_before = client.LnChurchClient
+    package_client_class_before = ln_church_agent.LnChurchClient
+    sdk_version_before = client.SDK_VERSION
+    custom_user_agent_before = client.CUSTOM_USER_AGENT
+    metadata_version_before = client.importlib.metadata.version
+    assert client_class_before is package_client_class_before
+
     server_metadata = json.loads(
         (ROOT / "server.json").read_text(encoding="utf-8")
     )
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     release_note = (
+        ROOT / "docs" / "release_notes" / "v1.18.0.md"
+    ).read_text(encoding="utf-8")
+    legacy_release_note = (
         ROOT / "docs" / "release_notes" / "v1.17.1.md"
     ).read_text(encoding="utf-8")
 
-    def _missing_distribution(_name):
-        raise client.importlib.metadata.PackageNotFoundError
+    def _missing_distribution(name):
+        if name == "ln-church-agent":
+            raise client.importlib.metadata.PackageNotFoundError(name)
+        return metadata_version_before(name)
 
-    monkeypatch.setattr(client.importlib.metadata, "version", _missing_distribution)
+    with monkeypatch.context() as metadata_patch:
+        metadata_patch.setattr(
+            client.importlib.metadata,
+            "version",
+            _missing_distribution,
+        )
+        assert client.get_sdk_version() == EXPECTED_VERSION
 
     assert _setup_version() == EXPECTED_VERSION
-    assert client.get_sdk_version() == EXPECTED_VERSION
+    assert _client_fallback_version_literal() == EXPECTED_VERSION
+    _assert_client_import_time_fallback_in_child_process()
+    assert client.importlib.metadata.version is metadata_version_before
+    assert client.SDK_VERSION == sdk_version_before
+    assert client.CUSTOM_USER_AGENT == custom_user_agent_before
+    assert client.LnChurchClient is client_class_before
+    assert ln_church_agent.LnChurchClient is package_client_class_before
+    assert ln_church_agent.LnChurchClient is client.LnChurchClient
     assert server_metadata["version"] == EXPECTED_VERSION
     assert len(server_metadata["packages"]) == 1
     assert server_metadata["packages"][0]["identifier"] == "ln-church-agent"
@@ -208,17 +321,45 @@ def test_release_version_identities_are_consistent(monkeypatch):
 
     headings = re.findall(r"^## \[([^]]+)\].*$", changelog, re.MULTILINE)
     assert headings[0] == EXPECTED_VERSION
-    release_prefix, next_heading, _older_entries = changelog.partition(
-        "## [1.17.0]"
+    candidate_prefix, next_heading, _older_entries = changelog.partition(
+        "## [1.16.4]"
     )
-    assert next_heading == "## [1.17.0]"
-    release_heading = (
+    assert next_heading == "## [1.16.4]"
+    current_heading = (
+        "## [1.18.0] - 2026-08-31 "
+        "(Scheduled HTTP GET Batch SDK)"
+    )
+    current_start = candidate_prefix.index(current_heading)
+    legacy_heading = (
         "## [1.17.1] - 2026-08-13 "
         "(Reward Destination Education and Agent-Earning Documentation)"
+        ""
     )
-    release_start = release_prefix.index(release_heading)
-    release_section = release_prefix[release_start:]
-    assert release_section.startswith(release_heading)
+    legacy_start = candidate_prefix.index(legacy_heading)
+    current_section = candidate_prefix[current_start:legacy_start]
+    assert current_section.startswith(current_heading)
+    for required in (
+        "scheduled_http_get_batch.v1",
+        "one-attempt Claim",
+        "CLAIM_OUTCOME_UNKNOWN",
+        "Manifest",
+        "ATTEMPT_STARTED",
+        "COMPOUND_COMPLETION_ACKED",
+        "32 KiB",
+        "Linux",
+        "macOS",
+        "native Windows",
+        "docs/release_notes/v1.18.0.md",
+    ):
+        assert required in current_section
+
+    candidate_heading = (
+        "## [1.17.0] - 2026-07-28 "
+        "(Private Source Candidate — Agent Task Venue SDK)"
+    )
+    candidate_start = candidate_prefix.index(candidate_heading)
+    legacy_section = candidate_prefix[legacy_start:candidate_start]
+    assert legacy_section.startswith(legacy_heading)
     for required in (
         "reward_address",
         "Base (`eip155:8453`)",
@@ -229,19 +370,51 @@ def test_release_version_identities_are_consistent(monkeypatch):
         "package, User-Agent, and MCP Observation identities",
         "Windows plus Python 3.14 remains unsupported",
         "docs/release_notes/v1.17.1.md",
-        "Public release promotes the independently audited Private integrated candidate",
     ):
-        assert required in release_section
-    assert "Private Integrated Candidate" not in release_section
-    assert "Candidate status" not in release_section
+        assert required in legacy_section
+    candidate_section = candidate_prefix[candidate_start:]
+    assert candidate_section.startswith(candidate_heading)
+    assert (
+        "This Private Source Candidate is pending independent audit and "
+        "does not claim cross-repository compatibility, runtime acceptance, "
+        "release readiness, deployment, or publication."
+    ) in candidate_section
+    assert "docs/release_notes/v1.17.0.md" in candidate_section
+    assert "payment_surface_discovery.v1" in candidate_section
+    assert "claim_task_or_observation_binding_mismatch" in candidate_section
+    assert "pending independent re-audit" not in candidate_section
+    assert "Public release candidate passed independent audit" not in (
+        candidate_section
+    )
 
     assert release_note.startswith(
+        "# Release v1.18.0 — Scheduled HTTP GET Batch SDK"
+    )
+    for required in (
+        "Public release of the Agent SDK",
+        "Public release date: 2026-08-31.",
+        "scheduled_http_get_batch.v1",
+        "Claim is attempted exactly once",
+        "CLAIM_OUTCOME_UNKNOWN",
+        "same signed Manifest URL",
+        "ATTEMPT_STARTED",
+        "T+5",
+        "COMPOUND_COMPLETION_ACKED",
+        "claim token",
+        "signed Manifest URL",
+        "Linux",
+        "macOS",
+        "native Windows",
+        "promotes the independently audited exact SDK candidate",
+    ):
+        assert required in release_note
+
+    assert legacy_release_note.startswith(
         "# Release v1.17.1 — Reward Destination Education and "
         "Agent-Earning Documentation"
     )
     for required in (
         "Public release of the Agent SDK",
-        "independently audited Private integrated candidate",
         "Public release date: 2026-08-13.",
         "reward_address",
         "wallet secret",
@@ -255,9 +428,7 @@ def test_release_version_identities_are_consistent(monkeypatch):
         "does not implement or deploy a Hondo runtime change",
         "Package publication remains a separate Human-operated release action",
     ):
-        assert required in release_note
-    assert "Private integrated source candidate" not in release_note
-    assert "does not declare Public promotion, release, publication, or deployment" not in release_note
+        assert required in legacy_release_note
 
     observation = mcp_inspect.build_mcp_observation_payload(
         {
@@ -284,8 +455,27 @@ def test_release_version_identities_are_consistent(monkeypatch):
         '"User-Agent": "ln-church-agent-task/' + EXPECTED_VERSION + '"'
         in task_transport_source
     )
-    assert client.SDK_VERSION == EXPECTED_VERSION
-    assert client.CUSTOM_USER_AGENT == "ln-church-agent/" + EXPECTED_VERSION
+    assert client.SDK_VERSION == sdk_version_before
+    assert client.CUSTOM_USER_AGENT == custom_user_agent_before
+
+    v2_model_source = (
+        ROOT / "ln_church_agent" / "task_v2_models.py"
+    ).read_text(encoding="utf-8")
+    assert 'receipt_state: Literal["DURABLY_ACCEPTED"]' in v2_model_source
+    for relative in (
+        "ln_church_agent/task_v2_models.py",
+        "ln_church_agent/task_journal.py",
+        "ln_church_agent/scheduled_http_get_batch.py",
+        "ln_church_agent/cli.py",
+        "examples/scheduled_http_get_batch.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert '"REPORT_ACCEPTED"' not in source
+        assert '"COMPLETION_DISPATCHED"' not in source
+
+    assert client.LnChurchClient is client_class_before
+    assert ln_church_agent.LnChurchClient is package_client_class_before
+    assert ln_church_agent.LnChurchClient is client.LnChurchClient
 
 
 def test_release_artifacts_resolve_supported_optional_mcp_extra(tmp_path):
@@ -326,6 +516,16 @@ def test_release_artifacts_resolve_supported_optional_mcp_extra(tmp_path):
             sdist_metadata.get_all(field, [])
         )
     assert wheel_metadata["Version"] == EXPECTED_VERSION
+
+    source_fixture = (ROOT / CONTRACT_FIXTURE_PATH).read_bytes()
+    wheel_fixture = _read_wheel_member(wheel, CONTRACT_FIXTURE_PATH)
+    sdist_fixture = _read_sdist_member(sdists[0], CONTRACT_FIXTURE_PATH)
+    assert wheel_fixture == source_fixture
+    assert sdist_fixture == source_fixture
+    assert source_fixture.endswith(b"\n")
+    assert not source_fixture.endswith(b"\n\n")
+    assert b"\r\n" not in source_fixture
+    assert hashlib.sha256(source_fixture).hexdigest() == CONTRACT_FIXTURE_SHA256
 
     requirements = [
         Requirement(value)

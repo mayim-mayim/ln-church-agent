@@ -1,0 +1,608 @@
+{
+  "schema_version": "ln_church.sdk_hondo_interoperability_fixture.v1",
+  "provenance": {
+    "hondo_commit": "833dca3b804f5b82ca0607c524d9c354f2d62378",
+    "hondo_tree": "61c51a84a7a912d51d55f0e6273b2748a5902c58",
+    "hondo_sole_parent": "5a20d10489b177a9eba54ae545f3247ce163e2b1",
+    "schemas": {
+      "submission": {
+        "blob": "3a26dcb49bfb0865977af228cd2ad1bb7d52ba83",
+        "sha256": "5190c2d46219fbe0ccab5f5d7eeb826099dbab81257c1030713abeaf03f295fd"
+      },
+      "result": {
+        "blob": "67ecfc7bac2c03a0511d962a95a314f4a8e96610",
+        "sha256": "26583967562650e2336c46f1a5525074cd3b76b4ee9fcd067a0a4b744ab6d277"
+      }
+    },
+    "producers": {
+      "task_position_public_schema": {
+        "blob": "921540f979e26ba63b3a2eb8deb9ba8d7da58b40",
+        "sha256": "189d4027bcbb522e9cc329f26cd0f50317900495297a90c13c7a29985f2a7b52"
+      },
+      "claim_readiness_completion_status": {
+        "blob": "fdfba9c65b3228d754c368c9c755883ea33028cb",
+        "sha256": "9079194e2d09c01c3bd01de44c76a9899dbf6f2282d84dd446a25211e372c922"
+      },
+      "reference_network": {
+        "blob": "9403b2958c2a95601703c59e3f5e673ba0e63c12",
+        "sha256": "a5dd69bc1b6c56de75997d3488ee782fae0c8cb9102aeae9bfed76896295809d"
+      }
+    },
+    "runtime_blobs": {
+      "Lambda_TaskGet.js": "769b26a0520aa974a218856a0d72a8d7277f14bd",
+      "Lambda_TaskGetClaim.js": "2ffeabef3464c6d5419abda08024ee453f40e09e",
+      "Lambda_TaskManifestReadiness.js": "c2ebfc20b0b0e806733a258c105c2a5d0adc66e8",
+      "scheduled-http-get-batch-adapters.mjs": "70dd60c736bb27840bf84c521693d6d6bd5f8408",
+      "task-campaign-claim-core.mjs": "e06f8c4c9afa49ca1b15d5dd8b68681dabf824c1",
+      "Lambda_TaskCompletionReport.js": "6e36b9870bef0735459343527f70f10892443c70",
+      "task-campaign-report-core.mjs": "2e6d634251aa804bf4598857297691e09282df4e",
+      "Lambda_TaskSubmissionStatus.js": "0c28e5da3e57b37d86426f3b43a8bbbb411e3b0c",
+      "Lambda_TaskCampaignReferenceEvaluator.js": "0c3abe848339a110931a0df27d2a89d857634f37",
+      "shared-network-fetch-policy.mjs": "adb8b6cb82dbbfc96e43c637b015e03929e688c7"
+    },
+    "case_producers": {
+      "task": {
+        "blob": "921540f979e26ba63b3a2eb8deb9ba8d7da58b40",
+        "test": "runtime adapters expose the exact v1.18 projection and public-safe error contract"
+      },
+      "claim_and_readiness": {
+        "blob": "fdfba9c65b3228d754c368c9c755883ea33028cb",
+        "test": "Claim token, wallet guard, snapshot, abandonment, expiry, and readiness stay separate"
+      },
+      "completion_receipt": {
+        "blob": "fdfba9c65b3228d754c368c9c755883ea33028cb",
+        "test": "new Completion commit binds raw bytes, canonical report, receipt, shard, work, event, and outbox without hot Offer counters"
+      },
+      "status_lifecycle": {
+        "blob": "fdfba9c65b3228d754c368c9c755883ea33028cb",
+        "test": "Submission Status validates identity before I/O and dispatches only from a complete durable Task profile"
+      },
+      "status_schema_variants": {
+        "blob": "921540f979e26ba63b3a2eb8deb9ba8d7da58b40",
+        "test": "runtime adapters expose the exact v1.18 projection and public-safe error contract"
+      },
+      "completion_position": {
+        "blob": "921540f979e26ba63b3a2eb8deb9ba8d7da58b40",
+        "test": "public Completion schema and runtime share the sole position field"
+      },
+      "reference_outputs": {
+        "blob": "9403b2958c2a95601703c59e3f5e673ba0e63c12",
+        "test": "Reference adapter preserves body-bearing status and headers without retaining body bytes"
+      },
+      "journal_reasonless": {
+        "blob": "fdfba9c65b3228d754c368c9c755883ea33028cb",
+        "tests": [
+          "Claim token, wallet guard, snapshot, abandonment, expiry, and readiness stay separate",
+          "new Completion commit binds raw bytes, canonical report, receipt, shard, work, event, and outbox without hot Offer counters",
+          "Submission Status validates identity before I/O and dispatches only from a complete durable Task profile"
+        ]
+      }
+    }
+  },
+  "public_outputs": {
+    "task": {
+      "schema_version": "ln_church.agent_task.v2",
+      "task_id": "task-1",
+      "task_type": "scheduled_http_get_batch.v1",
+      "task_definition_version": "1.0.0",
+      "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "OPEN",
+      "scheduled_at": "2026-08-20T03:00:00Z",
+      "report_close_at": "2026-08-20T03:10:00Z",
+      "plan_id": "C50",
+      "capacity_total": 50,
+      "capacity_remaining": 1,
+      "minimum_counted_claims": 25,
+      "counted_claims_current": 49,
+      "successful_claims_lifetime": 0,
+      "active_reservations": 0,
+      "accepted_reports": 0,
+      "base_reward_entitlements": 0,
+      "base_rewards_paid_confirmed": 0,
+      "reference_bonus_state": "NOT_DUE",
+      "claimable": true
+    },
+    "claim": {
+      "schema_version": "ln_church.agent_task_claim_response.v2",
+      "task_id": "task_v18_test",
+      "task_type": "scheduled_http_get_batch.v1",
+      "task_definition_version": "1.0.0",
+      "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "claim_token": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+      "claim_expires_at": "2026-08-20T03:10:00Z",
+      "scheduled_at": "2026-08-20T03:00:00Z",
+      "report_close_at": "2026-08-20T03:10:00Z",
+      "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+      "manifest_url_not_before": "2026-08-20T03:00:00Z",
+      "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+      "reward_address": "0x1111111111111111111111111111111111111111",
+      "reward_address_control_verified": false,
+      "reward": {
+        "network": "eip155:8453",
+        "asset": "USDC",
+        "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "amount_atomic": "10000"
+      }
+    },
+    "readiness": {
+      "pre_t_pending_establishment": {
+        "schema_version": "ln_church.agent_task_readiness.v1",
+        "task_id": "task_v18_test",
+        "offer_status": "OPEN",
+        "execution_available": false,
+        "release_state": "PENDING_ESTABLISHMENT",
+        "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+        "manifest_url_not_before": "2026-08-20T03:00:00Z",
+        "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+        "retry_at": "2026-08-20T03:00:00Z"
+      },
+      "pre_t_preparing": {
+        "schema_version": "ln_church.agent_task_readiness.v1",
+        "task_id": "task_v18_test",
+        "offer_status": "ESTABLISHED",
+        "execution_available": false,
+        "release_state": "PREPARING",
+        "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+        "manifest_url_not_before": "2026-08-20T03:00:00Z",
+        "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+        "retry_at": "2026-08-20T03:00:00Z"
+      },
+      "pre_t_ready": {
+        "schema_version": "ln_church.agent_task_readiness.v1",
+        "task_id": "task_v18_test",
+        "offer_status": "ESTABLISHED",
+        "execution_available": false,
+        "release_state": "READY",
+        "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+        "manifest_url_not_before": "2026-08-20T03:00:00Z",
+        "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+        "retry_at": "2026-08-20T03:00:00Z"
+      },
+      "post_t_ready": {
+        "schema_version": "ln_church.agent_task_readiness.v1",
+        "task_id": "task_v18_test",
+        "offer_status": "RUNNING",
+        "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+        "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+        "report_close_at": "2026-08-20T03:10:00Z",
+        "execution_available": true,
+        "release_state": "READY",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "new_target_start_before": "2026-08-20T03:05:00Z"
+      },
+      "post_t_unavailable": {
+        "schema_version": "ln_church.agent_task_readiness.v1",
+        "task_id": "task_v18_test",
+        "offer_status": "RUNNING",
+        "manifest_url": "https://tasks-release.mayim-mayim.com/o/task?Policy=opaque",
+        "manifest_url_expires_at": "2026-08-20T03:10:00Z",
+        "report_close_at": "2026-08-20T03:10:00Z",
+        "execution_available": false,
+        "release_state": "UNAVAILABLE",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "new_target_start_before": "2026-08-20T03:05:00Z"
+      }
+    },
+    "completion_receipt": {
+      "schema_version": "ln_church.agent_task_completion_receipt.v2",
+      "task_id": "task_v18_test",
+      "task_type": "scheduled_http_get_batch.v1",
+      "task_definition_version": "1.0.0",
+      "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "submission_id": "sub_11111111111111111111111111111111",
+      "report_id": "report-v18-fixed",
+      "report_sha256": "b3522f73a62ef7ef2fa8adfe4348f95fdeb35c381cb249befedefbb311ee51dc",
+      "completion_id": "completion-v18-fixed",
+      "accepted_at": "2026-08-20T03:00:00Z",
+      "receipt_state": "DURABLY_ACCEPTED",
+      "evaluation_state": "PENDING"
+    },
+    "journal_reasonless": {
+      "completion_report": {
+        "schema_version": "ln_church.scheduled_http_get_batch_completion.v1",
+        "submission_id": "sub_11111111111111111111111111111111",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "manifest_fetch": {
+          "outcome": "release_protocol_error",
+          "elapsed_ms": 0
+        },
+        "results": [],
+        "completed_at": "2026-08-20T03:04:00Z"
+      },
+      "completion_receipt": {
+        "schema_version": "ln_church.agent_task_completion_receipt.v2",
+        "task_id": "task_v18_test",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_11111111111111111111111111111111",
+        "report_id": "report-journal-reasonless",
+        "report_sha256": "101b1fe7293c9537dfdb54ab8cb8b586c7d4cdbf763dab06578570155507bf0b",
+        "completion_id": "completion-journal-reasonless",
+        "accepted_at": "2026-08-20T03:00:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation_state": "PENDING"
+      },
+      "pending_status": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_test",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_11111111111111111111111111111111",
+        "report_id": "report-journal-reasonless",
+        "report_sha256": "101b1fe7293c9537dfdb54ab8cb8b586c7d4cdbf763dab06578570155507bf0b",
+        "accepted_at": "2026-08-20T03:00:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "PENDING"
+        },
+        "base_reward": {
+          "entitlement_state": "NOT_CREATED",
+          "settlement_state": "NOT_CREATED"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      }
+    },
+    "status_lifecycle": {
+      "pending": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "PENDING"
+        },
+        "base_reward": {
+          "entitlement_state": "NOT_CREATED",
+          "settlement_state": "NOT_CREATED"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "blocked": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "BLOCKED",
+          "reason": "EVALUATION_RETRY_EXHAUSTED"
+        },
+        "base_reward": {
+          "entitlement_state": "NOT_CREATED",
+          "settlement_state": "NOT_CREATED"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "approved_base_due": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "DUE",
+          "settlement_state": "DUE"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "base_confirming": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "DUE",
+          "settlement_state": "CONFIRMING"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "base_paid_reference_pending": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "TERMINAL",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "reference_candidate_pending": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "TERMINAL",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "reference_bonus": {
+          "candidate": true,
+          "decision_state": "PENDING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "reference_awarded_bonus_due": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "TERMINAL",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "reference_bonus": {
+          "candidate": true,
+          "decision_state": "AWARDED",
+          "settlement_state": "DUE"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "reference_bonus_confirming": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "TERMINAL",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "reference_bonus": {
+          "candidate": true,
+          "decision_state": "AWARDED",
+          "settlement_state": "CONFIRMING"
+        },
+        "terminal": false,
+        "retry_after_seconds": 15
+      },
+      "terminal_paid": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "APPROVED",
+          "reason": "STRUCTURALLY_VALID"
+        },
+        "base_reward": {
+          "entitlement_state": "TERMINAL",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "reference_bonus": {
+          "candidate": true,
+          "decision_state": "AWARDED",
+          "settlement_state": "PAID_CONFIRMED"
+        },
+        "terminal": true,
+        "retry_after_seconds": 0
+      },
+      "rejected_no_award": {
+        "schema_version": "ln_church.agent_task_reward_status.v2",
+        "task_id": "task_v18_status",
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_definition_version": "1.0.0",
+        "task_definition_digest": "24c90c221a111881cfcd455811b7de568c93f7be6950744f05423c42e3e4f22d",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "submission_id": "sub_44444444444444444444444444444444",
+        "report_id": "report_status_profile",
+        "report_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "accepted_at": "2026-08-20T03:04:00Z",
+        "receipt_state": "DURABLY_ACCEPTED",
+        "evaluation": {
+          "state": "REJECTED",
+          "reason": "report_binding_invalid"
+        },
+        "base_reward": {
+          "entitlement_state": "NOT_CREATED",
+          "settlement_state": "NOT_CREATED"
+        },
+        "reference_bonus": {
+          "candidate": false,
+          "decision_state": "NOT_AWARDED"
+        },
+        "terminal": true,
+        "retry_after_seconds": 0
+      }
+    },
+    "position_completion": {
+      "schema_version": "ln_church.scheduled_http_get_batch_completion.v1",
+      "submission_id": "sub_11111111111111111111111111111111",
+      "task_type": "scheduled_http_get_batch.v1",
+      "task_definition_version": "1.0.0",
+      "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "manifest_fetch": {
+        "outcome": "retrieved",
+        "http_status": 200,
+        "observed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "elapsed_ms": 25
+      },
+      "results": [
+        {
+          "position": 0,
+          "target_url": "https://target.example/a",
+          "outcome": "http_response",
+          "http_status": 200,
+          "elapsed_ms": 10
+        }
+      ],
+      "completed_at": "2026-08-20T03:00:01Z"
+    }
+  },
+  "rejection_evidence": {
+    "target_position_completion": {
+      "schema_version": "ln_church.scheduled_http_get_batch_completion.v1",
+      "submission_id": "sub_11111111111111111111111111111111",
+      "task_type": "scheduled_http_get_batch.v1",
+      "task_definition_version": "1.0.0",
+      "task_definition_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "manifest_fetch": {
+        "outcome": "retrieved",
+        "http_status": 200,
+        "observed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "elapsed_ms": 25
+      },
+      "results": [
+        {
+          "target_url": "https://target.example/a",
+          "outcome": "http_response",
+          "http_status": 200,
+          "elapsed_ms": 10,
+          "target_position": 0
+        }
+      ],
+      "completed_at": "2026-08-20T03:00:01Z"
+    },
+    "runtime_error_code": "report_binding_invalid",
+    "public_schema_result": "REJECTED_BY_PRODUCER_TEST"
+  },
+  "reference_outputs": {
+    "body_bearing_200": {
+      "status": 200,
+      "content_length": "18",
+      "body_property_present": false,
+      "body_bytes_property_present": false,
+      "serialized_body_contains_source": false
+    },
+    "body_bearing_404": {
+      "status": 404,
+      "content_length": null,
+      "body_property_present": false,
+      "body_bytes_property_present": false,
+      "serialized_body_contains_source": false
+    },
+    "body_bearing_500": {
+      "status": 500,
+      "content_length": "18",
+      "body_property_present": false,
+      "body_bytes_property_present": false,
+      "serialized_body_contains_source": false
+    }
+  }
+}
