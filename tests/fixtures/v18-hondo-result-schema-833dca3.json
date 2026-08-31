@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ln-church:schema:scheduled_http_get_batch.v1:1.0.0:result",
+  "title": "scheduled_http_get_batch.v1 tokenless Submission-status projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_sha256",
+    "submission_id",
+    "report_id",
+    "report_sha256",
+    "accepted_at",
+    "receipt_state",
+    "evaluation",
+    "base_reward",
+    "reference_bonus",
+    "terminal",
+    "retry_after_seconds"
+  ],
+  "properties": {
+    "schema_version": {"const": "ln_church.agent_task_reward_status.v2"},
+    "task_id": {"type": "string", "minLength": 1},
+    "task_type": {"const": "scheduled_http_get_batch.v1"},
+    "task_definition_version": {"const": "1.0.0"},
+    "task_definition_digest": {"$ref": "#/$defs/lowercaseSha256"},
+    "manifest_sha256": {"$ref": "#/$defs/lowercaseSha256"},
+    "submission_id": {"type": "string", "pattern": "^sub_[a-f0-9]{32}$"},
+    "report_id": {"type": "string", "minLength": 1},
+    "report_sha256": {"$ref": "#/$defs/lowercaseSha256"},
+    "accepted_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "receipt_state": {"const": "DURABLY_ACCEPTED"},
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["PENDING", "APPROVED", "REJECTED", "BLOCKED"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "base_reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entitlement_state", "settlement_state"],
+      "properties": {
+        "entitlement_state": {"enum": ["NOT_CREATED", "DUE", "TERMINAL"]},
+        "settlement_state": {"$ref": "#/$defs/settlementState"}
+      }
+    },
+    "reference_bonus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate", "decision_state"],
+      "properties": {
+        "candidate": {"type": "boolean"},
+        "decision_state": {"enum": ["PENDING", "AWARDED", "NOT_AWARDED", "FAILED"]},
+        "settlement_state": {"$ref": "#/$defs/settlementState"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"decision_state": {"const": "AWARDED"}},
+            "required": ["decision_state"]
+          },
+          "then": {"required": ["settlement_state"]},
+          "else": {"not": {"required": ["settlement_state"]}}
+        }
+      ]
+    },
+    "terminal": {"type": "boolean"},
+    "retry_after_seconds": {"type": "integer", "minimum": 0, "maximum": 3600}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"terminal": {"const": true}},
+        "required": ["terminal"]
+      },
+      "then": {
+        "properties": {"retry_after_seconds": {"const": 0}}
+      },
+      "else": {
+        "properties": {"retry_after_seconds": {"minimum": 1, "maximum": 3600}}
+      }
+    }
+  ],
+  "$defs": {
+    "lowercaseSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "settlementState": {
+      "enum": [
+        "NOT_CREATED",
+        "DUE",
+        "SUBMITTING",
+        "CONFIRMING",
+        "PAID_CONFIRMED",
+        "RETRYABLE_KNOWN_FAILURE",
+        "AMBIGUOUS",
+        "FAILED"
+      ]
+    }
+  }
+}

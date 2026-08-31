@@ -1,0 +1,1112 @@
+{
+  "contract_id": "ln_church.v18.scheduled_http_get_batch",
+  "contract_version": "1.0.0",
+  "status": "DRAFT_CORRECTION_FOR_HUMAN_OWNER_APPROVAL",
+  "target_release": "v1.18.0",
+  "task_type": "scheduled_http_get_batch.v1",
+  "task_definition_version": "1.0.0",
+  "task_definition_digest_authority": "SOURCE_BUNDLE_DIGEST_FIXED_BY_DEVELOPMENT_CONTROL_AND_CANDIDATE",
+  "public_task_schema_version": "ln_church.agent_task.v2",
+  "development_origin": "NORMAL",
+  "implementation_authority": "NONE",
+  "transport": {
+    "external_api_prefix": "/api",
+    "content_type": "application/json",
+    "charset": "utf-8",
+    "timestamp_format": "RFC3339_UTC_WHOLE_SECOND_Z",
+    "api_secret_query_parameters_allowed": false,
+    "release_signed_query_bearer_exception": true,
+    "one_time_secret_response_exceptions": [
+      "ORIGIN_PREPARE_OFFER_CONTROL_KEY",
+      "CLAIM_SUCCESS_CLAIM_TOKEN"
+    ],
+    "secret_response_cache_control": "no-store, private",
+    "secret_response_pragma": "no-cache",
+    "secret_values_excluded_from_logs_analytics_referrer_and_browser_persistence": true,
+    "unknown_mutation_fields": "REJECT"
+  },
+  "routes": {
+    "origin_control_prepare": {
+      "method": "POST",
+      "path": "/api/agent/origin-controls/prepare",
+      "plane": "CONTROL"
+    },
+    "origin_control_activate": {
+      "method": "POST",
+      "path": "/api/agent/origin-controls/{origin_control_id}/activate",
+      "plane": "CONTROL",
+      "credential": "X-LN-Offer-Control-Key"
+    },
+    "task_offer_register": {
+      "method": "POST",
+      "path": "/api/bazaar/task-offers",
+      "plane": "CONTROL",
+      "credential": "X-LN-Offer-Control-Key",
+      "content_type": "multipart/form-data",
+      "multipart": {
+        "exact_part_names": [
+          "metadata",
+          "manifest"
+        ],
+        "duplicate_missing_or_extra_parts": "REJECT_INVALID_REQUEST",
+        "content_transfer_encoding_allowed": false,
+        "maximum_total_bytes": 131072,
+        "metadata": {
+          "content_type": "application/json; charset=utf-8",
+          "filename_allowed": false,
+          "maximum_raw_bytes": 8192
+        },
+        "manifest": {
+          "content_types": [
+            "application/json",
+            "application/json; charset=utf-8"
+          ],
+          "optional_filename_semantic_authority": false,
+          "maximum_raw_bytes": 65536
+        }
+      }
+    },
+    "task_offer_cancel": {
+      "method": "POST",
+      "path": "/api/agent/task-offers/{task_id}/cancel",
+      "plane": "CONTROL",
+      "credential": "X-LN-Offer-Control-Key"
+    },
+    "task_offer_summary": {
+      "method": "GET",
+      "path": "/api/agent/task-offers/{task_id}/summary",
+      "plane": "CONTROL",
+      "credential": "X-LN-Offer-Control-Key"
+    },
+    "registration_recovery": {
+      "method": "GET",
+      "path": "/api/agent/task-offer-registrations/{registration_intent_id}",
+      "plane": "CONTROL",
+      "credential": "X-LN-Offer-Control-Key"
+    },
+    "task_list": {
+      "method": "GET",
+      "path": "/api/agent/tasks",
+      "plane": "PUBLIC_READ",
+      "v18_query": "task_type=scheduled_http_get_batch.v1&task_schema_version=ln_church.agent_task.v2",
+      "unqualified_default": "V1_COMPATIBLE_ITEMS_ONLY"
+    },
+    "task_detail": {
+      "method": "GET",
+      "path": "/api/agent/tasks/{task_id}",
+      "plane": "PUBLIC_READ",
+      "v18_query": "task_schema_version=ln_church.agent_task.v2",
+      "unqualified_default": "V1_COMPATIBLE_PROJECTION_OR_ERROR"
+    },
+    "claim": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/claim",
+      "plane": "EXECUTION",
+      "success_http_status": 200
+    },
+    "claim_abandon": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/claim/abandon",
+      "plane": "EXECUTION",
+      "credential": "X-LN-Task-Claim-Token"
+    },
+    "readiness": {
+      "method": "GET",
+      "path": "/api/agent/tasks/{task_id}/readiness",
+      "plane": "EXECUTION",
+      "credential": "X-LN-Task-Claim-Token"
+    },
+    "completion": {
+      "method": "POST",
+      "path": "/api/agent/tasks/{task_id}/completion",
+      "plane": "EXECUTION",
+      "credential": "X-LN-Task-Claim-Token",
+      "receipt_http_status": 202
+    },
+    "submission_status": {
+      "method": "GET",
+      "path": "/api/agent/tasks/{task_id}/submissions/{submission_id}/status",
+      "plane": "EXECUTION_PUBLIC_SAFE",
+      "credential": "NONE"
+    }
+  },
+  "origin_control": {
+    "verification_path": "/.well-known/ln-church-domain-sponsor.json",
+    "verification_schema_version": "ln_church.origin_control.v1",
+    "verification_document_canonicalization": "RFC8785_JCS",
+    "verification_document_digest": "SHA256_LOWERCASE_HEX",
+    "verification_document_unknown_or_duplicate_fields": "REJECT",
+    "nonce_lifetime_seconds": 3600,
+    "authorization_lifetime_seconds": 31536000,
+    "control_key_minimum_entropy_bits": 256,
+    "control_key_encoding": "ock_v1_PREFIX_PLUS_43_CHAR_UNPADDED_BASE64URL_OF_32_BYTES",
+    "control_key_header": "X-LN-Offer-Control-Key",
+    "control_key_server_storage": "SHA256_UTF8_DOMAIN_ln_church.offer_control_key.v1_NUL_PLUS_TOKEN_BYTES",
+    "pending_key_recovery": "KMS_ENCRYPTED_SAME_REQUEST_RESPONSE_ENVELOPE_UNTIL_NONCE_EXPIRY",
+    "pending_key_envelope_deleted_on_activation": true,
+    "secret_surface_controls": {
+      "bounded_rate_limit_at_cloudflare_and_origin_waf": true,
+      "strict_csp_without_third_party_script_or_telemetry": true,
+      "credential_autocomplete_disabled": true,
+      "browser_persistence_disabled": true,
+      "cache_control": "no-store, private",
+      "pragma": "no-cache",
+      "referrer_policy": "no-referrer"
+    },
+    "verification_fetch": {
+      "connect_timeout_ms": 3000,
+      "response_head_timeout_ms": 10000,
+      "total_timeout_ms": 12000,
+      "decoded_body_maximum_bytes": 16384,
+      "redirects": 0,
+      "automatic_proxy": false,
+      "headers": {
+        "User-Agent": "LN-Church-Origin-Control/1.0",
+        "Accept": "application/json",
+        "Accept-Encoding": "identity"
+      }
+    },
+    "states": [
+      "PENDING",
+      "ACTIVE",
+      "EXPIRED",
+      "REVOKED_BY_OPERATOR"
+    ],
+    "canonical_origin": {
+      "scheme": "https",
+      "port": 443,
+      "host_representation": "LOWERCASE_IDNA_A_LABEL",
+      "omit_default_port": true,
+      "allow_userinfo": false,
+      "allow_ip_literal": false,
+      "allow_wildcard": false,
+      "allow_query": false,
+      "allow_fragment": false,
+      "require_public_dns": true
+    }
+  },
+  "network_fetch_policy": {
+    "applies_to": [
+      "ORIGIN_ACTIVATION",
+      "OFFICIAL_SDK_MANIFEST_RELEASE",
+      "OFFICIAL_SDK_TARGET",
+      "LN_CHURCH_REFERENCE"
+    ],
+    "fresh_a_and_aaaa_resolution_per_attempt": true,
+    "reject_entire_answer_set_if_any_non_global_or_reserved": true,
+    "reject_ipv4_mapped_ipv6_for_non_global_or_reserved": true,
+    "rejected_classes": [
+      "PRIVATE",
+      "LOOPBACK",
+      "LINK_LOCAL",
+      "MULTICAST",
+      "UNSPECIFIED",
+      "RESERVED",
+      "METADATA",
+      "DOCUMENTATION_ONLY"
+    ],
+    "pin_one_vetted_numeric_peer_per_attempt": true,
+    "connected_peer_must_equal_pin": true,
+    "tls_sni_certificate_and_host_use_canonical_hostname": true,
+    "fallback_reresolution_within_attempt": false,
+    "ambient_proxy": false,
+    "redirects": 0,
+    "credential_forwarding": false,
+    "accepted_content_encoding": "identity",
+    "required_test_vectors": [
+      "IPV4_RESERVED",
+      "IPV6_RESERVED",
+      "MIXED_VALID_INVALID_ANSWER_SET",
+      "IPV4_MAPPED_IPV6",
+      "DNS_REBINDING",
+      "CONNECTED_PEER_MISMATCH",
+      "TLS_CANONICAL_HOST_SNI_CERTIFICATE_AND_HOST",
+      "TLS_HOSTNAME_MISMATCH",
+      "REDIRECT",
+      "PROXY_ENVIRONMENT",
+      "OVERSIZED_HEADERS_BODY",
+      "SLOW_HEAD_BODY",
+      "UNSUPPORTED_ENCODING",
+      "NON_200_RETRYABLE_STATUS_WITH_UNSUPPORTED_ENCODING",
+      "COOKIE_JAR",
+      "DEFAULT_AUTHORIZATION",
+      "PROXY_AUTHORIZATION",
+      "NETRC",
+      "CHUNKED_BODY_OVERFLOW",
+      "FALSE_CONTENT_LENGTH",
+      "SIGNED_QUERY_LOG_REDACTION"
+    ],
+    "cookie": false,
+    "authorization": false,
+    "proxy_authorization": false,
+    "netrc": false,
+    "ambient_session": false,
+    "request_body": false,
+    "requester_headers": false,
+    "content_encoding_absent_means_identity": true,
+    "automatic_content_decoding": false,
+    "required_test_vectors_apply_to_each_scope": true
+  },
+  "manifest": {
+    "schema_version": "ln_church.http_get_batch_manifest.v1",
+    "exact_object_keys": [
+      "schema_version",
+      "method",
+      "urls"
+    ],
+    "method": "GET",
+    "minimum_urls": 1,
+    "maximum_urls": 10,
+    "ordered": true,
+    "unique_urls": true,
+    "same_origin": "EXACT_CANONICAL_ORIGIN",
+    "url_canonicalization": "WHATWG_SERIALIZATION_REJECT_IF_INPUT_DIFFERS",
+    "url_maximum_utf8_bytes": 2048,
+    "canonical_manifest_maximum_bytes": 32768,
+    "canonicalization": "RFC8785_JCS",
+    "digest": "SHA256_LOWERCASE_HEX",
+    "requester_manifest_url_allowed": false,
+    "requester_fields_allowed": {
+      "headers": false,
+      "body": false,
+      "timeout": false,
+      "redirect": false,
+      "retry": false,
+      "concurrency": false,
+      "response_proof": false
+    },
+    "private_pin_retention_seconds_after_close": 7776000,
+    "unpaid_temporary_pin_ttl_seconds": 86400
+  },
+  "plans": {
+    "C50": {
+      "registration_amount_atomic": "1000000",
+      "claim_capacity": 50,
+      "minimum_counted_claims": 25,
+      "base_reward_each_atomic": "10000",
+      "maximum_base_reward_atomic": "500000",
+      "reference_bonus_atomic": "100000",
+      "maximum_agent_payout_atomic": "600000"
+    },
+    "C500": {
+      "registration_amount_atomic": "10000000",
+      "claim_capacity": 500,
+      "minimum_counted_claims": 250,
+      "base_reward_each_atomic": "10000",
+      "maximum_base_reward_atomic": "5000000",
+      "reference_bonus_atomic": "1000000",
+      "maximum_agent_payout_atomic": "6000000"
+    },
+    "C5000": {
+      "registration_amount_atomic": "100000000",
+      "claim_capacity": 5000,
+      "minimum_counted_claims": 2500,
+      "base_reward_each_atomic": "10000",
+      "maximum_base_reward_atomic": "50000000",
+      "reference_bonus_atomic": "10000000",
+      "maximum_agent_payout_atomic": "60000000"
+    }
+  },
+  "payment": {
+    "registration_intent_id_source": "CLIENT_GENERATED_UUID_CANONICAL_END_TO_END",
+    "registration_metadata_exact_fields": [
+      "registration_intent_id",
+      "task_type",
+      "task_definition_version",
+      "scheduled_at",
+      "plan_id"
+    ],
+    "registration_terms_schema": "ln_church.task_offer_registration_terms.v1",
+    "registration_terms_canonicalization": "RFC8785_JCS",
+    "registration_terms_digest": "SHA256_LOWERCASE_HEX",
+    "registration_terms_fields": [
+      "terms_schema",
+      "registration_intent_id",
+      "task_id",
+      "task_type",
+      "task_definition_version",
+      "task_definition_digest",
+      "paid_method",
+      "paid_resource",
+      "origin_control_id",
+      "origin_control_version",
+      "origin",
+      "manifest_object_version",
+      "manifest_sha256",
+      "admission_reservation_id",
+      "admission_reservation_sha256",
+      "reservation_window_start",
+      "reservation_window_end",
+      "reservation_expires_at",
+      "scheduled_at",
+      "plan_id",
+      "capacity",
+      "network",
+      "asset",
+      "registration_amount_atomic",
+      "pay_to",
+      "base_reward_each_atomic",
+      "maximum_base_reward_atomic",
+      "reference_bonus_atomic",
+      "refund_policy_version",
+      "architecture_policy_version"
+    ],
+    "x402_version": 2,
+    "scheme": "exact",
+    "network": "eip155:8453",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "asset_decimals": 6,
+    "facilitator": "PINNED_OFFICIAL_COINBASE_X402",
+    "pay_to_policy": "TASK_OFFER_REGISTRATION_PAY_TO_V1_REQUIRED_NO_FALLBACK_SNAPSHOTTED_PER_INTENT",
+    "packages": {
+      "@coinbase/x402": "2.1.0",
+      "@x402/core": "2.19.0",
+      "@x402/evm": "2.19.0",
+      "@x402/hono": "2.19.0"
+    },
+    "verify_is_payment_finality": false,
+    "maximum_offers_per_registration_intent": 1,
+    "maximum_charges_per_registration_intent": 1,
+    "maximum_economic_effects_per_normalized_authorization": 1,
+    "authorization_canonicalization": {
+      "network_exact": "eip155:8453",
+      "asset_decoded_bytes": 20,
+      "authorizer_decoded_bytes": 20,
+      "nonce_decoded_bytes": 32,
+      "noncanonical_width": "REJECT",
+      "address_reencoding": "0x_PLUS_40_LOWERCASE_HEX",
+      "nonce_reencoding": "0x_PLUS_64_LOWERCASE_HEX",
+      "shared_across_legacy_and_campaign": true,
+      "required_replay_vectors": [
+        "UPPERCASE",
+        "PADDED",
+        "TRUNCATED",
+        "ALTERNATE_TEXT_ENCODING"
+      ]
+    },
+    "global_authorization_key": "SHA256_LOWERCASE_HEX_OF_RFC8785_JCS_ARRAY_[DOMAIN,EXACT_NETWORK,CANONICAL_ASSET,CANONICAL_AUTHORIZER,CANONICAL_NONCE]",
+    "global_authorization_key_domain": "ln-church/x402-eip3009/v1",
+    "settlement_dispatch": "ONE_DURABLE_FENCE_THEN_NO_AUTOMATIC_REDISPATCH",
+    "origin_authorization_revalidate_active_unexpired_before_dispatch_fence": true,
+    "origin_authorization_revalidate_same_id_version_active_unexpired_at_business_commit": true,
+    "origin_revoked_or_expired_before_commit": "NEVER_PUBLISH_CONFIRMED_PAYMENT_USES_TECHNICAL_REVERSAL",
+    "admission_reservation_binding": {
+      "digest_covers": [
+        "RESERVATION_ID",
+        "ALL_15_UTC_BUCKET_IDENTITIES",
+        "WINDOW_START",
+        "WINDOW_END_EXCLUSIVE",
+        "EXPIRES_AT"
+      ],
+      "business_commit_requires_exact_held_reservation": true,
+      "regenerate_or_substitute_after_payment": false
+    },
+    "accepted_finality": {
+      "provider_source": "INDEPENDENT_BASE_RPC",
+      "provider_must_be_distinct_from_facilitator": true,
+      "required_chain_id": 8453,
+      "required_block_tag": "safe",
+      "allow_latest_fallback": false,
+      "require_successful_receipt": true,
+      "require_receipt_block_hash_canonical_at_height": true,
+      "require_receipt_block_ancestor_of_or_equal_safe_head": true,
+      "require_exact_asset_contract": true,
+      "require_decoded_eip3009_call_args": [
+        "from",
+        "to",
+        "value",
+        "validAfter",
+        "validBefore",
+        "nonce"
+      ],
+      "require_eip3009_authorization_used_same_call_receipt": true,
+      "require_exact_payer_pay_to_transfer_amount_same_call_receipt": true,
+      "batched_or_wrapped_call_requires_independent_trace_and_log_index_correlation": true,
+      "same_transaction_log_cooccurrence_is_sufficient": false,
+      "unused_after_expiry_requires_safe_block_timestamp_gte_valid_before": true,
+      "require_global_authorization_binding": true
+    },
+    "readback_offsets_minutes": [
+      0,
+      1,
+      2,
+      5,
+      10,
+      30,
+      60,
+      120,
+      240,
+      480,
+      720,
+      1440
+    ],
+    "unknown_exhausted_is_failure": false,
+    "late_authoritative_evidence_retained_after_automation_expiry": true,
+    "failure_requires_positive_authoritative_chain_evidence": true,
+    "payment_states": [
+      "UNPAID",
+      "AUTHORIZATION_BOUND",
+      "SETTLING",
+      "CONFIRMING",
+      "ATTEMPT_REVERTED_AUTHORIZATION_LIVE",
+      "UNKNOWN",
+      "UNKNOWN_EXHAUSTED",
+      "CONFIRMED",
+      "FAILED",
+      "EXPIRED_UNPAID"
+    ],
+    "settlement_resolutions": [
+      "NONE",
+      "INLINE_SUCCESS",
+      "INLINE_ATTEMPT_REVERTED",
+      "LATE_SUCCESS",
+      "LATE_ATTEMPT_REVERTED",
+      "TERMINAL_NO_BOUND_CHARGE"
+    ],
+    "business_commit_states": [
+      "PRIVATE",
+      "COMMIT_DUE",
+      "COMMITTED",
+      "COMMIT_BLOCKED"
+    ],
+    "paid_but_unpublishable_policy": "APPROVED_100_PERCENT_TECHNICAL_REGISTRATION_REVERSAL",
+    "transient_commit_failure_state": "COMMIT_DUE",
+    "commit_blocked_requires_immutable_precondition_failure_or_explicit_terminal_operator_decision": true,
+    "commit_blocked_transaction_sets_publication_prohibited_and_creates_reversal": true,
+    "offer_commit_requires_publication_prohibited_absent": true,
+    "technical_reversal_mutually_exclusive_with_promotional_refund": true,
+    "maximum_authorizations_per_registration_intent": 1,
+    "reverted_transaction_consumes_authorization": false,
+    "reverted_transaction_allows_same_intent_replacement": false,
+    "reverted_transaction_authorization_effect_state": "POTENTIALLY_SPENDABLE",
+    "transaction_attempt_states": [
+      "NOT_DISPATCHED",
+      "DISPATCH_FENCED",
+      "PENDING_OR_UNKNOWN",
+      "SUCCEEDED_OBSERVED",
+      "REVERTED"
+    ],
+    "authorization_effect_states": [
+      "POTENTIALLY_SPENDABLE",
+      "CONFIRMED_BOUND_CHARGE",
+      "TERMINAL_NO_BOUND_CHARGE"
+    ],
+    "failed_payment_state_requires_authorization_effect_state": "TERMINAL_NO_BOUND_CHARGE",
+    "expired_unpaid_requires_no_authorization_bound": true,
+    "bound_authorization_terminal_no_bound_charge_payment_state": "FAILED",
+    "unknown_or_uncorrelated_authorization_effect_state": "POTENTIALLY_SPENDABLE",
+    "unknown_or_uncorrelated_payment_states": [
+      "UNKNOWN",
+      "UNKNOWN_EXHAUSTED"
+    ],
+    "authorization_effect_unknown_enum_exists": false,
+    "terminal_no_bound_charge_evidence": {
+      "source": "INDEPENDENT_BASE_RPC_CANONICAL_SAFE_CHAIN",
+      "safe_expired_unused": {
+        "safe_block_timestamp_comparator": "GTE_VALID_BEFORE",
+        "authorization_state_at_same_safe_block": false,
+        "confirmed_bound_charge_absent": true
+      },
+      "safe_cancelled_or_conflicting_use": {
+        "successful_receipt_at_or_below_safe_head": true,
+        "exact_token_authorizer_nonce_correlation": true,
+        "call_receipt_event_and_trace_correlation_when_needed": true,
+        "confirmed_bound_charge_absent": true
+      },
+      "uncorrelated_authorization_state_true": "UNKNOWN_FAIL_CLOSED"
+    },
+    "same_intent_replacement_authorization_allowed": false,
+    "same_intent_after_terminal_no_bound_charge": "TERMINATE_OLD_INTENT_NO_REBIND",
+    "automatic_new_intent_after_attempt_failure": false,
+    "new_intent_is_separate_explicit_requester_operation": true,
+    "required_revert_replay_vectors": [
+      "A_REVERTS_A_REMAINS_SPENDABLE_B_SAME_INTENT_BIND_AND_DISPATCH_REJECTED_A_LATE_SUCCESS_MAX_ONE_CHARGE_AND_OFFER",
+      "A_REVERTS_SAFE_EXPIRES_UNUSED_OLD_INTENT_TERMINATES_NO_REBIND_LATE_A_REPLAY_REVERTS_ZERO_CHARGE"
+    ]
+  },
+  "admission": {
+    "alpha_spike_envelope_capacity_units": 5000,
+    "reservation_start_offset_seconds": -300,
+    "reservation_end_offset_seconds": 600,
+    "reservation_end_exclusive": true,
+    "whole_minute_buckets": 15,
+    "held_reservation_maximum_seconds": 1800,
+    "latest_reservation_expiry_offset_seconds": -5400,
+    "reservation_expires_at_expression": "MIN_INTENT_CREATED_AT_PLUS_1800_SECONDS_AND_T_MINUS_5400_SECONDS",
+    "business_commit_comparator": "P_LTE_RESERVATION_EXPIRES_AT",
+    "cleanup_comparator": "NOW_GT_RESERVATION_EXPIRES_AT",
+    "excess_rejected_before_payment_challenge": true,
+    "initial_authorization_dispatch_comparator": "NOW_LT_RESERVATION_EXPIRES_AT",
+    "same_intent_replacement_authorization_allowed": false
+  },
+  "time": {
+    "scheduled_at_granularity_seconds": 60,
+    "intent_preparation_earliest_offset_seconds_from_t": -606600,
+    "intent_preparation_latest_offset_seconds_from_t": -5400,
+    "intent_is_schedule_authority": false,
+    "publication_minimum_lead_seconds": 5400,
+    "publication_maximum_lead_seconds": 604800,
+    "owner_cancel_cutoff_offset_seconds": -3600,
+    "owner_cancel_comparator": "NOW_LT_BOUNDARY",
+    "establishment_open_offset_seconds": -3600,
+    "under_threshold_cancel_offset_seconds": -1800,
+    "claim_close_offset_seconds": 0,
+    "claim_comparator": "NOW_LT_T",
+    "release_open_offset_seconds": 0,
+    "release_close_offset_seconds": 600,
+    "release_comparator": "T_LTE_NOW_LT_CLOSE",
+    "official_sdk_new_target_close_offset_seconds": 300,
+    "completion_close_offset_seconds": 600,
+    "completion_comparator": "T_LTE_ACCEPTED_AT_LT_CLOSE",
+    "claim_expiry_offset_seconds": 600,
+    "claim_expiry_comparator": "NOW_GTE_CLOSE",
+    "candidate_cutoff_offset_seconds": 600,
+    "candidate_comparator": "T_LTE_ACCEPTED_AT_LT_CLOSE",
+    "reference_start_deadline_offset_seconds": 660,
+    "reference_completion_deadline_offset_seconds": 840,
+    "reference_start_deadline_miss": "REFERENCE_FAILED_START_DEADLINE_MISSED_NO_AWARD",
+    "reference_completion_deadline_miss": "REFERENCE_FAILED_COMPLETION_DEADLINE_MISSED_NO_AWARD",
+    "late_reference_io_after_deadline_failure": false,
+    "scheduler_is_time_authority": false
+  },
+  "offer_states": [
+    "PENDING_SETTLEMENT",
+    "OPEN",
+    "CANCELLING",
+    "ESTABLISHED",
+    "RUNNING",
+    "AGGREGATING",
+    "CLOSED",
+    "CANCELLED_OWNER",
+    "CANCELLED_UNDER_THRESHOLD"
+  ],
+  "release": {
+    "hostname": "tasks-release.mayim-mayim.com",
+    "cloudflare_mode": "DNS_ONLY",
+    "origin": "CLOUDFRONT_OAC_TO_PRIVATE_RELEASE_S3",
+    "source_pin_store_separate_from_release_store": true,
+    "eligible_offer_state": "ESTABLISHED",
+    "maximum_content_bytes": 32768,
+    "content_must_match_manifest_sha256": true,
+    "signed_policy": {
+      "date_greater_than_epoch_expression": "scheduled_at_epoch_second_minus_1",
+      "date_less_than_epoch_expression": "report_close_at_epoch_second",
+      "ip_address_condition": false
+    },
+    "error_cache_ttl_seconds": 0,
+    "success_content_immutable": true,
+    "method_and_range_enforcement": "CLOUDFRONT_FUNCTION_OR_WAF_BEFORE_CACHE_LOOKUP",
+    "allow_head": false,
+    "allow_range": false,
+    "allow_direct_s3": false,
+    "log_signed_query": false,
+    "signed_query_excluded_from_all_edge_origin_and_analytics_logs": true,
+    "signing_key_rotation_retains_old_public_key_until_all_issued_urls_expire": true,
+    "reference_uses_public_release_url": false
+  },
+  "claim": {
+    "request_schema_version": "ln_church.agent_task_claim_request.v1",
+    "request_fields": [
+      "schema_version",
+      "agent_id",
+      "reward_address"
+    ],
+    "response_schema_version": "ln_church.agent_task_claim_response.v2",
+    "agent_id": {
+      "required": true,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "meaning": "SELF_ASSERTED_OPERATIONAL_IDENTIFIER_NOT_IDENTITY_PROOF"
+    },
+    "transport_attempts": 1,
+    "ambiguity_state": "CLAIM_OUTCOME_UNKNOWN",
+    "claim_response_includes_opaque_signed_manifest_url": true,
+    "claim_response_includes_manifest_digest_before_t": false,
+    "claim_and_readiness_response_cache_control": "no-store, private",
+    "claim_and_readiness_response_pragma": "no-cache",
+    "readiness_is_canonical_immediate_t_time_status_check": true,
+    "readiness_schema_version": "ln_church.agent_task_readiness.v1",
+    "generic_task_detail_at_t_is_required": false,
+    "readiness_at_or_after_t_includes_expected_digest_when_projection_unavailable": true,
+    "readiness_projection_unavailable_http_status": 200,
+    "readiness_projection_unavailable_execution_available": false,
+    "readiness_matrix": {
+      "OPEN_BEFORE_T_MINUS_30_OR_ESTABLISHED_BEFORE_T": "HTTP_200_EXECUTION_FALSE_URL_NO_DIGEST_RETRY_AT_T",
+      "ESTABLISHED_OR_RUNNING_T_TO_CLOSE_READY": "HTTP_200_EXECUTION_TRUE_RELEASE_READY_DIGEST_AND_URL",
+      "ESTABLISHED_OR_RUNNING_T_TO_CLOSE_UNAVAILABLE": "HTTP_200_EXECUTION_FALSE_RELEASE_UNAVAILABLE_DIGEST_AND_URL",
+      "CANCELLING_OR_CANCELLED_OR_OVERDUE_OPEN": "HTTP_409_OFFER_NOT_CLAIMABLE",
+      "AT_OR_AFTER_REPORT_CLOSE": "HTTP_410_CLAIM_EXPIRED",
+      "KNOWN_V2_TASK_INVALID_TOKEN": "HTTP_401_NESTED_INVALID_CLAIM_TOKEN"
+    },
+    "readiness_pre_t_manifest_digest_disclosed": false,
+    "readiness_pre_t_signed_url_disclosed": true,
+    "readiness_pre_t_retry_at": "SCHEDULED_AT",
+    "token_transport": "X-LN-Task-Claim-Token_HEADER",
+    "token_encoding": "43_CHAR_UNPADDED_BASE64URL_OF_32_BYTES",
+    "token_server_storage": "SHA256_UTF8_DOMAIN_ln_church.task_claim_token.v1_NUL_PLUS_TOKEN_BYTES",
+    "reward_address": {
+      "type": "NONZERO_EVM_ADDRESS",
+      "mixed_case_requires_valid_eip55": true,
+      "canonical_storage": "EIP55_CHECKSUM"
+    },
+    "wallet_guard_key": [
+      "task_id",
+      "network",
+      "canonical_reward_address"
+    ],
+    "wallet_guard_states": [
+      "AVAILABLE",
+      "RESERVED",
+      "PERMANENTLY_CONSUMED"
+    ],
+    "release_guard_on": [
+      "ABANDONED",
+      "EXPIRED",
+      "STRUCTURAL_REJECTED"
+    ],
+    "consume_guard_on": "BASE_APPROVED",
+    "release_guard_on_payout_failure": false,
+    "abandonment": {
+      "schema_version": "ln_church.agent_task_claim_abandon_request.v1",
+      "idempotency_field": "abandonment_id",
+      "allowed_only_pre_completion_before_report_close": true,
+      "releases_active_capacity_and_wallet_guard_once": true,
+      "decrements_current_counted_claim": true,
+      "decrements_successful_claims_lifetime": false,
+      "reverses_established": false
+    },
+    "expiry": {
+      "at_report_close_for_unsubmitted_claimed_execution": true,
+      "releases_submitted_or_reward_eligible_execution": false
+    }
+  },
+  "target_request": {
+    "method": "GET",
+    "official_sdk_execution": "SEQUENTIAL_MANIFEST_ORDER",
+    "external_agent_requirement": "SHOULD_SEQUENTIAL_MANIFEST_ORDER",
+    "external_parallelism_receipt_rejection_condition": false,
+    "attempts_per_target": 1,
+    "redirects": 0,
+    "automatic_proxy": false,
+    "cookie": false,
+    "authorization": false,
+    "request_body": false,
+    "correlation_header": false,
+    "connect_timeout_ms": 3000,
+    "response_head_timeout_ms": 10000,
+    "total_timeout_ms": 12000,
+    "response_header_maximum_bytes": 32768,
+    "headers": {
+      "User-Agent": "LN-Church-Scheduled-GET/1.0",
+      "Accept": "*/*",
+      "Accept-Encoding": "identity"
+    },
+    "http_response_status_minimum": 200,
+    "http_response_status_maximum": 599,
+    "response_body_stored": false,
+    "response_body_digest_stored": false,
+    "response_proof": false
+  },
+  "completion_report": {
+    "public_operation": "ATOMIC_TASK_REPORT_AND_GENERIC_COMPLETION",
+    "schema_version": "ln_church.scheduled_http_get_batch_completion.v1",
+    "receipt_schema_version": "ln_church.agent_task_completion_receipt.v2",
+    "status_schema_version": "ln_church.agent_task_reward_status.v2",
+    "status_binding_fields": [
+      "task_id",
+      "task_type",
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_sha256",
+      "submission_id",
+      "report_id",
+      "report_sha256",
+      "accepted_at"
+    ],
+    "maximum_utf8_bytes": 65536,
+    "canonicalization": "RFC8785_JCS",
+    "digest": "SHA256_LOWERCASE_HEX",
+    "durable_receipt_required_before_2xx": true,
+    "queue_only_receipt_allowed": false,
+    "submission_id_required": true,
+    "submission_id_pattern": "^sub_[a-f0-9]{32}$",
+    "idempotency_key_header_must_equal_submission_id": true,
+    "same_id_same_body": "RETURN_SAME_RECEIPT",
+    "same_id_changed_body": "SUBMISSION_CONFLICT",
+    "server_accepted_at_is_deadline_authority": true,
+    "accepted_at_source": "SERVER_TIME_FOR_NEW_RECEIPT_TRANSACTION_NOT_REQUEST_ARRIVAL_OR_AGENT_TIME",
+    "report_intake_fence": {
+      "states": [
+        "OPEN",
+        "CLOSED"
+      ],
+      "new_receipt_transaction_requires_open_and_accepted_at_before_close": true,
+      "freeze_atomically_closes_before_consistent_shard_scan": true,
+      "completion_started_before_close_but_committed_after_closed_fence": "CONDITIONAL_REJECT_NO_WRITE",
+      "existing_idempotent_receipt_lookup_bypasses_new_receipt_gate": true
+    },
+    "manifest_fetch_outcomes": [
+      "retrieved",
+      "release_http_unexpected_status",
+      "release_timeout",
+      "release_dns_error",
+      "release_tls_error",
+      "release_connection_error",
+      "release_protocol_error",
+      "release_response_too_large",
+      "release_encoding_unsupported",
+      "release_invalid_json",
+      "release_schema_invalid",
+      "release_digest_mismatch",
+      "release_interrupted"
+    ],
+    "target_outcomes": [
+      "http_response",
+      "dns_error",
+      "tls_error",
+      "connection_error",
+      "timeout",
+      "protocol_error",
+      "interrupted_indeterminate",
+      "not_attempted_interrupted",
+      "not_attempted_deadline"
+    ],
+    "http_status_required_for": [
+      "http_response"
+    ],
+    "http_status_forbidden_for_other_outcomes": true,
+    "target_position_required_zero_based": true,
+    "target_order_and_coverage": {
+      "manifest_fetch_retrieved": "EXACT_MANIFEST_LIST",
+      "manifest_fetch_not_retrieved": "EMPTY_RESULTS"
+    },
+    "top_level_required_fields": [
+      "schema_version",
+      "submission_id",
+      "task_type",
+      "task_definition_version",
+      "task_definition_digest",
+      "manifest_sha256",
+      "manifest_fetch",
+      "results",
+      "completed_at"
+    ],
+    "completed_at": {
+      "required": true,
+      "format": "RFC3339_UTC_WHOLE_SECOND_Z",
+      "deadline_authority": false
+    },
+    "manifest_fetch_field_presence": {
+      "all_outcomes_required": [
+        "outcome"
+      ],
+      "elapsed_ms_optional_range": [
+        0,
+        5000
+      ],
+      "retrieved": "HTTP_STATUS_200_AND_OBSERVED_SHA256_REQUIRED",
+      "release_http_unexpected_status": "HTTP_STATUS_201_TO_599_EXCLUDING_200_REQUIRED",
+      "release_digest_mismatch": "HTTP_STATUS_200_AND_OBSERVED_SHA256_REQUIRED",
+      "other_outcomes": "HTTP_STATUS_AND_OBSERVED_SHA256_FORBIDDEN",
+      "final_1xx_or_101": "RELEASE_PROTOCOL_ERROR"
+    },
+    "elapsed_ms": {
+      "required": false,
+      "minimum": 0,
+      "maximum": 12000,
+      "reward_input": false
+    }
+  },
+  "report_partitioning": {
+    "shard_count": 32,
+    "shard_function": "UNSIGNED_BIG_ENDIAN_SHA256_UTF8_EXECUTION_ID_MOD_32",
+    "partition_expression": "OFFER#<task_id>#SHARD#<shard>",
+    "sort_expression": "<accepted_at>#<report_id>",
+    "synchronous_single_offer_counter_increment": false,
+    "projection_is_base_table_item_transactionally_written_with_receipt": true,
+    "candidate_freeze_reads_all_shards_consistent_read_true": true,
+    "gsi_is_candidate_freeze_authority": false
+  },
+  "async_work": {
+    "applies_to": [
+      "LIFECYCLE",
+      "MANIFEST_PROJECTION",
+      "BASE_EVALUATION",
+      "REFERENCE",
+      "ENTITLEMENT_SETTLEMENT",
+      "SUMMARY_PROJECTION"
+    ],
+    "states": [
+      "DUE",
+      "LEASED",
+      "TERMINAL",
+      "BLOCKED"
+    ],
+    "durable_work_item_created_with_authoritative_transaction": true,
+    "queue_stream_or_scheduler_is_only_wakeup": true,
+    "lease_owner_expiry_and_attempt_generation_required": true,
+    "periodic_due_and_stale_lease_reconciler_required": true,
+    "dlq_persists_blocked_fact_and_does_not_block_healthy_work": true,
+    "blocked_base_evaluation_is_terminal_candidate_decision": false,
+    "blocked_frozen_receipt_keeps_campaign_aggregating": true
+  },
+  "base_evaluation": {
+    "entitlement_amount_atomic": "10000",
+    "entitlement_identity": "BASE_REWARD#<execution_id>",
+    "requires": [
+      "VALID_CLAIM_EXECUTION_OFFER_BINDING",
+      "VALID_MANIFEST_DIGEST_AND_VERSION",
+      "ACCEPTED_AT_IN_T_TO_REPORT_CLOSE_HALF_OPEN_WINDOW",
+      "VALID_SCHEMA",
+      "CONDITIONAL_TARGET_COVERAGE_OR_TYPED_MANIFEST_FAILURE",
+      "NONCONFLICTING_SUBMISSION_ID"
+    ],
+    "does_not_gate_on": [
+      "HTTP_STATUS_QUALITY",
+      "TARGET_REACHABILITY",
+      "MANIFEST_RELEASE_SUCCESS",
+      "NETWORK_OUTCOME",
+      "ELAPSED_MS",
+      "RESULT_QUALITY"
+    ]
+  },
+  "reference": {
+    "candidate_freeze_before_access": true,
+    "freeze_authority": "DURABLE_SOURCE_RECEIPTS_IN_ACCEPTANCE_WINDOW",
+    "reference_may_run_while_base_evaluation_drains": true,
+    "bonus_decision_waits_for_terminal_base_evaluation_of_frozen_receipts": true,
+    "candidate_requires": "BASE_APPROVED",
+    "candidate_requires_base_paid": false,
+    "logical_attempts_per_offer": 1,
+    "target_attempts": 1,
+    "target_order": "SEQUENTIAL_MANIFEST_ORDER",
+    "retry": false,
+    "attempt_started_before_offset_seconds": 660,
+    "complete_before_offset_seconds": 840,
+    "start_deadline_miss": "REFERENCE_FAILED_START_DEADLINE_MISSED_NO_AWARD",
+    "completion_deadline_miss": "REFERENCE_FAILED_COMPLETION_DEADLINE_MISSED_NO_AWARD",
+    "late_target_io_after_deadline_failure": false,
+    "success_requires_all_endpoints_http_response": true,
+    "accepted_http_status_minimum": 200,
+    "accepted_http_status_maximum": 599,
+    "score": "ONE_POINT_PER_EXACT_HTTP_STATUS_MATCH",
+    "winner_requires_positive_score": true,
+    "tie_break": [
+      "ACCEPTED_AT_ASC",
+      "REPORT_ID_LEXICOGRAPHIC_ASC"
+    ],
+    "no_award_conditions": [
+      "REFERENCE_FAILURE",
+      "NO_ELIGIBLE_CANDIDATE",
+      "MAXIMUM_SCORE_ZERO"
+    ],
+    "human_selection": false,
+    "human_override": false
+  },
+  "entitlements": {
+    "base_identity": "BASE_REWARD#<execution_id>",
+    "bonus_identity": "REFERENCE_BONUS#<task_id>",
+    "refund_identity": "REFUND#<task_id>#<original_payment_id>#<promotion_version>",
+    "technical_reversal_identity": "REGISTRATION_REVERSAL#<registration_intent_id>#<payment_authorization_hash>#UNPUBLISHED_V1",
+    "settlement_states": [
+      "NOT_CREATED",
+      "DUE",
+      "SUBMITTING",
+      "CONFIRMING",
+      "PAID_CONFIRMED",
+      "RETRYABLE_KNOWN_FAILURE",
+      "AMBIGUOUS",
+      "FAILED"
+    ],
+    "candidate_or_winner_changes_on_settlement_failure": false,
+    "wallet_guard_released_on_settlement_failure": false,
+    "outbound_nonce_coordinator": {
+      "single_writer_conditional_lease": true,
+      "lease_binds": [
+        "CHAIN_ID",
+        "SENDER",
+        "NONCE",
+        "ENTITLEMENT_ID",
+        "TRANSACTION_FIELDS",
+        "SIGNED_BYTES",
+        "TRANSACTION_HASH"
+      ],
+      "maximum_entitlements_per_nonce": 1,
+      "replacement_nonce_after_signed_bytes": false,
+      "nonce_gap_recovery": "CHAIN_READBACK_AND_SAME_SIGNED_TRANSACTION_REBROADCAST_ONLY_WHEN_SAFE"
+    }
+  },
+  "refund": {
+    "base_policy": "NONE",
+    "promotion_version": "PROMO_95_V1",
+    "promotion_snapshot_at_publication": true,
+    "trigger_states": [
+      "CANCELLED_OWNER",
+      "CANCELLED_UNDER_THRESHOLD"
+    ],
+    "destination": "CONFIRMED_REGISTRATION_PAYER",
+    "amount_atomic_by_plan": {
+      "C50": "950000",
+      "C500": "9500000",
+      "C5000": "95000000"
+    },
+    "completion_sla": false,
+    "failure_changes_offer_state": false,
+    "reference_no_award_creates_refund": false
+  },
+  "sdk": {
+    "journal_key": [
+      "task_id",
+      "local_claim_credential_handle"
+    ],
+    "journal_irreversible_binding_at_t": "manifest_sha256",
+    "public_execution_id": false,
+    "manifest_fetch_maximum_attempts": 3,
+    "manifest_fetch_operation_deadline_ms": 5000,
+    "manifest_fetch_connect_timeout_ms": 500,
+    "manifest_fetch_response_head_timeout_ms": 1200,
+    "manifest_fetch_total_timeout_per_attempt_ms": 1500,
+    "manifest_fetch_next_attempt_requires_full_timeout_remaining": true,
+    "manifest_fetch_also_ends_at_report_close": true,
+    "manifest_fetch_retryable": [
+      "DNS_ERROR",
+      "CONNECTION_ERROR",
+      "TIMEOUT",
+      "HTTP_403_IN_FIRST_2000_MS_AT_T",
+      "HTTP_429",
+      "HTTP_500",
+      "HTTP_502",
+      "HTTP_503",
+      "HTTP_504"
+    ],
+    "target_retry": false,
+    "write_attempt_started_before_dispatch": true,
+    "resend_indeterminate_target": false,
+    "journal_failure_behavior": "FAIL_CLOSED_NO_MORE_TARGET_GET",
+    "recursive_checkpoint": false,
+    "completion_retry": "STATUS_FIRST_THEN_SAME_ID_AND_BYTES_ONLY_IF_ABSENT_AND_BEFORE_CLOSE",
+    "compound_completion_ack_state": "COMPOUND_COMPLETION_ACKED",
+    "separate_report_and_completion_ack_states": false,
+    "existing_on_time_receipt_recoverable_after_close": true,
+    "absent_receipt_retry_at_or_after_close": false,
+    "status_polling": "RETRY_AFTER_EXPONENTIAL_BACKOFF_STABLE_EXECUTION_JITTER",
+    "manifest_fetch_network_policy_scope": "OFFICIAL_SDK_MANIFEST_RELEASE",
+    "manifest_fetch_method": "GET",
+    "manifest_fetch_exact_signed_url_reused_for_every_attempt": true,
+    "manifest_fetch_signed_query_is_only_allowed_credential": true,
+    "manifest_fetch_signed_query_sent_only_to_exact_url": true,
+    "manifest_fetch_signed_query_forwarded": false,
+    "manifest_fetch_signed_url_logged": false,
+    "manifest_fetch_response_header_maximum_bytes": 32768,
+    "manifest_fetch_http_200_body_maximum_bytes": 32768,
+    "manifest_fetch_non_200_body_read_maximum_bytes": 0,
+    "manifest_fetch_response_too_large_outcome": "release_response_too_large",
+    "manifest_fetch_unsupported_encoding_outcome": "release_encoding_unsupported",
+    "manifest_fetch_tls_hostname_mismatch_outcome": "release_tls_error",
+    "manifest_fetch_tls_failure_retryable": false,
+    "manifest_fetch_tls_failure_fallback_reresolution": false,
+    "manifest_fetch_network_policy_or_response_boundary_violation_precedes_http_status_retry": true,
+    "manifest_fetch_non_200_retryable_status_with_unsupported_encoding_oracle": "RELEASE_ENCODING_UNSUPPORTED_ATTEMPTS_1_BODY_BYTES_READ_0"
+  },
+  "summary": {
+    "access": "OFFER_CONTROL_KEY_REQUIRED",
+    "includes": [
+      "CAPACITY_AND_CLAIM_COUNTS",
+      "ELIGIBLE_EXECUTIONS_AT_T_AND_DERIVED_MISSING_REPORTS",
+      "ACCEPTED_AND_MISSING_REPORT_COUNTS",
+      "BASE_APPROVED_AND_PAID_COUNTS",
+      "ENDPOINT_OUTCOME_DISTRIBUTIONS",
+      "ENDPOINT_HTTP_STATUS_DISTRIBUTIONS",
+      "REFERENCE_RESULT",
+      "CONSISTENCY_SCORE_DISTRIBUTION",
+      "WINNING_REPORT_ID_AND_SCORE",
+      "BONUS_STATE",
+      "ERROR_AGGREGATES"
+    ],
+    "excludes": [
+      "CLAIM_TOKEN",
+      "REWARD_ADDRESS",
+      "PAYMENT_AUTHORIZATION",
+      "SIGNED_RELEASE_URL",
+      "RAW_RESPONSE_BODY",
+      "INDIVIDUAL_REPORT_PAYLOAD"
+    ]
+  },
+  "error_schema_version": "ln_church.agent_task_error.v1",
+  "error_envelope_dispatch": {
+    "scheduled_http_get_batch_v2_profile": "NESTED_LN_CHURCH_AGENT_TASK_ERROR_V1",
+    "released_v1_strict_profile": "PRESERVE_EXACT_FLAT_ERROR_CODE_AND_LEGACY_CODES",
+    "known_task_profile_resolved_before_missing_or_invalid_token_error_serialization": true,
+    "unresolved_task_profile_including_unknown_task_id": "RELEASED_FLAT_V1_ERROR_ENVELOPE",
+    "v2_sdk_accepts_pre_profile_flat_v1_exception": true
+  },
+  "error_codes": {
+    "invalid_request": 400,
+    "invalid_manifest": 400,
+    "unsupported_task_type": 400,
+    "invalid_control_key": 401,
+    "invalid_claim_token": 401,
+    "origin_mismatch": 403,
+    "offer_not_manageable": 403,
+    "not_found": 404,
+    "idempotency_conflict": 409,
+    "registration_intent_conflict": 409,
+    "payment_authorization_conflict": 409,
+    "campaign_capacity_unavailable": 409,
+    "offer_not_claimable": 409,
+    "wallet_guard_conflict": 409,
+    "claim_outcome_unknown": 409,
+    "submission_conflict": 409,
+    "offer_not_cancellable": 409,
+    "claim_expired": 410,
+    "report_closed": 410,
+    "report_binding_invalid": 422,
+    "report_not_open": 425,
+    "manifest_not_yet_available": 425,
+    "settlement_reconciliation_pending": 503,
+    "temporarily_unavailable": 503
+  },
+  "legacy_payment_migration": {
+    "COMMITTED": "PRESERVE_NO_NEW_SETTLEMENT_OR_OFFER",
+    "SETTLED_INCOMPLETE_ACTIVATION": "IDEMPOTENTLY_COMPLETE_ONLY_EXACT_EXISTING_TASK",
+    "SETTLING": "READBACK_ONLY_SAFE_LATE_SUCCESS_MAY_ACTIVATE_ONLY_EXISTING_BOUND_TASK_FAILURE_UNPUBLISHED_UNKNOWN_QUARANTINED",
+    "SETTLE_AMBIGUOUS": "SAME_AS_SETTLING_NO_RESETTLE_NO_NEW_TASK",
+    "SETTLE_FAILED": "PRESERVE_TERMINAL_FAILURE_NEVER_PUBLISH",
+    "PRIVATE_ORPHAN_WITHOUT_VALID_BINDING": "HIDDEN_BOUNDED_CLEANUP"
+  },
+  "release_blockers": [
+    "X402_OT_002",
+    "X402_OT_003",
+    "X402_OT_005",
+    "C5000_QUALIFICATION",
+    "NO_PRE_T_OR_CANCELLED_MANIFEST_DISCLOSURE",
+    "NO_LOST_DURABLE_REPORT_RECEIPT",
+    "V1_17_ROUTE_ISOLATION",
+    "PRODUCTION_REGISTRY_AND_PROVIDER_READBACK_COMPLETE"
+  ],
+  "release_qualification_objectives": {
+    "base_evaluation_drain_seconds_after_last_accepted_report": 300,
+    "objective_is_customer_payout_sla": false
+  },
+  "non_scope": [
+    "ARBITRARY_HTTP_METHOD_OR_BODY_OR_HEADERS",
+    "REDIRECT_OR_TARGET_RETRY",
+    "SDK_PARALLEL_MODE",
+    "BODY_DIGEST_SCORING",
+    "RESPONSE_PROOF",
+    "HUMAN_WINNER_SELECTION",
+    "DETAILED_INDIVIDUAL_REPORT_PRODUCT",
+    "STRONG_WALLET_OR_AGENT_IDENTITY",
+    "SYBIL_RESISTANCE",
+    "LN_CHURCH_SERVER_CHANGES"
+  ],
+  "architecture_correction": {
+    "round": 1,
+    "gate_result": "RETURN_TO_ARCHITECTURE",
+    "findings": [
+      "V18-IRG-PAY-001",
+      "V18-IRG-NET-002"
+    ],
+    "previous_approved_bundle_merge": "752d2dd24a263bdd7055876e060c6803648f0524",
+    "previous_bundle_reinterpreted": false
+  }
+}
