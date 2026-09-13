@@ -127,7 +127,7 @@ def test_inspect_no_valid_402_returns_unsupported_challenge_shape(mock_req):
     assert res.failure_class == "no_valid_challenge"
 
 
-@patch("ln_church_agent.cli.parse_challenge_from_response")
+@patch("ln_church_agent.challenges._parse_challenge_from_response")
 @patch("ln_church_agent.inspect_transport._exchange_once")
 def test_inspect_failed_parse_returns_invalid_payment_auth_request(mock_req, mock_parse):
     """

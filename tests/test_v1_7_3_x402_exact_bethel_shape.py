@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import httpx
 import base64
@@ -96,145 +97,76 @@ def test_parse_svm_exact_hybrid_challenge():
     assert raw_accepted["amount"] == "10000"
     assert raw_accepted["extra"]["reference"] == "SolanaReferenceKey"
 
-# ==========================================
-# 2. & 3. Diagnostic Runner Expected Rejection Tests
-# ==========================================
-@patch.object(LnChurchClient, "execute_detailed")
-def test_x402_svm_exact_invalid_signature_classified_as_post_settlement_required(mock_execute):
-    """SVM の Invalid format 拒否が Diagnostic Runner で正確に Expected として分類されること"""
-    mock_execute.side_effect = Exception("API Error 403: Invalid Solana signature format. Evidence must be a submitted transaction signature.")
-    
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    client._last_parsed_challenge = MagicMock(network="solana:123", asset="USDC", draft_shape="x402-v2-exact-svm", parameters={"token_address": SOLANA_USDC_MINT})
-    
-    result = client.run_x402_svm_exact_sandbox_diagnostic()
-    
-    assert result.ok is True
-    assert result.expected_rejection is True
-    assert result.diagnostic_class == "post_settlement_proof_required"
-    assert result.failure_class == "settlement_model_mismatch"
-    assert "Invalid Solana signature format" in result.rejection_reason
+@pytest.mark.parametrize('async_mode', [False, True])
+@pytest.mark.parametrize('rail', ['evm', 'svm'])
+@pytest.mark.parametrize('failure', ['invalid_proof', 'Transaction not found', 'API Error 500: Internal Server Error', None])
+def test_exact_diagnostic_result_classification(async_mode, rail, failure):
+    client = LnChurchClient(base_url='https://api.test')
+    client._last_parsed_challenge = MagicMock(network='test-network', asset='USDC',
+        draft_shape='x402-v2-exact', parameters={'token_address': 'test-token'})
+    if failure == 'invalid_proof':
+        failure = 'Invalid TxHash format' if rail == 'evm' else 'Invalid Solana signature format'
+    expected = failure is not None and 'Internal Server Error' not in failure
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_detailed' + suffix, side_effect=Exception(failure) if failure else None) as execute:
+        method = getattr(client, 'run_x402_' + rail + '_exact_sandbox_diagnostic' + suffix)
+        result = asyncio.run(method()) if async_mode else method()
+    assert result.ok == expected and result.expected_rejection == expected
+    assert result.rejection_reason == failure
+    assert result.diagnostic_class == ('post_settlement_proof_required' if expected else None)
+    assert result.failure_class == ('settlement_model_mismatch' if expected else None)
+    assert result.network == 'test-network' and result.token_address == 'test-token'
+    assert execute.call_count == 1
+    assert execute.call_args.args == ('GET', f'/api/agent/sandbox/x402/{rail}/exact/basic')
+    assert execute.call_args.kwargs == ({'payload': {'asset': 'USDC'}} if rail == 'evm' else {})
 
-@patch.object(LnChurchClient, "execute_detailed")
-def test_x402_evm_exact_invalid_txhash_classified_as_post_settlement_required(mock_execute):
-    """EVM の Invalid TxHash 拒否が Diagnostic Runner で正確に Expected として分類されること"""
-    mock_execute.side_effect = Exception("API Error 403: Invalid TxHash format. Must be a 0x-prefixed 66-char string.")
-    
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    client._last_parsed_challenge = MagicMock(network="eip155:8453", asset="USDC", draft_shape="x402-v2-exact", parameters={"token_address": "0xBaseUSDCContract"})
-    
-    result = client.run_x402_evm_exact_sandbox_diagnostic()
-    
-    assert result.ok is True
-    assert result.expected_rejection is True
-    assert result.diagnostic_class == "post_settlement_proof_required"
-    assert result.failure_class == "settlement_model_mismatch"
 
-@patch.object(LnChurchClient, "execute_detailed")
-def test_transaction_not_found_classified_as_post_settlement_required(mock_execute):
-    """RPC 到達後の Transaction not found 拒否が Expected として分類されること"""
-    mock_execute.side_effect = Exception("API Error 403: Transaction not found on RPC.")
-    
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    # 💡 修正: MagicMock が子モックを生成して Pydantic に怒られないように、明示的にダミー値を入れる
-    client._last_parsed_challenge = MagicMock(
-        network="eip155:8453",
-        asset="USDC",
-        draft_shape="x402-v2-exact",
-        parameters={"token_address": "0xBaseUSDCContract"}
-    )
-    
-    result = client.run_x402_evm_exact_sandbox_diagnostic()
-    
-    assert result.ok is True
-    assert result.expected_rejection is True
-    assert result.diagnostic_class == "post_settlement_proof_required"
+@pytest.mark.parametrize('async_mode', [False, True])
+def test_external_observation_payload_preserves_metadata_without_secrets(async_mode):
+    client = LnChurchClient(base_url='https://api.test')
+    protocol = {'rail': 'x402', 'draft_shape': 'x402-v2-exact-svm'}
+    evidence = {'verification_status': 'self_reported', 'proof_reference': 'safe_hash_123',
+                'preimage': 'secret', 'macaroon': 'secret', 'PRIVATE_KEY': 'secret'}
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_request' + suffix, return_value={}) as execute:
+        method = getattr(client, 'submit_external_observation' + suffix)
+        kwargs = dict(target_url='https://api.external.com', protocol=protocol, evidence=evidence)
+        asyncio.run(method(**kwargs)) if async_mode else method(**kwargs)
+    payload = execute.call_args.kwargs['payload']
+    assert payload['targetUrl'] == 'https://api.external.com'
+    assert payload['source_scope'] == 'external_agent_report'
+    assert payload['protocol'] == protocol and 'sdk_version' in payload
+    assert payload['evidence'] == {'verification_status': 'self_reported', 'proof_reference': 'safe_hash_123'}
+    assert evidence['preimage'] == 'secret'
 
-@patch.object(LnChurchClient, "execute_detailed")
-def test_run_x402_svm_exact_sandbox_diagnostic_expected_rejection_ok(mock_execute):
-    """予期せぬエラー(500)等の場合は ok=False になること"""
-    mock_execute.side_effect = Exception("API Error 500: Internal Server Error")
-    
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    result = client.run_x402_svm_exact_sandbox_diagnostic()
-    
-    assert result.ok is False
-    assert result.expected_rejection is False
-    assert result.diagnostic_class is None
 
-@patch.object(LnChurchClient, "execute_detailed")
-def test_run_x402_evm_exact_sandbox_diagnostic_expected_rejection_ok(mock_execute):
-    """予期せぬエラーの場合はEVNでも ok=False になること"""
-    mock_execute.side_effect = Exception("API Error 400: Bad Request")
-    
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    result = client.run_x402_evm_exact_sandbox_diagnostic()
-    
-    assert result.ok is False
-    assert result.expected_rejection is False
+@pytest.mark.parametrize('async_mode', [False, True])
+def test_external_observation_filters(async_mode):
+    client = LnChurchClient(base_url='https://api.test')
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_request' + suffix, return_value={}) as execute:
+        method = getattr(client, 'get_external_observations' + suffix)
+        asyncio.run(method(limit=20, rail='L402', quality='strong')) if async_mode else method(limit=20, rail='L402', quality='strong')
+    assert execute.call_args.kwargs['payload'] == {'limit': 20, 'rail': 'L402', 'quality': 'strong'}
 
-# ==========================================
-# 4. External Observation Client Tests
-# ==========================================
-@patch.object(LnChurchClient, "execute_request")
-def test_submit_external_observation_payload_shape(mock_request):
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    
-    protocol_data = {"rail": "x402", "draft_shape": "x402-v2-exact-svm"}
-    evidence_data = {"verification_status": "self_reported"}
-    
-    client.submit_external_observation(
-        target_url="https://api.external.com",
-        protocol=protocol_data,
-        evidence=evidence_data
-    )
-    
-    args, kwargs = mock_request.call_args
-    payload = kwargs["payload"]
-    
-    assert payload["targetUrl"] == "https://api.external.com"
-    assert payload["source_scope"] == "external_agent_report"
-    assert payload["protocol"] == protocol_data
-    assert payload["evidence"] == evidence_data
-    assert "sdk_version" in payload
 
-@patch.object(LnChurchClient, "execute_request")
-def test_get_external_observations_filters(mock_request):
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    
-    client.get_external_observations(limit=20, rail="L402", quality="strong")
-    
-    args, kwargs = mock_request.call_args
-    payload = kwargs["payload"]
-    
-    assert payload["limit"] == 20
-    assert payload["rail"] == "L402"
-    assert payload["quality"] == "strong"
-
-@patch.object(LnChurchClient, "execute_request")
-def test_external_observation_does_not_send_raw_secret(mock_request):
-    """Raw Secret (preimage, macaroon 等) がサーバー送信前にローカルでストリップされること"""
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    
-    evidence_data = {
-        "verification_status": "self_reported",
-        "proof_reference": "safe_hash_123",
-        "preimage": "RAW_SECRET_PREIMAGE",
-        "macaroon": "RAW_SECRET_MACAROON",
-        "PRIVATE_KEY": "RAW_SECRET_KEY"
-    }
-    
-    client.submit_external_observation(
-        target_url="https://api.external.com",
-        evidence=evidence_data
-    )
-    
-    args, kwargs = mock_request.call_args
-    sent_evidence = kwargs["payload"]["evidence"]
-    
-    assert "verification_status" in sent_evidence
-    assert "proof_reference" in sent_evidence
-    # 以下はストリップされているはず
-    assert "preimage" not in sent_evidence
-    assert "macaroon" not in sent_evidence
-    assert "PRIVATE_KEY" not in sent_evidence
+@pytest.mark.parametrize('async_mode', [False, True])
+@pytest.mark.parametrize('failure, stage, origin', [
+    (None, None, 'unknown'),
+    ('LNBits Payment Failed Error code 502', 'payment_initiation', 'payment_backend'),
+    ('payment initiated but not settled', 'payment_settlement_check', 'payment_backend'),
+    ('invalid 402 challenge', 'challenge_parse', 'target_endpoint'),
+])
+def test_external_protocol_diagnostic_result_selection(async_mode, failure, stage, origin):
+    from ln_church_agent.models import ExecutionResult
+    client = LnChurchClient(base_url='https://api.test')
+    fetched = ExecutionResult(response={'data': 'read'}, final_url='https://target.test')
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_detailed' + suffix, return_value=fetched,
+                      side_effect=RuntimeError(failure) if failure else None):
+        method = getattr(client, 'run_external_protocol_verification' + suffix)
+        result = asyncio.run(method('https://target.test')) if async_mode else method('https://target.test')
+    assert result.ok == (failure is None)
+    assert result.error_stage == stage and result.suspected_failure_origin == origin
+    assert result.status_code_after_payment == (200 if failure is None else 502 if '502' in failure else 500)
+    assert result.payment_performed == (origin == 'payment_backend')

@@ -6,6 +6,7 @@ Response models discard unknown fields and reconstruct only their finite
 allowlist.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import copy
@@ -24,6 +25,7 @@ from pydantic import (
     ValidationError,
     field_validator,
     model_validator,
+    model_serializer,
 )
 
 from .task_contract import (
@@ -49,9 +51,6 @@ from .task_contract import (
     TASK_SCHEMA_VERSION,
     TASK_TYPE_PAYMENT_SURFACE_DISCOVERY,
     canonical_submission_bytes,
-    canonical_submission_digest,
-    canonical_submission_digest_hex,
-    claim_token_storage_digest,
     failure_codes_for_task_status,
     generate_submission_id,
     parse_rfc3339_utc,
@@ -260,9 +259,119 @@ _TASK_CREDENTIAL_FINGERPRINT_DOMAIN_SEPARATOR = (
 )
 
 
+@dataclass(frozen=True)
+class _OwnedTaskFields:
+    """One validated model value; DTOs are disposable views, never owners."""
+
+    model_type: Any
+    fields: tuple
+    fields_set: frozenset
+
+    def view(self) -> BaseModel:
+        return self.model_type.model_construct(
+            _fields_set=set(self.fields_set),
+            **{name: _task_value_view(value) for name, value in self.fields}
+        )
+
+
+def _own_task_value(value: Any) -> Any:
+    if isinstance(value, _OwnedTaskModel) and value._owned_fields is not None:
+        return value._owned_fields
+    if isinstance(value, BaseModel):
+        return _OwnedTaskFields(
+            type(value),
+            tuple(
+                (name, _own_task_value(item))
+                for name, item in vars(value).items()
+            ),
+            frozenset(value.model_fields_set),
+        )
+    if isinstance(value, list):
+        return tuple(_own_task_value(item) for item in value)
+    return value
+
+
+def _task_value_view(value: Any) -> Any:
+    if isinstance(value, _OwnedTaskFields):
+        return value.view()
+    if isinstance(value, tuple):
+        return [_task_value_view(item) for item in value]
+    return value
+
+
+class _OwnedTaskModel(BaseModel):
+    """Pydantic API adapter over a single immutable, exclusively owned value.
+
+    Constructors and external model/Mapping/JSON boundaries validate. Reading
+    an accepted value only projects a detached DTO; it does not re-interpret
+    that value or synchronize a second set of binding fields.
+    """
+
+    _owned_fields: Optional[_OwnedTaskFields] = PrivateAttr(default=None)
+
+    def _own_fields(self) -> None:
+        if self._owned_fields is None:
+            self._owned_fields = _own_task_value(self)
+            self.__dict__.clear()
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in type(self).model_fields:
+            private = object.__getattribute__(self, "__pydantic_private__")
+            owned = private and private.get("_owned_fields")
+            if owned is not None:
+                for field, value in owned.fields:
+                    if field == name:
+                        return _task_value_view(value)
+        return super().__getattribute__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if self._owned_fields is not None:
+            name = ""
+            value = None
+            raise ValueError("Task value is immutable.")
+        # Unaccepted public Submission DTOs retain Pydantic assignment errors.
+        super().__setattr__(name, value)
+
+    def _owned_model(self, name: str) -> "_OwnedTaskModel":
+        """Internal nested snapshot from an already accepted immutable value."""
+        if self._owned_fields is None:
+            raise ValueError("Invalid Task value.")
+        for field, value in self._owned_fields.fields:
+            if field == name and isinstance(value, _OwnedTaskFields):
+                model = value.model_type.model_construct(
+                    _fields_set=set(value.fields_set)
+                )
+                model._owned_fields = value
+                model.__dict__.clear()
+                return model
+        raise ValueError("Invalid Task value.")
+
+    def _validated_snapshot(self) -> "_OwnedTaskModel":
+        if self._owned_fields is None:
+            raise ValueError("Invalid Task value.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_owned_value(self, handler: Any) -> Any:
+        owned = self._owned_fields
+        return handler(self if owned is None else owned.view())
+
+    def __repr_args__(self) -> Any:
+        owned = self._owned_fields
+        if owned is None:
+            return super().__repr_args__()
+        return owned.view().__repr_args__()
+
+    def __iter__(self) -> Any:
+        owned = self._owned_fields
+        return super().__iter__() if owned is None else iter(owned.view())
+
+
 def _strict_snapshot_value(value: Any) -> Any:
     """Recursively materialize model state so strict validation cannot reuse it."""
 
+    if isinstance(value, _OwnedTaskModel) and value._owned_fields is not None:
+        return _strict_snapshot_value(value._owned_fields.view())
     if isinstance(value, BaseModel):
         return _strict_snapshot_value(dict(vars(value)))
     if type(value) is dict:
@@ -296,7 +405,7 @@ def _exact_model_snapshot(
         raise ValueError(message) from None
 
 
-class TaskDefinitionReference(_StrictRequestModel):
+class TaskDefinitionReference(_OwnedTaskModel, _StrictRequestModel):
     """Exact immutable reference to one server-selected Task Definition."""
 
     model_config = _FROZEN_REQUEST_CONFIG
@@ -305,23 +414,10 @@ class TaskDefinitionReference(_StrictRequestModel):
     task_definition_digest: str
     manifest_url: str
     manifest_sha256: str
-    _bound_values: tuple = PrivateAttr()
-    _sealed: bool = PrivateAttr(default=False)
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
-        self._bound_values = (
-            self.task_definition_version,
-            self.task_definition_digest,
-            self.manifest_url,
-            self.manifest_sha256,
-        )
-        self._sealed = True
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_sealed", False):
-            raise TypeError("Task Definition reference is immutable.")
-        super().__setattr__(name, value)
+        self._own_fields()
 
     @field_validator("task_definition_version")
     @classmethod
@@ -342,25 +438,6 @@ class TaskDefinitionReference(_StrictRequestModel):
     @classmethod
     def _validate_manifest_sha256(cls, value: str) -> str:
         return validate_manifest_sha256(value)
-
-    def _validated_snapshot(self) -> "TaskDefinitionReference":
-        current = (
-            self.task_definition_version,
-            self.task_definition_digest,
-            self.manifest_url,
-            self.manifest_sha256,
-        )
-        if current != self._bound_values:
-            raise ValueError("Invalid Task Definition reference.")
-        try:
-            return type(self)(
-                task_definition_version=current[0],
-                task_definition_digest=current[1],
-                manifest_url=current[2],
-                manifest_sha256=current[3],
-            )
-        except Exception:
-            raise ValueError("Invalid Task Definition reference.") from None
 
 
 class _TaskDefinitionFieldsModel(_StrictResponseModel):
@@ -817,7 +894,7 @@ class AgentTaskClaimRequest(_StrictRequestModel):
         return validate_reward_address(value)
 
 
-class TaskClaimCredential(_TaskDefinitionFieldsModel):
+class TaskClaimCredential(_OwnedTaskModel, _TaskDefinitionFieldsModel):
     """Lease-bound bearer capability with secret-safe normal serialization."""
 
     model_config = _FROZEN_REQUEST_CONFIG
@@ -830,9 +907,6 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
     reward: AgentTaskRewardTerms
     lease_expires_at: str
     _claim_token: SecretStr = PrivateAttr()
-    _bound_public_snapshot: tuple = PrivateAttr()
-    _claim_token_digest: bytes = PrivateAttr()
-    _sealed: bool = PrivateAttr(default=False)
 
     @_finite_validation_boundary("Invalid task claim credential.")
     def __init__(self, **data: Any) -> None:
@@ -859,16 +933,7 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
             data.clear()
             raise ValueError("Invalid task claim credential.") from None
         self._claim_token = secret_token
-        self._bound_public_snapshot = self._public_snapshot_tuple()
-        self._claim_token_digest = claim_token_storage_digest(
-            self._claim_token_value()
-        )
-        self._sealed = True
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_sealed", False):
-            raise TypeError("Task claim credential is immutable.")
-        super().__setattr__(name, value)
+        self._own_fields()
 
     @classmethod
     @_finite_validation_boundary("Invalid task claim credential.")
@@ -917,6 +982,13 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
             candidate = None
             raise ValueError("Invalid task claim credential JSON.") from None
 
+    @field_validator("reward", mode="before")
+    @classmethod
+    def _snapshot_credential_reward(cls, value: Any) -> Any:
+        # External Pydantic instances can be constructed or copied without
+        # validation. Materialize once before accepting our owned value.
+        return _strict_snapshot_value(value)
+
     @field_validator("api_origin")
     @classmethod
     def _validate_api_origin(cls, value: str) -> str:
@@ -947,26 +1019,6 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
 
         return self._claim_token.get_secret_value()
 
-    def _public_snapshot_tuple(self) -> tuple:
-        return (
-            self.api_origin,
-            self.task_id,
-            self.task_type,
-            self.agent_id,
-            self.reward_address,
-            self.lease_expires_at,
-            self.task_definition_version,
-            self.task_definition_digest,
-            self.manifest_url,
-            self.manifest_sha256,
-            (
-                self.reward.network,
-                self.reward.asset,
-                self.reward.asset_address,
-                self.reward.amount_atomic,
-            ),
-        )
-
     @_finite_validation_boundary("Invalid task claim credential fingerprint.")
     def _local_fingerprint(self) -> str:
         """Return a one-way, non-authoritative restart binding.
@@ -977,10 +1029,6 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
         It cannot be used as that capability and is never sent to Hondo.
         """
 
-        current_public = self._public_snapshot_tuple()
-        if current_public != self._bound_public_snapshot:
-            raise ValueError("Invalid task claim credential fingerprint.")
-
         token: Optional[str] = self._claim_token_value()
         try:
             fingerprint = hashlib.sha256(
@@ -990,41 +1038,6 @@ class TaskClaimCredential(_TaskDefinitionFieldsModel):
         finally:
             token = None
         return fingerprint
-
-    @_finite_validation_boundary("Invalid task claim credential.")
-    def _validated_snapshot(self) -> "TaskClaimCredential":
-        current_public = self._public_snapshot_tuple()
-        token = self._claim_token_value()
-        if current_public != self._bound_public_snapshot:
-            raise ValueError("Invalid task claim credential.")
-        if not hmac.compare_digest(
-            claim_token_storage_digest(token),
-            self._claim_token_digest,
-        ):
-            token = None
-            raise ValueError("Invalid task claim credential.")
-        try:
-            return type(self)(
-                api_origin=current_public[0],
-                task_id=current_public[1],
-                task_type=current_public[2],
-                agent_id=current_public[3],
-                reward_address=current_public[4],
-                lease_expires_at=current_public[5],
-                task_definition_version=current_public[6],
-                task_definition_digest=current_public[7],
-                manifest_url=current_public[8],
-                manifest_sha256=current_public[9],
-                reward={
-                    "network": current_public[10][0],
-                    "asset": current_public[10][1],
-                    "asset_address": current_public[10][2],
-                    "amount_atomic": current_public[10][3],
-                },
-                claim_token=token,
-            )
-        finally:
-            token = None
 
     def _to_private_file_payload(self) -> Dict[str, Any]:
         """Explicit secret-bearing payload used only by the private file codec."""
@@ -1434,7 +1447,9 @@ class TaskVerificationCostVector(_StrictRequestModel):
         return value
 
 
-class TaskDomainObservationSubmission(_StrictRequestModel):
+class TaskDomainObservationSubmission(_OwnedTaskModel, _StrictRequestModel):
+    _canonical_jcs: Optional[bytes] = PrivateAttr(default=None)
+
     schema_version: Literal[
         "ln_church.task_domain_observation_submission.v1"
     ] = OBSERVATION_SUBMISSION_SCHEMA_VERSION
@@ -1506,12 +1521,17 @@ class TaskDomainObservationSubmission(_StrictRequestModel):
         cls,
         value: Any,
     ) -> "TaskDomainObservationSubmission":
+        if type(value) is cls and value._owned_fields is not None:
+            return value
         if not isinstance(value, (BaseModel, Mapping)):
             raise ValueError("Invalid Task domain observation submission.")
         snapshot: Any = None
         try:
-            snapshot = _strict_snapshot_value(value)
-            return cls.model_validate(snapshot, strict=True)
+            snapshot = cls.model_validate(
+                _strict_snapshot_value(value), strict=True
+            )
+            snapshot._own_fields()
+            return snapshot
         except Exception:
             snapshot = None
             raise ValueError(
@@ -1523,27 +1543,23 @@ class TaskDomainObservationSubmission(_StrictRequestModel):
     )
     def canonical_bytes(self) -> bytes:
         validated = self._validated_snapshot(self)
-        return canonical_submission_bytes(
-            validated.model_dump(mode="json")
-        )
+        if validated._canonical_jcs is None:
+            validated.__pydantic_private__["_canonical_jcs"] = (
+                canonical_submission_bytes(validated.model_dump(mode="json"))
+            )
+        return validated._canonical_jcs
 
     @_finite_validation_boundary(
         "Invalid Task domain observation submission."
     )
     def canonical_digest(self) -> bytes:
-        validated = self._validated_snapshot(self)
-        return canonical_submission_digest(
-            validated.model_dump(mode="json")
-        )
+        return hashlib.sha256(self.canonical_bytes()).digest()
 
     @_finite_validation_boundary(
         "Invalid Task domain observation submission."
     )
     def canonical_digest_hex(self) -> str:
-        validated = self._validated_snapshot(self)
-        return canonical_submission_digest_hex(
-            validated.model_dump(mode="json")
-        )
+        return self.canonical_digest().hex()
 
     @property
     def idempotency_digest(self) -> str:
@@ -1801,7 +1817,7 @@ def verify_reward_status_transition(
     return current_snapshot
 
 
-class TaskDomainObservationCheckpoint(_TaskDefinitionFieldsModel):
+class TaskDomainObservationCheckpoint(_OwnedTaskModel, _TaskDefinitionFieldsModel):
     """Secret-free SDK-local restart metadata for the guided Task bridge.
 
     This model is neither Hondo state nor an execution, evaluation, settlement,
@@ -1828,94 +1844,13 @@ class TaskDomainObservationCheckpoint(_TaskDefinitionFieldsModel):
     credential_fingerprint: str
     register_receipt: Optional[TaskDomainObservationResponse] = None
     observation_id: Optional[str] = None
-    _bound_values: tuple = PrivateAttr()
-    _sealed: bool = PrivateAttr(default=False)
 
     @_finite_validation_boundary(
         "Invalid Task domain observation checkpoint."
     )
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
-        self._bound_values = self._current_bound_values()
-        self._sealed = True
-
-    @_finite_validation_boundary(
-        "Task domain observation checkpoint is immutable."
-    )
-    def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_sealed", False):
-            raise ValueError(
-                "Task domain observation checkpoint is immutable."
-            )
-        super().__setattr__(name, value)
-
-    def __getattribute__(self, name: str) -> Any:
-        value = super().__getattribute__(name)
-        if name in {"submission", "reward", "register_receipt"}:
-            integrity_failed = False
-            try:
-                try:
-                    private_values = super().__getattribute__(
-                        "__pydantic_private__"
-                    )
-                    sealed = bool(
-                        private_values
-                        and private_values.get("_sealed", False)
-                    )
-                except (AttributeError, TypeError):
-                    sealed = False
-                if sealed:
-                    super().__getattribute__("_require_intact")()
-            except Exception:
-                integrity_failed = True
-            if integrity_failed:
-                value = None
-                raise ValueError(
-                    "Invalid Task domain observation checkpoint."
-                )
-        if (
-            name == "submission"
-            and type(value) is TaskDomainObservationSubmission
-        ):
-            try:
-                return TaskDomainObservationSubmission._validated_snapshot(
-                    value
-                )
-            except Exception:
-                pass
-            value = None
-            raise ValueError(
-                "Invalid Task domain observation checkpoint."
-            )
-        if name == "reward" and type(value) is AgentTaskRewardTerms:
-            try:
-                return _exact_model_snapshot(
-                    value,
-                    AgentTaskRewardTerms,
-                    "Invalid Task domain observation checkpoint.",
-                )
-            except Exception:
-                pass
-            value = None
-            raise ValueError(
-                "Invalid Task domain observation checkpoint."
-            )
-        if (
-            name == "register_receipt"
-            and type(value) is TaskDomainObservationResponse
-        ):
-            try:
-                return TaskDomainObservationResponse.model_validate(
-                    _strict_snapshot_value(value),
-                    strict=True,
-                )
-            except Exception:
-                pass
-            value = None
-            raise ValueError(
-                "Invalid Task domain observation checkpoint."
-            )
-        return value
+        self._own_fields()
 
     @classmethod
     @_finite_validation_boundary(
@@ -2098,97 +2033,8 @@ class TaskDomainObservationCheckpoint(_TaskDefinitionFieldsModel):
             raise ValueError("Task checkpoint Register binding mismatch.")
         return self
 
-    def _current_bound_values(self) -> tuple:
-        receipt = super().__getattribute__("register_receipt")
-        submission = super().__getattribute__("submission")
-        reward = super().__getattribute__("reward")
-        receipt_values = (
-            None
-            if receipt is None
-            else (
-                receipt.schema_version,
-                receipt.accepted,
-                receipt.task_id,
-                receipt.submission_id,
-                receipt.observation_id,
-                receipt.status,
-            )
-        )
-        return (
-            self.schema_version,
-            self.state,
-            self.api_origin,
-            self.task_id,
-            self.task_type,
-            self.task_definition_version,
-            self.task_definition_digest,
-            self.manifest_url,
-            self.manifest_sha256,
-            self.agent_id,
-            self.reward_address,
-            (
-                reward.network,
-                reward.asset,
-                reward.asset_address,
-                reward.amount_atomic,
-            ),
-            self.lease_expires_at,
-            submission.canonical_bytes(),
-            self.submission_id,
-            self.submission_sha256,
-            self.credential_fingerprint,
-            receipt_values,
-            self.observation_id,
-        )
 
-    def _require_intact(self) -> None:
-        try:
-            current = self._current_bound_values()
-        except Exception:
-            raise ValueError(
-                "Invalid Task domain observation checkpoint."
-            ) from None
-        if current != self._bound_values:
-            raise ValueError(
-                "Invalid Task domain observation checkpoint."
-            )
-
-    @_finite_validation_boundary(
-        "Invalid Task domain observation checkpoint."
-    )
-    def _validated_snapshot(self) -> "TaskDomainObservationCheckpoint":
-        self._require_intact()
-        payload = BaseModel.model_dump(
-            self,
-            mode="python",
-            exclude_none=False,
-        )
-        return type(self).model_validate(payload, strict=True)
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        self._require_intact()
-        return super().model_dump(*args, **kwargs)
-
-    def model_dump_json(self, *args: Any, **kwargs: Any) -> str:
-        self._require_intact()
-        return super().model_dump_json(*args, **kwargs)
-
-    def __repr__(self) -> str:
-        try:
-            self._require_intact()
-        except Exception:
-            return "TaskDomainObservationCheckpoint(<invalid>)"
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        try:
-            self._require_intact()
-        except Exception:
-            return "TaskDomainObservationCheckpoint(<invalid>)"
-        return super().__str__()
-
-
-class TaskDomainObservationGuidedResult(_StrictRequestModel):
+class TaskDomainObservationGuidedResult(_OwnedTaskModel, _StrictRequestModel):
     """Exact receipts returned by one bounded guided Register/Completion run.
 
     A direct Completion 2xx carries its exact receipt.  If that exchange was
@@ -2205,72 +2051,13 @@ class TaskDomainObservationGuidedResult(_StrictRequestModel):
     register_receipt: TaskDomainObservationResponse
     completion_receipt: Optional[AgentTaskCompletionResponse] = None
     matched_status: Optional[AgentTaskRewardStatus] = None
-    _bound_values: tuple = PrivateAttr()
-    _sealed: bool = PrivateAttr(default=False)
 
     @_finite_validation_boundary(
         "Invalid Task domain observation guided result."
     )
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
-        self._bound_values = self._current_bound_values()
-        self._sealed = True
-
-    @_finite_validation_boundary(
-        "Task domain observation guided result is immutable."
-    )
-    def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_sealed", False):
-            raise ValueError(
-                "Task domain observation guided result is immutable."
-            )
-        super().__setattr__(name, value)
-
-    def __getattribute__(self, name: str) -> Any:
-        value = super().__getattribute__(name)
-        model_type: Any = None
-        if name == "register_receipt":
-            model_type = TaskDomainObservationResponse
-        elif name == "completion_receipt":
-            model_type = AgentTaskCompletionResponse
-        elif name == "matched_status":
-            model_type = AgentTaskRewardStatus
-        if model_type is not None and type(value) is model_type:
-            integrity_failed = False
-            try:
-                try:
-                    private_values = super().__getattribute__(
-                        "__pydantic_private__"
-                    )
-                    sealed = bool(
-                        private_values
-                        and private_values.get("_sealed", False)
-                    )
-                except (AttributeError, TypeError):
-                    sealed = False
-                if sealed:
-                    super().__getattribute__("_require_intact")()
-            except Exception:
-                integrity_failed = True
-            if integrity_failed:
-                value = None
-                model_type = None
-                raise ValueError(
-                    "Invalid Task domain observation guided result."
-                )
-            try:
-                return model_type.model_validate(
-                    _strict_snapshot_value(value),
-                    strict=True,
-                )
-            except Exception:
-                pass
-            value = None
-            model_type = None
-            raise ValueError(
-                "Invalid Task domain observation guided result."
-            )
-        return value
+        self._own_fields()
 
     @classmethod
     @_finite_validation_boundary(
@@ -2399,105 +2186,6 @@ class TaskDomainObservationGuidedResult(_StrictRequestModel):
                 "Guided Task matched status does not reconcile Completion."
             )
         return self
-
-    def _current_bound_values(self) -> tuple:
-        register = super().__getattribute__("register_receipt")
-        completion = super().__getattribute__("completion_receipt")
-        status = super().__getattribute__("matched_status")
-        completion_values = (
-            None
-            if completion is None
-            else (
-                completion.schema_version,
-                completion.accepted,
-                completion.task_id,
-                completion.submission_id,
-                completion.observation_id,
-                completion.status,
-            )
-        )
-        status_values = (
-            None
-            if status is None
-            else (
-                status.schema_version,
-                status.task_id,
-                status.submission_id,
-                status.observation_id,
-                status.task_definition_version,
-                status.task_definition_digest,
-                status.manifest_url,
-                status.manifest_sha256,
-                status.task_status,
-                status.reward_state,
-                status.network,
-                status.asset,
-                status.asset_address,
-                status.amount_atomic,
-                status.reward_tx_hash,
-                status.rewarded_at,
-                status.failure_code,
-            )
-        )
-        return (
-            self.schema_version,
-            (
-                register.schema_version,
-                register.accepted,
-                register.task_id,
-                register.submission_id,
-                register.observation_id,
-                register.status,
-            ),
-            completion_values,
-            status_values,
-        )
-
-    def _require_intact(self) -> None:
-        try:
-            current = self._current_bound_values()
-        except Exception:
-            raise ValueError(
-                "Invalid Task domain observation guided result."
-            ) from None
-        if current != self._bound_values:
-            raise ValueError(
-                "Invalid Task domain observation guided result."
-            )
-
-    @_finite_validation_boundary(
-        "Invalid Task domain observation guided result."
-    )
-    def _validated_snapshot(self) -> "TaskDomainObservationGuidedResult":
-        self._require_intact()
-        payload = BaseModel.model_dump(
-            self,
-            mode="python",
-            exclude_none=False,
-        )
-        return type(self).model_validate(payload, strict=True)
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        self._require_intact()
-        return super().model_dump(*args, **kwargs)
-
-    def model_dump_json(self, *args: Any, **kwargs: Any) -> str:
-        self._require_intact()
-        return super().model_dump_json(*args, **kwargs)
-
-    def __repr__(self) -> str:
-        try:
-            self._require_intact()
-        except Exception:
-            return "TaskDomainObservationGuidedResult(<invalid>)"
-        return super().__repr__()
-
-    def __str__(self) -> str:
-        try:
-            self._require_intact()
-        except Exception:
-            return "TaskDomainObservationGuidedResult(<invalid>)"
-        return super().__str__()
 
 
 class AgentTaskErrorResponse(_StrictResponseModel):

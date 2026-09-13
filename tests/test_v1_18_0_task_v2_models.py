@@ -175,6 +175,20 @@ def test_private_credential_file_is_only_secret_serialization_boundary():
     assert restored._local_fingerprint() == credential._local_fingerprint()
 
 
+def test_credential_owns_reward_and_revalidates_unchecked_external_dto():
+    payload = _credential()._to_private_file_payload()
+    payload.pop("schema_version")
+    payload.pop("state")
+    payload["reward"] = _credential().reward
+    credential = ScheduledTaskClaimCredential(**payload)
+    public = credential.model_dump(mode="json")
+    public["reward"]["amount_atomic"] = "1"
+    assert credential.reward.amount_atomic == "10000"
+    payload["reward"] = payload["reward"].model_copy(update={"amount_atomic": "1"})
+    with pytest.raises(ValueError):
+        ScheduledTaskClaimCredential(**payload)
+
+
 @pytest.mark.parametrize(
     "model_factory",
     [

@@ -254,8 +254,16 @@ def parse_rfc3339_whole_second(value: Any, field_name: str) -> datetime:
     )
 
 
+def _is_elapsed_ms(value: Any, maximum: int) -> bool:
+    return type(value) is int and 0 <= value <= maximum
+
+
+def _is_http_status(value: Any, minimum: int) -> bool:
+    return type(value) is int and minimum <= value <= 599
+
+
 def validate_elapsed_ms(value: Any, maximum: int, field_name: str) -> int:
-    if type(value) is not int or value < 0 or value > maximum:
+    if not _is_elapsed_ms(value, maximum):
         raise ValueError("Invalid %s." % field_name)
     return value
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
-import hmac
 import json
 import uuid
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -21,7 +20,10 @@ from pydantic import (
     model_validator,
 )
 
+from .task_models import _OwnedTaskModel, _strict_snapshot_value
+
 from .task_v2_contract import (
+    _is_http_status,
     ABANDON_REQUEST_SCHEMA_VERSION,
     CLAIM_REQUEST_SCHEMA_VERSION,
     CLAIM_RESPONSE_SCHEMA_VERSION,
@@ -390,7 +392,7 @@ class ScheduledTaskClaimResponse(_SecretBearingFrozenModel):
         )
 
 
-class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
+class ScheduledTaskClaimCredential(_OwnedTaskModel, _SecretBearingFrozenModel):
     """Private-file capability; ordinary serialization contains no bearer."""
 
     api_origin: Literal["https://kari.mayim-mayim.com"] = PUBLIC_API_ORIGIN
@@ -408,8 +410,6 @@ class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
     manifest_url_expires_at: str
     _claim_token: SecretStr = PrivateAttr()
     _manifest_url: SecretStr = PrivateAttr()
-    _bound_snapshot: Tuple[Any, ...] = PrivateAttr()
-    _token_digest: bytes = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:
         raw_token = data.pop("claim_token", None)
@@ -425,8 +425,7 @@ class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
             raise _finite_model_error("Invalid scheduled Task credential.") from None
         self._claim_token = SecretStr(token)
         self._manifest_url = SecretStr(release_url)
-        self._bound_snapshot = self._public_snapshot()
-        self._token_digest = hashlib.sha256(token.encode("ascii")).digest()
+        self._own_fields()
         raw_token = None
         raw_url = None
 
@@ -442,6 +441,11 @@ class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
         except Exception:
             candidate.clear()
             raise _finite_model_error("Invalid scheduled Task credential.") from None
+
+    @field_validator("reward", mode="before")
+    @classmethod
+    def _snapshot_credential_reward(cls, value: Any) -> Any:
+        return _strict_snapshot_value(value)
 
     @field_validator("task_id")
     @classmethod
@@ -495,22 +499,6 @@ class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
     def _manifest_url_value(self) -> str:
         return self._manifest_url.get_secret_value()
 
-    def _public_snapshot(self) -> Tuple[Any, ...]:
-        return (
-            self.api_origin,
-            self.task_id,
-            self.task_type,
-            self.task_definition_version,
-            self.task_definition_digest,
-            self.agent_id,
-            self.reward_address,
-            tuple(self.reward.model_dump(mode="python").items()),
-            self.claim_expires_at,
-            self.scheduled_at,
-            self.report_close_at,
-            self.manifest_url_not_before,
-            self.manifest_url_expires_at,
-        )
 
     def _local_fingerprint(self) -> str:
         snapshot = self._validated_snapshot()
@@ -528,21 +516,6 @@ class ScheduledTaskClaimCredential(_SecretBearingFrozenModel):
 
         return self._local_fingerprint()
 
-    def _validated_snapshot(self) -> "ScheduledTaskClaimCredential":
-        token = self._claim_token_value()
-        if self._public_snapshot() != self._bound_snapshot or not hmac.compare_digest(
-            hashlib.sha256(token.encode("ascii")).digest(), self._token_digest
-        ):
-            token = None
-            raise _finite_model_error("Invalid scheduled Task credential.")
-        try:
-            return type(self)(
-                **self.model_dump(mode="python"),
-                claim_token=token,
-                manifest_url=self._manifest_url_value(),
-            )
-        finally:
-            token = None
 
     def _to_private_file_payload(self) -> Dict[str, Any]:
         snapshot = self._validated_snapshot()
@@ -757,7 +730,7 @@ class ManifestFetchResult(_FrozenModel):
     def _status(cls, value: Optional[int]) -> Optional[int]:
         if value is None:
             return None
-        if type(value) is not int or not 100 <= value <= 599:
+        if not _is_http_status(value, 100):
             raise ValueError("Invalid http_status.")
         return value
 
@@ -769,8 +742,7 @@ class ManifestFetchResult(_FrozenModel):
             valid = self.http_status == 200 and self.observed_sha256 is not None
         elif self.outcome == "release_http_unexpected_status":
             valid = (
-                self.http_status is not None
-                and 201 <= self.http_status <= 599
+                _is_http_status(self.http_status, 201)
                 and self.observed_sha256 is None
             )
         elif self.outcome == "release_digest_mismatch":
@@ -821,7 +793,7 @@ class ScheduledTargetResult(_FrozenModel):
     def _status(cls, value: Optional[int]) -> Optional[int]:
         if value is None:
             return None
-        if type(value) is not int or not 200 <= value <= 599:
+        if not _is_http_status(value, 200):
             raise ValueError("Invalid target http_status.")
         return value
 

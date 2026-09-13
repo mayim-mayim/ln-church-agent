@@ -61,7 +61,9 @@ def test_session_spend_limit_enforcement():
         parameters={}, source=ChallengeSource.STANDARD_X402, raw_header=""
     )
     client._enforce_policy(challenge, "https://api.example.com")
-    client._record_session_spend(challenge) # 決済成功として計上
+    context = ExecutionContext()
+    client._reserve_session_budget(context, "first-purchase", client._estimate_usd_decimal(challenge))
+    client._confirm_session_budget(context, "first-purchase")
     assert client.policy._session_spent_usd == 4.0
 
     # 2回目: 4.0 USD (累積が8.0となり上限7.0を超えるため、ブロックされる)
@@ -158,7 +160,7 @@ def test_flat_x402_execution_is_inspect_only_and_fails_closed(
 
     assert mock_request.call_count == 1
     mock_sign_evm.assert_not_called()
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
 
 # ==========================================
 # 4. 1.5.6 Wire-Level Protocol Purity & Parser テスト

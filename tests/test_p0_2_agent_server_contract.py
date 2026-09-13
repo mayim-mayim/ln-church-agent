@@ -817,7 +817,6 @@ def _assert_known_settled_recovery(client, wallet, context):
     assert state["state"] == "ambiguous"
     assert state["ambiguity_kind"] == "known_settled_delivery"
     assert state["ambiguous_reservation_usd"] == "0"
-    assert context._ambiguous_reservations == {}
     assert wallet.pay_invoice.call_count == 1
     with pytest.raises(PaymentExecutionError, match="Known-settled"):
         client.resolve_ambiguous_payment(

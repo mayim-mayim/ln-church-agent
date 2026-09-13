@@ -13,10 +13,11 @@ import re
 import secrets
 import unicodedata
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional
 from urllib.parse import unquote_to_bytes, urlsplit
 
 import idna
+from eth_hash.auto import keccak
 
 
 CONTRACT_ID = "ln_church.agent_task_venue.v1"
@@ -557,124 +558,6 @@ def is_url_within_task_domain(value: Any, task_domain: Any) -> bool:
     return True
 
 
-# Keccak-f[1600] constants.  A tiny dependency-free implementation is kept
-# here because EIP-55 uses Keccak-256 (not hashlib.sha3_256), while the worker
-# lane may not add a new mandatory dependency.
-_KECCAK_ROUND_CONSTANTS = (
-    0x0000000000000001,
-    0x0000000000008082,
-    0x800000000000808A,
-    0x8000000080008000,
-    0x000000000000808B,
-    0x0000000080000001,
-    0x8000000080008081,
-    0x8000000000008009,
-    0x000000000000008A,
-    0x0000000000000088,
-    0x0000000080008009,
-    0x000000008000000A,
-    0x000000008000808B,
-    0x800000000000008B,
-    0x8000000000008089,
-    0x8000000000008003,
-    0x8000000000008002,
-    0x8000000000000080,
-    0x000000000000800A,
-    0x800000008000000A,
-    0x8000000080008081,
-    0x8000000000008080,
-    0x0000000080000001,
-    0x8000000080008008,
-)
-_KECCAK_ROTATIONS = (
-    (0, 36, 3, 41, 18),
-    (1, 44, 10, 45, 2),
-    (62, 6, 43, 15, 61),
-    (28, 55, 25, 21, 56),
-    (27, 20, 39, 8, 14),
-)
-_UINT64_MASK = (1 << 64) - 1
-
-
-def _rotate_left_64(value: int, amount: int) -> int:
-    if amount == 0:
-        return value & _UINT64_MASK
-    return (
-        ((value << amount) | (value >> (64 - amount))) & _UINT64_MASK
-    )
-
-
-def _keccak_f1600(state: Sequence[int]) -> Tuple[int, ...]:
-    lanes = list(state)
-    for round_constant in _KECCAK_ROUND_CONSTANTS:
-        columns = [
-            lanes[x]
-            ^ lanes[x + 5]
-            ^ lanes[x + 10]
-            ^ lanes[x + 15]
-            ^ lanes[x + 20]
-            for x in range(5)
-        ]
-        differences = [
-            columns[(x - 1) % 5]
-            ^ _rotate_left_64(columns[(x + 1) % 5], 1)
-            for x in range(5)
-        ]
-        for x in range(5):
-            for y in range(5):
-                lanes[x + 5 * y] ^= differences[x]
-
-        permuted = [0] * 25
-        for x in range(5):
-            for y in range(5):
-                destination_x = y
-                destination_y = (2 * x + 3 * y) % 5
-                permuted[destination_x + 5 * destination_y] = _rotate_left_64(
-                    lanes[x + 5 * y], _KECCAK_ROTATIONS[x][y]
-                )
-
-        for x in range(5):
-            for y in range(5):
-                lanes[x + 5 * y] = (
-                    permuted[x + 5 * y]
-                    ^ (
-                        (~permuted[((x + 1) % 5) + 5 * y])
-                        & permuted[((x + 2) % 5) + 5 * y]
-                    )
-                ) & _UINT64_MASK
-        lanes[0] ^= round_constant
-    return tuple(lanes)
-
-
-def _keccak_256(data: bytes) -> bytes:
-    rate_bytes = 136
-    padded = bytearray(data)
-    padded.append(0x01)
-    while len(padded) % rate_bytes != rate_bytes - 1:
-        padded.append(0x00)
-    padded.append(0x80)
-
-    state = (0,) * 25
-    for offset in range(0, len(padded), rate_bytes):
-        block = padded[offset : offset + rate_bytes]
-        mutable_state = list(state)
-        for lane_index in range(rate_bytes // 8):
-            lane = int.from_bytes(
-                block[lane_index * 8 : lane_index * 8 + 8], "little"
-            )
-            mutable_state[lane_index] ^= lane
-        state = _keccak_f1600(mutable_state)
-
-    output = bytearray()
-    while len(output) < 32:
-        for lane_index in range(rate_bytes // 8):
-            output.extend(int(state[lane_index]).to_bytes(8, "little"))
-            if len(output) >= 32:
-                return bytes(output[:32])
-        state = _keccak_f1600(state)
-    return bytes(output[:32])
-
-
 def to_eip55_checksum_address(address: Any) -> str:
     """Validate and canonicalize a non-zero 20-byte EVM address."""
 
@@ -691,7 +574,7 @@ def to_eip55_checksum_address(address: Any) -> str:
         raise _invalid("reward_address")
 
     lower = hexadecimal.lower()
-    digest_hex = _keccak_256(lower.encode("ascii")).hex()
+    digest_hex = keccak(lower.encode("ascii")).hex()
     checksummed = "".join(
         char.upper()
         if char in "abcdef" and int(digest_hex[index], 16) >= 8

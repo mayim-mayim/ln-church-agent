@@ -1650,6 +1650,7 @@ def test_guided_completion_reconciliation_preserves_every_public_status(
     ).submit_and_complete_domain_observation(
         _credential(),
         _submission_payload(),
+        checkpoint_sink=[].append,
     )
     assert result.completion_receipt is None
     assert result.matched_status.task_status == task_status
@@ -2102,6 +2103,21 @@ def test_post_claim_credential_mutation_fails_before_network(attribute, value):
     with pytest.raises((AttributeError, TypeError, ValueError, ValidationError)):
         setattr(credential, attribute, value)
     assert transport.calls == []
+
+
+def test_credential_constructor_validates_external_reward_model_once():
+    payload = _credential()._to_private_file_payload()
+    payload.pop("schema_version")
+    payload.pop("state")
+    reward = _reward_terms()
+    payload["reward"] = reward
+    credential = TaskClaimCredential(**payload)
+    exported = credential.model_dump(mode="json")
+    exported["reward"]["amount_atomic"] = "7"
+    assert credential.reward.amount_atomic == "10000"
+    payload["reward"] = reward.model_copy(update={"amount_atomic": "invalid"})
+    with pytest.raises(ValueError):
+        TaskClaimCredential(**payload)
 
 
 def test_public_domain_uses_idna2008_and_rejects_special_use_suffixes():
@@ -3693,96 +3709,28 @@ def test_old_or_cross_claim_credential_outcomes_remain_finite(
     assert transport.calls[0][2]["claim_token"] == CLAIM_TOKEN
 
 
-def test_submission_is_snapshotted_and_strictly_revalidated_before_transport():
+@pytest.mark.parametrize("mutation", ["array_limit", "unknown_secret", "constructed_method"])
+@pytest.mark.parametrize("boundary", ["submit", "canonical_bytes", "canonical_digest", "canonical_digest_hex"])
+def test_public_submission_mutations_are_revalidated_at_each_boundary(mutation, boundary):
+    submission = TaskDomainObservationSubmission(**_submission_payload())
+    if mutation == "array_limit":
+        submission.observed_urls.extend([TaskObservedUrlEntry(**_observed_url())] * 50)
+    elif mutation == "unknown_secret":
+        submission.discovered_surfaces.append({**_surface(), "raw_body": CLAIM_TOKEN})
+    else:
+        submission.observed_urls.append(TaskObservedUrlEntry.model_construct(
+            **{**_observed_url(), "method": "POST"}
+        ))
     transport = _FakeTransport([])
-    client = AgentTaskClient(_transport=transport)
-
-    over_limit = TaskDomainObservationSubmission(
-        submission_id="sub_" + "0" * 32,
-        observed_domain="example.com",
-        observed_urls=[_observed_url()] * 50,
-        discovered_surfaces=[_surface()],
-    )
-    over_limit.observed_urls.append(
-        TaskObservedUrlEntry.model_validate(_observed_url())
-    )
-    with pytest.raises(TaskTransportError) as caught:
-        client.submit_domain_observation(_credential(), over_limit)
-    assert caught.value.code == "TASK_CREDENTIAL_INVALID"
+    if boundary == "submit":
+        with pytest.raises(TaskTransportError) as caught:
+            AgentTaskClient(_transport=transport).submit_domain_observation(_credential(), submission)
+        assert caught.value.code == "TASK_CREDENTIAL_INVALID"
+    else:
+        with pytest.raises(ValueError, match="Invalid Task domain observation submission") as caught:
+            getattr(submission, boundary)()
     assert transport.calls == []
-
-    hostile_nested_entry = TaskDomainObservationSubmission(
-        submission_id="sub_" + "1" * 32,
-        observed_domain="example.com",
-        discovered_surfaces=[_surface()],
-    )
-    hostile_nested_entry.discovered_surfaces.append(
-        {
-            **_surface(),
-            "raw_body": "must-not-cross-the-task-boundary",
-        }
-    )
-    with pytest.raises(TaskTransportError) as caught:
-        client.submit_domain_observation(
-            _credential(), hostile_nested_entry
-        )
-    assert caught.value.code == "TASK_CREDENTIAL_INVALID"
-    assert transport.calls == []
-
-    constructed_nested_entry = TaskDomainObservationSubmission(
-        submission_id="sub_" + "2" * 32,
-        observed_domain="example.com",
-        discovered_surfaces=[_surface()],
-    )
-    constructed_nested_entry.observed_urls.append(
-        TaskObservedUrlEntry.model_construct(
-            url="https://example.com/",
-            method="POST",
-            status_code=200,
-            media_family="html",
-            observed_at="2026-07-27T00:10:00Z",
-        )
-    )
-    with pytest.raises(TaskTransportError) as caught:
-        client.submit_domain_observation(
-            _credential(), constructed_nested_entry
-        )
-    assert caught.value.code == "TASK_CREDENTIAL_INVALID"
-    assert transport.calls == []
-
-
-def test_submission_public_canonical_methods_strictly_revalidate_mutations():
-    submission = TaskDomainObservationSubmission(
-        submission_id="sub_" + "3" * 32,
-        observed_domain="example.com",
-        observed_urls=[_observed_url()] * 50,
-        discovered_surfaces=[_surface()],
-    )
-    submission.observed_urls.append(
-        TaskObservedUrlEntry.model_validate(_observed_url())
-    )
-    for method_name in (
-        "canonical_bytes",
-        "canonical_digest",
-        "canonical_digest_hex",
-    ):
-        with pytest.raises(
-            ValueError, match="Invalid Task domain observation submission"
-        ):
-            getattr(submission, method_name)()
-
-    raw_body = "raw-body-must-never-be-canonicalized"
-    hostile = TaskDomainObservationSubmission(
-        submission_id="sub_" + "4" * 32,
-        observed_domain="example.com",
-        discovered_surfaces=[_surface()],
-    )
-    hostile.discovered_surfaces.append(
-        {**_surface(), "raw_body": raw_body}
-    )
-    with pytest.raises(ValueError) as caught:
-        hostile.canonical_bytes()
-    assert raw_body not in str(caught.value)
+    assert CLAIM_TOKEN not in str(caught.value)
 
 
 def test_claim_token_cannot_enter_submission_or_completion_public_fields():
@@ -4685,26 +4633,31 @@ def test_guided_checkpoint_and_result_detach_nested_models():
     assert result.completion_receipt.observation_id == OBSERVATION_ID
 
 
-def test_guided_checkpoint_repr_fails_safe_after_private_nested_mutation():
-    checkpoint = _pending_checkpoint()
-    internal_submission = vars(checkpoint)["submission"]
-    internal_submission.observed_urls[0].url = (
-        "https://example.com/" + CLAIM_TOKEN
-    )
+def test_guided_sink_and_caller_views_cannot_change_accepted_wire_values():
+    submission = TaskDomainObservationSubmission(**_submission_payload())
+    expected = submission.model_dump(mode="json")
+    transport = _FakeTransport([_register_response(), _completion_response()])
+    saved = []
 
-    assert repr(checkpoint) == (
-        "TaskDomainObservationCheckpoint(<invalid>)"
+    def save(checkpoint):
+        saved.append(checkpoint.model_dump(mode="json"))
+        submission.observed_urls.clear()
+        public_copy = checkpoint.submission
+        public_copy.discovered_surfaces.clear()
+        public_dump = checkpoint.model_dump(mode="json")
+        public_dump["submission"]["observed_urls"].clear()
+        receipt = checkpoint.register_receipt
+        if receipt is not None:
+            receipt.observation_id = "obs_other"
+
+    result = AgentTaskClient(_transport=transport).submit_and_complete_domain_observation(
+        _credential(), submission, checkpoint_sink=save
     )
-    assert str(checkpoint) == (
-        "TaskDomainObservationCheckpoint(<invalid>)"
-    )
-    assert CLAIM_TOKEN not in repr(checkpoint)
-    with pytest.raises(ValueError) as access_error:
-        _ = checkpoint.submission
-    _assert_finite_exception_graph(access_error.value, CLAIM_TOKEN)
-    with pytest.raises(ValueError) as caught:
-        checkpoint.model_dump_json()
-    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
+    assert transport.calls[0][2]["json_body"] == expected
+    assert transport.calls[1][2]["json_body"]["observation_id"] == OBSERVATION_ID
+    assert [item["state"] for item in saved] == ["REGISTER_PENDING", "REGISTERED"]
+    assert result.register_receipt.observation_id == OBSERVATION_ID
+
 
 
 def test_guided_rejects_claim_token_before_checkpoint_or_network():
@@ -4955,96 +4908,52 @@ def test_guided_registered_receipt_mismatch_sends_no_completion(
     assert transport.calls == []
 
 
-def test_guided_pending_checkpoint_is_saved_before_register():
-    transport = _FakeTransport([_register_response()])
-    checkpoints = []
-
-    def fail_pending(checkpoint):
-        checkpoints.append(checkpoint)
-        raise OSError(
-            "simulated durable write failure " + CLAIM_TOKEN
-        )
-
+@pytest.mark.parametrize("checkpoint", [None, "pending"])
+def test_guided_missing_durable_sink_stops_before_register(checkpoint):
+    transport = _FakeTransport([])
+    checkpoint = _pending_checkpoint() if checkpoint == "pending" else None
     with pytest.raises(TaskCheckpointPersistenceError) as caught:
-        AgentTaskClient(
-            _transport=transport
-        ).submit_and_complete_domain_observation(
-            _credential(),
-            _submission_payload(),
-            checkpoint_sink=fail_pending,
+        AgentTaskClient(_transport=transport).submit_and_complete_domain_observation(
+            _credential(), _submission_payload(), checkpoint=checkpoint
         )
-
-    assert not isinstance(caught.value, TaskTransportError)
-    assert isinstance(caught.value, TaskError)
-    assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
     assert caught.value.request_bytes_sent is False
-    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
-    assert [item.state for item in checkpoints] == [
-        TaskDomainObservationCheckpointState.REGISTER_PENDING
-    ]
     assert transport.calls == []
 
 
-def test_guided_registered_checkpoint_is_saved_before_completion():
+@pytest.mark.parametrize(
+    ("failure_phase", "error_kind", "sent"),
+    [("REGISTER_PENDING", "os", False), ("REGISTERED", "os", True),
+     ("REGISTER_PENDING", "task", False)],
+)
+def test_guided_required_save_failure_stops_next_network_phase(
+    failure_phase, error_kind, sent
+):
     transport = _FakeTransport([_register_response()])
     checkpoints = []
 
-    def fail_registered(checkpoint):
+    def save(checkpoint):
         checkpoints.append(checkpoint)
-        if (
-            checkpoint.state
-            == TaskDomainObservationCheckpointState.REGISTERED
-        ):
-            raise OSError(
-                "simulated durable write failure " + CLAIM_TOKEN
-            )
+        if checkpoint.state == failure_phase:
+            if error_kind == "task":
+                raise TaskTransportError("TASK_TRANSPORT_ERROR", request_bytes_sent=None)
+            raise OSError("simulated durable write failure " + CLAIM_TOKEN)
 
     with pytest.raises(TaskCheckpointPersistenceError) as caught:
-        AgentTaskClient(
-            _transport=transport
-        ).submit_and_complete_domain_observation(
-            _credential(),
-            _submission_payload(),
-            checkpoint_sink=fail_registered,
+        AgentTaskClient(_transport=transport).submit_and_complete_domain_observation(
+            _credential(), _submission_payload(), checkpoint_sink=save
         )
-
-    assert not isinstance(caught.value, TaskTransportError)
-    assert isinstance(caught.value, TaskError)
-    assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
-    assert caught.value.request_bytes_sent is True
-    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
-    assert [item.state for item in checkpoints] == [
-        TaskDomainObservationCheckpointState.REGISTER_PENDING,
-        TaskDomainObservationCheckpointState.REGISTERED,
-    ]
-    assert [
-        path for _, path, _ in transport.calls
-    ] == [task_observation_path("task_example")]
-
-
-def test_guided_sink_task_error_is_reclassified_as_local_persistence():
-    transport = _FakeTransport([_register_response()])
-
-    def fail_pending(_checkpoint):
-        raise TaskTransportError(
-            "TASK_TRANSPORT_ERROR", request_bytes_sent=None
-        )
-
-    with pytest.raises(TaskError) as caught:
-        AgentTaskClient(
-            _transport=transport
-        ).submit_and_complete_domain_observation(
-            _credential(),
-            _submission_payload(),
-            checkpoint_sink=fail_pending,
-        )
-
     assert type(caught.value) is TaskCheckpointPersistenceError
+    assert isinstance(caught.value, TaskError)
     assert not isinstance(caught.value, TaskTransportError)
     assert caught.value.code == "TASK_CHECKPOINT_PERSISTENCE_ERROR"
-    assert caught.value.request_bytes_sent is False
-    _assert_finite_exception_graph(caught.value)
-    assert transport.calls == []
+    assert caught.value.request_bytes_sent is sent
+    _assert_finite_exception_graph(caught.value, CLAIM_TOKEN)
+    assert [item.state for item in checkpoints] == (
+        ["REGISTER_PENDING", "REGISTERED"] if sent else ["REGISTER_PENDING"]
+    )
+    assert [path for _, path, _ in transport.calls] == (
+        [task_observation_path("task_example")] if sent else []
+    )
 
 
 def test_guided_pending_resume_reuses_saved_body_id_and_digest():
@@ -5081,6 +4990,7 @@ def test_guided_pending_resume_reuses_saved_body_id_and_digest():
         _credential(),
         observation_without_id,
         checkpoint=pending.model_dump(mode="json", exclude_none=True),
+        checkpoint_sink=[].append,
     )
 
     sent_submission = resumed_transport.calls[0][2]["json_body"]
@@ -5175,6 +5085,7 @@ def test_guided_ambiguous_completion_returns_exact_matching_status():
     ).submit_and_complete_domain_observation(
         _credential(),
         _submission_payload(),
+        checkpoint_sink=[].append,
     )
 
     assert result.completion_receipt is None
@@ -5222,6 +5133,7 @@ def test_guided_rejects_claim_token_reflected_in_matching_status():
         ).submit_and_complete_domain_observation(
             _credential(claim_token=reflected_token),
             _submission_payload(),
+            checkpoint_sink=[].append,
         )
 
     assert caught.value.code == "COMPLETION_OUTCOME_UNKNOWN"
@@ -5283,6 +5195,7 @@ def test_guided_shared_budget_covers_all_transport_retries_and_fallback():
         ).submit_and_complete_domain_observation(
             _credential(),
             _submission_payload(),
+            checkpoint_sink=[].append,
         )
 
     assert attempts == {

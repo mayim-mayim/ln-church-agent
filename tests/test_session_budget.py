@@ -2,6 +2,8 @@ import pytest
 import asyncio
 import requests
 from unittest.mock import AsyncMock, patch, MagicMock
+from dataclasses import asdict
+import copy
 
 from ln_church_agent.client import Payment402Client
 from ln_church_agent.models import (
@@ -33,77 +35,44 @@ class MockSessionRepo(EvidenceRepository):
         return self.mock_records
 
 # ==========================================
-# ヘルパー関数
-# ==========================================
-def _create_402_mock(fixture):
-    """Production-shaped canonical 402 response."""
-    return contract_response(fixture)
-
-# ==========================================
 # テストケース (A〜F: 基本要件)
 # ==========================================
-def test_sync_budget_restore():
-    """A. Sync Restore: 過去のEvidenceからセッション予算が復元され、上限ブロックが機能することを確認"""
-    past_record = PaymentEvidenceRecord(
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_budget_restore_blocks_next_payment(async_mode):
+    record = PaymentEvidenceRecord(
         session_id="test_session", correlation_id="c1", target_url="http://mock",
-        method="POST", session_spend_delta_usd=4.0
+        method="POST", session_spend_delta_usd=4.0,
     )
-    repo = MockSessionRepo([past_record])
+    repo = MockSessionRepo([record])
     fixture = load_contract_fixture()
-    policy = PaymentPolicy(max_spend_per_session_usd=4.005)
-    
     client = configure_contract_clock(
-        Payment402Client(policy=policy, evidence_repo=repo), fixture
+        Payment402Client(
+            policy=PaymentPolicy(max_spend_per_session_usd=4.005), evidence_repo=repo,
+        ), fixture,
     )
-    ctx = ExecutionContext(session_id="test_session")
+    context = ExecutionContext(session_id="test_session")
+    args = (fixture["request"]["method"], fixture["request"]["url"])
+    kwargs = {"headers": fixture["request"]["headers"], "context": context}
+    response = contract_response(fixture)
 
-    with patch("requests.request") as mock_req:
-        mock_req.return_value = _create_402_mock(fixture)
-        
-        with pytest.raises(PaymentExecutionError, match="would exceed limit"):
-            client.execute_detailed(
-                fixture["request"]["method"],
-                fixture["request"]["url"],
-                headers=fixture["request"]["headers"],
-                context=ctx,
-            )
-        
-        assert repo.sync_call_count == 1
-        assert client.policy._session_spent_usd == 4.0
+    if async_mode:
+        async def run():
+            client._async_client = MagicMock()
+            client._async_client.request = AsyncMock(return_value=response)
+            with pytest.raises(PaymentExecutionError, match="would exceed limit"):
+                await client.execute_detailed_async(*args, **kwargs)
+            assert client._async_client.request.call_count == 1
+        asyncio.run(run())
+    else:
+        with patch("requests.request", return_value=response) as transport:
+            with pytest.raises(PaymentExecutionError, match="would exceed limit"):
+                client.execute_detailed(*args, **kwargs)
+        assert transport.call_count == 1
 
-def test_async_budget_restore():
-    """B. Async Restore: 非同期環境でもセッション予算が復元され、ブロックが機能することを確認"""
-    past_record = PaymentEvidenceRecord(
-        session_id="test_session", correlation_id="c1", target_url="http://mock",
-        method="POST", session_spend_delta_usd=4.0
-    )
-    repo = MockSessionRepo([past_record])
-    fixture = load_contract_fixture()
-    policy = PaymentPolicy(max_spend_per_session_usd=4.005)
-    
-    client = configure_contract_clock(
-        Payment402Client(policy=policy, evidence_repo=repo), fixture
-    )
-    ctx = ExecutionContext(session_id="test_session")
+    assert (repo.sync_call_count, repo.async_call_count) == ((0, 1) if async_mode else (1, 0))
+    assert client.policy._session_spent_usd == 4.0
+    assert context.session_budget_restored is True
 
-    async def run_test():
-        client._async_client = MagicMock()
-        client._async_client.request = AsyncMock(
-            return_value=_create_402_mock(fixture)
-        )
-
-        with pytest.raises(PaymentExecutionError, match="would exceed limit"):
-            await client.execute_detailed_async(
-                fixture["request"]["method"],
-                fixture["request"]["url"],
-                headers=fixture["request"]["headers"],
-                context=ctx,
-            )
-
-        assert repo.async_call_count == 1
-        assert client.policy._session_spent_usd == 4.0
-
-    asyncio.run(run_test())
 
 def test_no_repo_fallback():
     """C. No Repo Fallback: EvidenceRepositoryがない場合でも、インメモリで正常に動作・消費されるか"""
@@ -116,7 +85,7 @@ def test_no_repo_fallback():
 
     with patch("requests.request") as mock_req:
         mock_req.side_effect = [
-            _create_402_mock(fixture),
+            contract_response(fixture),
             success_response(fixture, {}),
         ]
         
@@ -155,6 +124,67 @@ def test_one_shot_restore():
     client._restore_session_spend_from_evidence(ctx)
 
     assert repo.sync_call_count == 1 
+
+
+def test_policy_constructor_and_serialization_project_confirmed_spend():
+    policy = PaymentPolicy(_session_spent_usd=2.0)
+    client = Payment402Client(policy=policy)
+    context = ExecutionContext(session_budget_restored=True)
+    client._reserve_session_budget(context, "new-purchase", "3")
+    assert asdict(policy)["_session_spent_usd"] == 2.0
+    client._confirm_session_budget(context, "new-purchase")
+    assert asdict(policy)["_session_spent_usd"] == 5.0
+    cloned = copy.deepcopy(policy)
+    assert asdict(cloned) == asdict(policy)
+    cloned._session_spent_usd = 7.0
+    assert policy._session_spent_usd == 5.0
+    assert context.model_dump()["session_budget_restored"] is True
+
+
+def test_shared_context_keeps_different_policy_budgets_independent():
+    first = Payment402Client(policy=PaymentPolicy(
+        _session_spent_usd=0.25, max_spend_per_session_usd=1.5,
+    ))
+    second = Payment402Client(policy=PaymentPolicy(max_spend_per_session_usd=2.0))
+    context = ExecutionContext(session_id="two-policy-session")
+    first._reserve_session_budget(context, "first-purchase", "1")
+    second._reserve_session_budget(context, "second-purchase", "2")
+    assert first.policy._session_reserved_usd == 1.0
+    assert second.policy._session_reserved_usd == 2.0
+    first._confirm_session_budget(context, "first-purchase")
+    assert asdict(first.policy)["_session_spent_usd"] == 1.25
+    assert first.policy._session_reserved_usd == 0.0
+    assert asdict(second.policy)["_session_spent_usd"] == 0.0
+    assert second.policy._session_reserved_usd == 2.0
+    second._confirm_session_budget(context, "second-purchase")
+    assert second.policy._session_spent_usd == 2.0
+    assert first.policy._session_spent_usd == 1.25
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_restore_preserves_preexisting_live_reservation_owner(async_mode):
+    policy = PaymentPolicy(max_spend_per_session_usd=1.5)
+    payer = Payment402Client(policy=policy)
+    owner = ExecutionContext(session_id="live-import-session")
+    payer._check_and_set_payment_state(owner, "live-purchase")
+    payer._reserve_session_budget(owner, "live-purchase", "1")
+    repository = MockSessionRepo([PaymentEvidenceRecord(
+        session_id=owner.session_id, correlation_id="prior-export", target_url="urn:test",
+        method="GET", session_budget_event="reserved",
+        session_budget_operation_id="live-purchase", session_budget_amount_usd=1.0,
+    )])
+    importer = Payment402Client(policy=policy, evidence_repo=repository)
+    restored = ExecutionContext(session_id=owner.session_id)
+    if async_mode:
+        asyncio.run(importer._restore_session_spend_from_evidence_async(restored))
+    else:
+        importer._restore_session_spend_from_evidence(restored)
+    assert owner.get_payment_state("live-purchase") == "in_progress"
+    assert importer._release_session_budget(restored, "live-purchase") == 0
+    assert policy._session_reserved_usd == 1.0
+    assert payer._confirm_session_budget(owner, "live-purchase") == 1
+    assert policy._session_spent_usd == 1.0
+    assert policy._session_reserved_usd == 0.0
 
 def test_duplicate_receipt_event_safety():
     """F. Duplicate Receipt Event Safety: 同一receipt_idのレコードが重複計上されないことを確認"""
@@ -210,7 +240,7 @@ def test_budget_event_on_downstream_failure():
 
     with patch("requests.request") as mock_req:
         mock_req.side_effect = [
-            _create_402_mock(fixture),
+            contract_response(fixture),
             requests.exceptions.ConnectionError("Downstream failed")
         ]
         

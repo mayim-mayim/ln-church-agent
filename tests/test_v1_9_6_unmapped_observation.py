@@ -1,8 +1,13 @@
+import asyncio
+from copy import deepcopy
+import json
+
 import pytest
 from unittest.mock import patch, MagicMock
 from ln_church_agent.client import LnChurchClient
 from ln_church_agent.exceptions import NavigationGuardrailError
 from ln_church_agent.models import ExecutionContext
+from test_paid_result_connection import response, transport
 
 @patch("ln_church_agent.client.LnChurchClient.execute_request")
 def test_submit_unmapped_observation_payload_shape(mock_execute):
@@ -122,3 +127,86 @@ def test_nested_secret_stripping_applied(mock_execute):
     assert "payment-response" not in protocol
     assert "access_token" not in protocol.get("nested", {})
     assert protocol["nested"]["safe_inner"] == "ok"
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("shape_source", ["detection_note", "challenge_shape", "extra_protocol", "ordinary"])
+def test_unmapped_public_wire_redacts_purchaser_proof_without_changing_input(
+    monkeypatch, async_mode, shape_source
+):
+    handle = "pr_" + "a" * 32
+    request_hash = "sha256:" + "b" * 64
+    private_url = f"https://public.example/api/bazaar/paid-results/{handle}?request_hash={request_hash}&page=2"
+    ordinary = shape_source == "ordinary"
+    target_url = "https://public.example/data?category=weather&page=2" if ordinary else private_url
+    public_url = target_url if ordinary else "https://public.example/api/bazaar/paid-results/REDACTED?request_hash=REDACTED&page=2"
+    detection_note = "Unmapped payment at " + target_url
+    extra_protocol = {"nested": {"reference": target_url, "normal": "kept"}}
+    if shape_source == "extra_protocol":
+        extra_protocol["draft_shape"] = target_url
+    inputs = {
+        "target_url": target_url,
+        "detection_note": detection_note,
+        "method": "head",
+        "status_code": 402,
+        "rails_detected": ["x402"] if ordinary else ["Payment"],
+        "challenge_shape": target_url if shape_source == "challenge_shape" else None,
+        "extra_protocol": extra_protocol,
+        "missing_information": ["Inspect " + target_url],
+        "sdk_version": "test-version",
+    }
+    original = deepcopy(inputs)
+    client = LnChurchClient(agent_id="unmapped-test", base_url="https://observer.test")
+    send = transport(monkeypatch, client, async_mode, [response(200, {"status": "accepted"})])
+    assert send.call_count == 0
+    if async_mode:
+        result = asyncio.run(client.submit_unmapped_observation_async(**inputs))
+    else:
+        result = client.submit_unmapped_observation(**inputs)
+    assert result == {"status": "accepted"}
+    assert send.call_count == 1
+    assert send.call_args.args[:2] == ("POST", "https://observer.test/api/agent/external/observe")
+    payload = send.call_args.kwargs["json"]
+    expected_note = "Unmapped payment at " + public_url
+    assert payload == {
+        "agentId": "unmapped-test",
+        "targetUrl": public_url,
+        "method": "HEAD",
+        "statusCode": 402,
+        "source_scope": "external_agent_report",
+        "protocol": {
+            "rail": "x402" if ordinary else "unknown",
+            "network": "unknown",
+            "asset": "unknown",
+            "authorization_scheme": "unknown",
+            "draft_shape": public_url if shape_source in {"challenge_shape", "extra_protocol"} else expected_note,
+            "payment_intent": "unknown",
+            "payment_method": "unknown",
+            "nested": {"reference": public_url, "normal": "kept"},
+        },
+        "evidence": {
+            "evidence_class": "crawler_detected_402",
+            "verification_status": "unverified",
+            "verification_method": "none",
+            "payment_performed": False,
+            "payment_receipt_present": False,
+        },
+        "missing_information": ["Inspect " + public_url, expected_note,
+                                "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"],
+        "sdk_version": "test-version",
+    }
+    assert handle not in json.dumps(payload) and request_hash not in json.dumps(payload)
+    assert "outcome" not in payload
+    assert inputs == original
+    if shape_source == "detection_note":
+        # The existing general-observation exit applies the same public boundary.
+        external_send = transport(monkeypatch, client, async_mode, [response(200, {"status": "accepted"})])
+        if async_mode:
+            asyncio.run(client.submit_external_observation_async(target_url=target_url, evidence=extra_protocol))
+        else:
+            client.submit_external_observation(target_url=target_url, evidence=extra_protocol)
+        external = external_send.call_args.kwargs["json"]
+        assert external_send.call_count == 1
+        assert external["targetUrl"] == public_url
+        assert external["evidence"] == {"nested": {"reference": public_url, "normal": "kept"}}
+        assert inputs == original

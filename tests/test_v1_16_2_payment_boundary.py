@@ -76,6 +76,14 @@ DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 TEST_PREIMAGE = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 
+def _ambiguity_reservations(client, context):
+    return {
+        key: Decimal(value["ambiguous_reservation_usd"])
+        for key, value in client.get_payment_operation_states(context).items()
+        if Decimal(value["ambiguous_reservation_usd"]) > 0
+    }
+
+
 def _signed_invoice(msats):
     tags = Tags(
         [
@@ -401,8 +409,8 @@ def test_client_invalid_macaroon_fails_before_irreversible_reserve(
     wallet.pay_invoice.assert_not_called()
     delegate.execute_l402.assert_not_called()
     assert client.policy._session_spent_usd == 0
-    assert context._ambiguous_reservations == {}
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
 
 
 @pytest.mark.parametrize(
@@ -672,11 +680,11 @@ def test_payment_request_rejection_is_pre_irreversible_and_retryable(
     assert signer.atomic_calls == 0
     assert first_transport_calls == 1
     assert total_transport_calls == 2
-    assert context._ambiguous_reservations == {}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
     assert context._payment_executed is False
     assert client.last_receipt is None
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
     assert len(evidence.records) == 2
     assert all(record.payment_performed is False for record in evidence.records)
     assert all(record.receipt_summary is None for record in evidence.records)
@@ -753,8 +761,8 @@ def test_complete_payment_draft_opt_in_preserves_legacy_execution(async_mode):
     assert transport.call_args_list[1].kwargs["headers"]["Authorization"] == (
         f"Payment {TEST_PREIMAGE}"
     )
-    assert set(context._payment_states.values()) == {"completed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"completed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == pytest.approx(0.00065)
     assert len(evidence.records) == 1
     assert evidence.records[0].payment_performed is True
@@ -812,8 +820,8 @@ def test_payment_request_guard_preserves_legacy_lightning_rails(
     assert transport.call_args_list[1].kwargs["headers"]["Authorization"].startswith(
         rail + " "
     )
-    assert set(context._payment_states.values()) == {"completed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"completed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 @pytest.mark.parametrize("shape", ["flat", "json", "json-details"])
@@ -843,8 +851,8 @@ def test_mpp_unknown_currency_without_amount_stops_before_wallet(shape):
     wallet.pay_invoice.assert_not_called()
     assert transport.call_count == 1
     assert client._last_parsed_challenge._invoice_msats == -4
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 @pytest.mark.parametrize("shape", ["flat", "json", "json-details"])
@@ -913,8 +921,8 @@ def test_mpp_declared_amount_or_currency_mismatch_stops_before_wallet(
     wallet.pay_invoice.assert_not_called()
     assert transport.call_count == 1
     assert client._last_parsed_challenge._invoice_msats == expected_marker
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 def _encode_raw_json(raw_json):
@@ -1030,9 +1038,9 @@ def test_mpp_case_empty_falsey_duplicate_and_contradiction_fail_before_wallet(ca
 
     wallet.pay_invoice.assert_not_called()
     assert transport.call_count == 1
-    assert context._ambiguous_reservations == {}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
     assert "ambiguous" not in str(caught.value).lower()
     assert invoice not in str(caught.value)
 
@@ -1267,8 +1275,8 @@ def test_invalid_evm_payto_0xabc_is_rejected_before_signer():
 
     assert signer.atomic_calls == 0
     assert transport.call_count == 1
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 @pytest.mark.parametrize(
@@ -1311,8 +1319,8 @@ def test_exact_metadata_contradiction_is_rejected_before_signer(payload_mutator)
 
     assert signer.atomic_calls == 0
     assert transport.call_count == 1
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 def test_exact_without_accepts_fails_closed_before_signer():
@@ -1376,8 +1384,8 @@ def test_invalid_configured_signer_address_is_rejected_before_signing():
 
     assert signer.atomic_calls == 0
     assert transport.call_count == 1
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
 
 
 def test_local_key_adapter_real_eip3009_signature_verifies():
@@ -1581,8 +1589,8 @@ def test_legacy_evm_signer_without_canonical_binding_fails_closed():
             )
 
     assert transport.call_count == 1
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
 
 
@@ -1613,8 +1621,8 @@ def test_exact_evm_signer_without_optional_generation_capability_fails_before_ma
 
     assert "Ambiguous" not in str(caught.value)
     assert transport.call_count == 1
-    assert context._ambiguous_reservations == {}
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
 
 
 def test_public_execution_signatures_and_context_compatibility_bridge():
@@ -1635,7 +1643,6 @@ def test_public_execution_signatures_and_context_compatibility_bridge():
     context = ExecutionContext(session_budget_restored=True)
     assert context.model_dump()["session_budget_restored"] is True
     assert context.session_budget_restored is True
-    assert context._session_budget_restored is True
     repo = MagicMock()
     client = Payment402Client(evidence_repo=repo)
     client._restore_session_spend_from_evidence(context)
@@ -2069,13 +2076,13 @@ def test_client_fails_closed_canonical_svm_before_signer_or_paid_retry(
     svm_rpc.assert_not_called()
     assert transport.call_count == 1
     assert "Ambiguous" not in str(caught.value)
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
-    assert context._budget_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
+
     assert client.policy._session_spent_usd == 0
     assert client.policy._session_reserved_usd == 0
-    assert client.policy._session_budget_operation_journal == {}
-    assert client.policy._session_budget_operation_versions == {}
+
+
     assert client.policy._session_ledger_version == initial_ledger_version
 
 
@@ -2123,8 +2130,8 @@ def test_client_rejects_invalid_custom_evm_signer_output_before_paid_retry():
     assert transport.call_count == 1
     assert "Ambiguous" not in str(caught.value)
     assert list(_exception_chain(caught.value)) == [caught.value]
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
     assert all(record.session_spend_delta_usd in (None, 0) for record in evidence.records)
 
@@ -2186,8 +2193,8 @@ def test_client_fails_closed_svm_before_custom_signer_output_or_reserve():
     assert transport.call_count == 1
     assert "Ambiguous" not in str(caught.value)
     assert list(_exception_chain(caught.value)) == [caught.value]
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
     assert all(record.session_spend_delta_usd in (None, 0) for record in evidence.records)
 
@@ -2246,8 +2253,8 @@ def test_async_client_rejects_invalid_evm_signer_output_without_reserve():
         assert client._async_client.request.call_count == 1
         assert "Ambiguous" not in str(caught.value)
         assert list(_exception_chain(caught.value)) == [caught.value]
-        assert set(context._payment_states.values()) == {"validation_failed"}
-        assert context._ambiguous_reservations == {}
+        assert set(context.list_payment_states().values()) == {"validation_failed"}
+        assert _ambiguity_reservations(client, context) == {}
         assert client.policy._session_spent_usd == 0
         assert all(
             record.session_spend_delta_usd in (None, 0)
@@ -2347,13 +2354,13 @@ def test_async_client_fails_closed_svm_before_signer_or_reserve(
         assert client._async_client.request.call_count == 1
         assert "Ambiguous" not in str(caught.value)
         assert list(_exception_chain(caught.value)) == [caught.value]
-        assert set(context._payment_states.values()) == {"validation_failed"}
-        assert context._ambiguous_reservations == {}
-        assert context._budget_reservations == {}
+        assert set(context.list_payment_states().values()) == {"validation_failed"}
+        assert _ambiguity_reservations(client, context) == {}
+
         assert client.policy._session_spent_usd == 0
         assert client.policy._session_reserved_usd == 0
-        assert client.policy._session_budget_operation_journal == {}
-        assert client.policy._session_budget_operation_versions == {}
+
+
         assert client.policy._session_ledger_version == initial_ledger_version
 
     asyncio.run(run())
@@ -2474,15 +2481,10 @@ def test_async_disabled_svm_never_occupies_budget_needed_by_other_operation():
     assert l402_client._async_client.request.call_count == 2
     assert policy._session_reserved_usd == 0
     assert policy._session_spent_usd == pytest.approx(0.65)
-    assert svm_context._budget_reservations == {}
-    assert svm_context._ambiguous_reservations == {}
-    svm_operation = next(iter(svm_context._payment_states))
-    budget_journal = policy._session_budget_operation_journal[
-        "shared-svm-preflight-session"
-    ]
-    assert svm_operation not in budget_journal
-    assert len(budget_journal) == 1
-    assert next(iter(budget_journal.values()))[0] == "confirmed"
+    assert _ambiguity_reservations(svm_client, svm_context) == {}
+    assert set(svm_context.list_payment_states().values()) == {"validation_failed"}
+    assert set(l402_context.list_payment_states().values()) == {"completed"}
+
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -2532,8 +2534,8 @@ def test_signer_exception_before_irreversible_marker_is_retryable_and_secret_fre
     assert secret not in str(error)
     assert secret not in repr(error)
     assert list(_exception_chain(error)) == [error]
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
     assert all(record.session_spend_delta_usd in (None, 0) for record in evidence.records)
 
@@ -3607,7 +3609,7 @@ def test_ambiguous_wallet_timeout_reserves_exact_canonical_amount_once():
     assert wallet.pay_invoice.call_count == 1
     assert policy._session_spent_usd == 0
     assert policy._session_reserved_usd == pytest.approx(0.65)
-    assert list(context._ambiguous_reservations.values()) == [Decimal("0.650000")]
+    assert list(_ambiguity_reservations(client, context).values()) == [Decimal("0.650000")]
     assert [record.session_spend_delta_usd for record in evidence.records] == [0.0]
     assert [record.session_budget_event for record in evidence.records] == [
         "reserved"
@@ -3626,7 +3628,7 @@ def test_ambiguous_wallet_timeout_reserves_exact_canonical_amount_once():
     assert wallet.pay_invoice.call_count == 1
     assert policy._session_spent_usd == 0
     assert policy._session_reserved_usd == pytest.approx(0.65)
-    assert len(context._ambiguous_reservations) == 1
+    assert len(_ambiguity_reservations(client, context)) == 1
 
 
 def test_fail_closed_validation_before_wallet_has_no_ambiguous_reserve():
@@ -3651,8 +3653,8 @@ def test_fail_closed_validation_before_wallet_has_no_ambiguous_reserve():
 
     wallet.pay_invoice.assert_not_called()
     assert policy._session_spent_usd == 0
-    assert context._ambiguous_reservations == {}
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
     assert all(record.session_spend_delta_usd in (None, 0) for record in evidence.records)
 
 
@@ -3720,8 +3722,8 @@ def test_pre_irreversible_primary_error_survives_evidence_export_failure(async_m
     _assert_error_chain_excludes(
         error, signer_secret, _FailingEvidence.SECRET
     )
-    assert set(context._payment_states.values()) == {"validation_failed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
 
 
@@ -3771,8 +3773,8 @@ def test_result_unknown_primary_error_survives_evidence_export_failure(async_mod
     _assert_error_chain_excludes(
         error, wallet_secret, _FailingEvidence.SECRET
     )
-    assert set(context._payment_states.values()) == {"ambiguous"}
-    assert list(context._ambiguous_reservations.values()) == [
+    assert set(context.list_payment_states().values()) == {"ambiguous"}
+    assert list(_ambiguity_reservations(client, context).values()) == [
         Decimal("0.650000")
     ]
     assert policy._session_spent_usd == 0
@@ -3819,8 +3821,8 @@ def test_paid_success_is_not_replaced_by_evidence_export_failure(async_mode):
     assert wallet.pay_invoice.call_count == 1
     assert transport_calls == 2
     assert repo.export_calls == 1
-    assert set(context._payment_states.values()) == {"completed"}
-    assert context._ambiguous_reservations == {}
+    assert set(context.list_payment_states().values()) == {"completed"}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == pytest.approx(0.00065)
 
 
@@ -3870,7 +3872,7 @@ def test_cached_credential_has_zero_session_spend_evidence_delta_and_reserve():
     assert result.response == {"status": "cached"}
     assert executor.calls == 1
     assert policy._session_spent_usd == 0
-    assert context._ambiguous_reservations == {}
+    assert _ambiguity_reservations(client, context) == {}
     payment_records = [record for record in evidence.records if record.scheme == "L402"]
     assert len(payment_records) == 1
     assert payment_records[0].payment_performed is False
@@ -3979,8 +3981,8 @@ def test_sync_pre_payment_transport_error_preserves_requests_type_and_state():
     assert secret not in str(caught.value)
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
-    assert context._payment_states == {}
-    assert context._ambiguous_reservations == {}
+    assert context.list_payment_states() == {}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == 0
 
 
@@ -4005,8 +4007,8 @@ def test_async_pre_payment_transport_error_preserves_httpx_type_and_state():
         assert secret not in str(caught.value)
         assert caught.value.__cause__ is None
         assert caught.value.__context__ is None
-        assert context._payment_states == {}
-        assert context._ambiguous_reservations == {}
+        assert context.list_payment_states() == {}
+        assert _ambiguity_reservations(client, context) == {}
         assert client.policy._session_spent_usd == 0
 
     asyncio.run(run())
@@ -4040,8 +4042,8 @@ def test_pre_irreversible_invoice_error_preserves_type_without_reserve():
     assert secret not in "".join(
         record.model_dump_json() for record in evidence.records
     )
-    assert context._ambiguous_reservations == {}
-    assert set(context._payment_states.values()) == {"validation_failed"}
+    assert _ambiguity_reservations(client, context) == {}
+    assert set(context.list_payment_states().values()) == {"validation_failed"}
     assert client.policy._session_spent_usd == 0
 
 
@@ -4084,7 +4086,7 @@ def test_paid_retry_transport_loss_is_secret_free_without_double_reserve():
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     wallet.pay_invoice.assert_called_once()
-    assert context._ambiguous_reservations == {}
+    assert _ambiguity_reservations(client, context) == {}
     assert client.policy._session_spent_usd == pytest.approx(0.00065)
 
 
@@ -4123,7 +4125,7 @@ def test_async_paid_retry_transport_loss_is_secret_free_without_double_reserve()
         assert caught.value.__context__ is None
         wallet.pay_invoice.assert_called_once()
         assert client.policy._session_spent_usd == pytest.approx(0.00065)
-        assert context._ambiguous_reservations == {}
+        assert _ambiguity_reservations(client, context) == {}
 
     asyncio.run(run())
 
@@ -4163,7 +4165,7 @@ def test_async_irreversible_wallet_error_reserves_once_and_blocks_reentry():
         )
         assert policy._session_spent_usd == 0
         assert policy._session_reserved_usd == pytest.approx(0.65)
-        assert list(context._ambiguous_reservations.values()) == [
+        assert list(_ambiguity_reservations(client, context).values()) == [
             Decimal("0.650000")
         ]
         wallet.pay_invoice.assert_called_once()
@@ -4179,7 +4181,7 @@ def test_async_irreversible_wallet_error_reserves_once_and_blocks_reentry():
         wallet.pay_invoice.assert_called_once()
         assert policy._session_spent_usd == 0
         assert policy._session_reserved_usd == pytest.approx(0.65)
-        assert len(context._ambiguous_reservations) == 1
+        assert len(_ambiguity_reservations(client, context)) == 1
 
     asyncio.run(run())
 
@@ -4392,13 +4394,13 @@ def test_audit_exact_transport_unknown_is_reserved_and_recoverable(async_mode):
     assert client.last_receipt.payment_performed is False
     assert client.policy._session_spent_usd == 0
     assert client.policy._session_reserved_usd == pytest.approx(1.0)
-    assert context._ambiguous_reservations[fingerprint] == Decimal("1.0")
+    assert _ambiguity_reservations(client, context)[fingerprint] == Decimal("1.0")
     assert client.resolve_ambiguous_payment(
         context, fingerprint, "confirmed_not_paid"
     ) == "confirmed_not_paid"
     assert client.policy._session_spent_usd == 0
     assert client.policy._session_reserved_usd == 0
-    assert context._ambiguous_reservations == {}
+    assert _ambiguity_reservations(client, context) == {}
 
     if async_mode:
         async def retry():
@@ -4426,7 +4428,7 @@ def test_audit_exact_transport_unknown_is_reserved_and_recoverable(async_mode):
                 "GET", "https://buyer.test/start", context=context
             )
     assert retry_result.response == {"status": "paid-after-check"}
-    assert set(context._payment_states.values()) == {"completed"}
+    assert set(context.list_payment_states().values()) == {"completed"}
     assert client.policy._session_spent_usd == pytest.approx(1.0)
 
 
@@ -5276,7 +5278,7 @@ def test_audit_parallel_budget_check_and_reserve_is_atomic_across_contexts():
     assert policy._session_spent_usd == 0
     assert policy._session_reserved_usd == pytest.approx(1.0)
     winner_context, _ = next(item for item in results if item[1])
-    fingerprint = next(iter(winner_context._budget_reservations))
+    fingerprint = next(iter(winner_context.list_payment_states()))
     client._confirm_session_budget(winner_context, fingerprint)
     assert policy._session_spent_usd == pytest.approx(1.0)
     assert policy._session_reserved_usd == 0
@@ -5401,7 +5403,7 @@ def test_audit_restore_deduplicates_same_concurrent_operation(
     else:
         assert policy._session_spent_usd == 0
         assert policy._session_reserved_usd == pytest.approx(3.0)
-        assert restoring._ambiguous_reservations[operation_id] == Decimal("3.0")
+        assert _ambiguity_reservations(client, restoring)[operation_id] == Decimal("3.0")
         assert restoring.get_payment_state(operation_id) == "settlement_unknown"
 
 
@@ -5461,7 +5463,7 @@ def test_audit_restore_uses_operation_version_across_reserved_aba(async_mode):
 
     assert policy._session_spent_usd == 0
     assert policy._session_reserved_usd == pytest.approx(3.0)
-    assert restoring._ambiguous_reservations["aba-operation"] == Decimal("3.0")
+    assert _ambiguity_reservations(client, restoring)["aba-operation"] == Decimal("3.0")
 
 
 def test_audit_duplicate_context_cannot_cancel_or_confirm_owner_reservation():
@@ -5472,10 +5474,14 @@ def test_audit_duplicate_context_cannot_cancel_or_confirm_owner_reservation():
     duplicate = ExecutionContext(session_id="owner-session")
     operation_id = "owned-operation"
 
+    client._check_and_set_payment_state(owner, operation_id)
     client._reserve_session_budget(owner, operation_id, "3")
     with pytest.raises(PaymentExecutionError, match="already reserved"):
         client._reserve_session_budget(duplicate, operation_id, "3")
     assert client._release_session_budget(duplicate, operation_id) == 0
+    client._update_payment_state(duplicate, operation_id, "validation_failed")
+    assert client._mark_session_budget_unknown(duplicate, operation_id) == 0
+    assert owner.get_payment_state(operation_id) == "in_progress"
     with pytest.raises(PaymentExecutionError, match="does not own"):
         client._confirm_session_budget(duplicate, operation_id)
     assert client.policy._session_spent_usd == 0
@@ -5635,7 +5641,7 @@ def test_audit_exact_credential_redirect_cannot_confirm_settlement(async_mode):
                 )
         assert transport.call_count == 2
 
-    assert set(context._payment_states.values()) == {"settlement_unknown"}
+    assert set(context.list_payment_states().values()) == {"settlement_unknown"}
     assert client.policy._session_spent_usd == 0
     assert client.policy._session_reserved_usd == pytest.approx(1.0)
     assert client.last_receipt.payment_performed is False

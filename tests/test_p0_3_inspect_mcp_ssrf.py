@@ -22,6 +22,7 @@ import requests
 from ln_church_agent import inspect_transport as transport
 from ln_church_agent import redaction as redaction_policy
 from ln_church_agent import cli as cli_module
+from ln_church_agent import challenges as challenges_module
 from ln_church_agent.cli import (
     inspect_url,
     _extract_settlement_options,
@@ -36,7 +37,9 @@ from ln_church_agent.redaction import (
 )
 
 
-PUBLIC_V4 = "8.8.8.8"
+from _inspect_fixture import (
+    PUBLIC_V4, _FakeResponse, _public_resolver, _fake_exchange,
+)
 PUBLIC_V4_FALLBACK = "8.8.4.4"
 PUBLIC_V6 = "2001:4860:4860::8888"
 RAW_QUERY_SECRET = "DUMMY_QUERY_SECRET_P0_3"
@@ -47,60 +50,6 @@ RAW_RESPONSE_SECRET = "DUMMY_RESPONSE_SECRET_P0_3"
 def _fully_percent_encode(value, *, double=False):
     prefix = "%25" if double else "%"
     return "".join(prefix + format(byte, "02X") for byte in value.encode("utf-8"))
-
-
-class _FakeRaw:
-    def __init__(self, chunks):
-        self._chunks = list(chunks)
-        self.read_calls = []
-        self.decode_content = True
-
-    def read(self, amount, decode_content=False):
-        self.read_calls.append((amount, decode_content))
-        if not self._chunks:
-            return b""
-        outcome = self._chunks[0]
-        if isinstance(outcome, BaseException):
-            self._chunks.pop(0)
-            raise outcome
-        if len(outcome) <= amount:
-            return self._chunks.pop(0)
-        self._chunks[0] = outcome[amount:]
-        return outcome[:amount]
-
-
-class _FakeResponse:
-    def __init__(
-        self,
-        status_code=200,
-        *,
-        headers=None,
-        content=b"",
-        url="https://public.example/",
-        chunks=None,
-    ):
-        self.status_code = status_code
-        self.headers = dict(headers or {})
-        self.url = url
-        self._content = content
-        self._content_consumed = True
-        self._chunks = list(chunks) if chunks is not None else [content]
-        self.raw = _FakeRaw(self._chunks)
-        self.closed = False
-
-    @property
-    def content(self):
-        return self._content
-
-    def json(self):
-        return json.loads(self._content.decode("utf-8"))
-
-    def iter_content(self, chunk_size=1, decode_unicode=False):
-        del chunk_size, decode_unicode
-        yield from self._chunks
-
-    def close(self):
-        self.closed = True
 
 
 @pytest.fixture(autouse=True)
@@ -115,45 +64,6 @@ def _no_real_network(monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", forbidden_getaddrinfo)
     monkeypatch.setattr(socket, "create_connection", forbidden_create_connection)
-
-
-def _public_resolver(monkeypatch, addresses=(PUBLIC_V4,)):
-    calls = []
-
-    def resolve(host, port):
-        calls.append((host, port))
-        return tuple(addresses)
-
-    monkeypatch.setattr(transport, "_resolve_addresses", resolve)
-    return calls
-
-
-def _fake_exchange(monkeypatch, responses):
-    """Install a sequenced private transport seam and return captured calls."""
-
-    calls = []
-    queue = list(responses)
-
-    def exchange(target, address, method, timeout, body=None):
-        calls.append(
-            {
-                "target": target,
-                "address": address,
-                "method": method,
-                "timeout": timeout,
-                "body": body,
-            }
-        )
-        if not queue:
-            raise AssertionError("unexpected transport call")
-        outcome = queue.pop(0)
-        if isinstance(outcome, BaseException):
-            raise outcome
-        outcome.url = target.url
-        return outcome
-
-    monkeypatch.setattr(transport, "_exchange_once", exchange)
-    return calls
 
 
 def _fake_observation_exchange(monkeypatch, outcomes):
@@ -1584,8 +1494,8 @@ def test_challenge_parser_failure_keeps_parse_domain_and_redacts(monkeypatch):
     _public_resolver(monkeypatch)
     _fake_exchange(monkeypatch, [response, copy.deepcopy(response)])
     monkeypatch.setattr(
-        cli_module,
-        "parse_challenge_from_response",
+        challenges_module,
+        "_parse_challenge_from_response",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(Exception(secret)),
     )
 
@@ -1631,8 +1541,8 @@ def test_challenge_classification_failure_keeps_parse_domain(
         [_FakeResponse(402), _FakeResponse(402)],
     )
     monkeypatch.setattr(
-        cli_module,
-        "parse_challenge_from_response",
+        challenges_module,
+        "_parse_challenge_from_response",
         lambda *_args, **_kwargs: parsed,
     )
     monkeypatch.setattr(
@@ -1727,7 +1637,7 @@ def test_unhashable_selection_reason_and_action_inputs_cannot_crash(
     _fake_exchange(monkeypatch, [_FakeResponse(402)])
 
     with patch(
-        "ln_church_agent.cli.parse_challenge_from_response",
+        "ln_church_agent.challenges._parse_challenge_from_response",
         return_value=parsed,
     ):
         result = inspect_url("https://public.example/")
@@ -2503,7 +2413,7 @@ def test_untrusted_x402_fields_cannot_smuggle_secret_material(monkeypatch):
     _fake_exchange(monkeypatch, [_FakeResponse(402), _FakeResponse(402)])
 
     with patch(
-        "ln_church_agent.cli.parse_challenge_from_response",
+        "ln_church_agent.challenges._parse_challenge_from_response",
         return_value=parsed,
     ):
         cli_result = inspect_url("https://public.example/")
@@ -2563,7 +2473,7 @@ def test_regex_shaped_public_scalars_do_not_become_exfiltration_channels(
     _fake_exchange(monkeypatch, [_FakeResponse(402), _FakeResponse(402)])
 
     with patch(
-        "ln_church_agent.cli.parse_challenge_from_response",
+        "ln_church_agent.challenges._parse_challenge_from_response",
         return_value=parsed,
     ):
         cli_result = inspect_url("https://public.example/")

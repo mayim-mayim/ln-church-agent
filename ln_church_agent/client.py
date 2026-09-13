@@ -19,6 +19,7 @@ from collections.abc import Mapping
 
 from eth_account import Account
 from .models import (
+    _PaymentOperation,
     AssetType, SchemeType, OmikujiResponse, AgentIdentity, ConfessionResponse,
     HonoResponse, CompareResponse, AggregateResponse, BenchmarkOverviewResponse,
     HateoasErrorResponse, MonzenTraceResponse, MonzenMetricsResponse,
@@ -27,7 +28,6 @@ from .models import (
     ExecutionContext, TrustDecision, OutcomeSummary, TrustEvidence,
     PaymentEvidenceRecord, EvidenceRepository,
     ChallengeSource, AttestationSource, NextAction,
-    _ExecutionUnlock, _FundingPolicy, _EntitlementKind, _ExecutionAccessPlan,
     VerifiedDomainTrackRegistrationResponse,
     VerifiedDomainTrackReadModel,
     VerifiedDomainTrackSummary, CanonicalPaymentRequirement
@@ -55,6 +55,7 @@ from .payment_contract import (
 from .receipts import evaluate_payment_receipt
 from .redaction import (
     QUERY_REDACTION,
+    redact_paid_result_proof,
     redact_remote_metadata,
     redact_url_query as _shared_redact_url_query,
     redact_urls_in_text,
@@ -90,7 +91,7 @@ def get_sdk_version() -> str:
     try:
         return importlib.metadata.version("ln-church-agent")
     except importlib.metadata.PackageNotFoundError:
-        return "1.18.0"
+        return "1.18.2"
 
 SDK_VERSION = get_sdk_version()
 CUSTOM_USER_AGENT = f"ln-church-agent/{get_sdk_version()}"
@@ -183,6 +184,7 @@ _SECRET_HEADER_EXACT_NAMES = {
     "client-secret", "x-client-secret", "access-token", "x-access-token",
     "refresh-token", "x-refresh-token", "probe-token", "x-probe-token",
     "idempotency-key", "x-ln-result-handle", "x-ln-request-hash",
+    "x-ln-church-result-handle", "x-ln-church-request-hash",
     "signature", "signature-input", "dpop",
 }
 
@@ -318,6 +320,8 @@ def _is_secret_payload_key(key: Any) -> bool:
 def _is_secret_evidence_key(key: Any) -> bool:
     """Apply evidence redaction without deleting public hashes or references."""
     normalized = _normalize_secret_name(key)
+    if normalized in {"result-handle", "request-hash"}:
+        return True
     if normalized in _SAFE_EVIDENCE_KEYS:
         return False
     if normalized.endswith(("-hash", "-fingerprint", "-present", "-presence", "-reference")):
@@ -328,6 +332,59 @@ def _is_secret_evidence_key(key: Any) -> bool:
 def _is_secret_key(k: str) -> bool:
     """Backward-compatible payload-key predicate used by evidence redaction."""
     return _is_secret_evidence_key(k)
+
+
+_PAID_RESULT_HEADER_FIELDS = {
+    "x-ln-result-handle": "result_handle",
+    "x-ln-request-hash": "request_hash",
+    "x-ln-result-expires-at": "result_expires_at",
+}
+_KNOWN_RESULT_ERRORS = {
+    (500, "PAID_RESULT_PERSISTENCE_UNCONFIRMED"),
+    (500, "STATE_UPDATE_FAILED"),
+    (502, "BACKEND_RESPONSE_PARSE_FAILED"),
+}
+
+
+def _paid_result_metadata(headers, wire_url: str) -> Dict[str, str]:
+    metadata = {
+        _PAID_RESULT_HEADER_FIELDS[key.lower()]: value
+        for key, value in headers.items()
+        if key.lower() in _PAID_RESULT_HEADER_FIELDS and isinstance(value, str)
+    }
+    if urlsplit(wire_url).path == "/api/bazaar/verified-domain-tracks":
+        for field, alias in (("result_handle", "x-ln-church-result-handle"),
+                             ("request_hash", "x-ln-church-request-hash")):
+            value = headers.get(alias)
+            if not metadata.get(field) and isinstance(value, str) and value:
+                metadata[field] = value
+    return metadata
+
+
+def _http_response_error(res) -> PaymentExecutionError:
+    if res is None:
+        return PaymentExecutionError("API Error 500: No response", status_code=500)
+    try:
+        data = res.json()
+    except Exception:
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    code = data.get("error_code")
+    if not isinstance(code, str) or (res.status_code, code) not in _KNOWN_RESULT_ERRORS:
+        code = None
+    metadata = _paid_result_metadata(res.headers, "")
+    proofs = tuple(metadata.get(key, "") for key in ("result_handle", "request_hash"))
+    message = redact_paid_result_proof(sanitize_error_msg(data.get("message", res.text)), proofs)
+    return PaymentExecutionError(
+        f"API Error {res.status_code}: {message}", status_code=res.status_code, code=code,
+    )
+
+
+def _is_paid_result_get(method: str, url: str) -> bool:
+    path = urlsplit(url).path
+    return method.upper() == "GET" and (
+        path == "/api/bazaar/paid-results" or path.startswith("/api/bazaar/paid-results/")
+    )
 
 
 def _strip_sensitive_headers(headers: Optional[dict]) -> dict:
@@ -376,7 +433,7 @@ def _redact_evidence_value(value: Any, *, field_name: Any = None) -> Any:
     if isinstance(value, tuple):
         return tuple(_redact_evidence_value(item) for item in value)
     if isinstance(value, str):
-        return redact_urls_in_text(sanitize_error_msg(value))
+        return redact_paid_result_proof(redact_urls_in_text(sanitize_error_msg(value)))
     return value
 
 
@@ -786,67 +843,58 @@ class Payment402Client:
             state["hops"] += 1
 
     def _init_context_state(self, context: ExecutionContext):
-        if not hasattr(context, "_payment_states"):
-            context._payment_states = {}
-            context._payment_state_lock = threading.RLock()
-        if not hasattr(context, "_ambiguous_reservations"):
-            context._ambiguous_reservations = {}
-        if not hasattr(context, "_budget_reservations"):
-            context._budget_reservations = {}
-        if not hasattr(context, "_known_settled_ambiguities"):
-            context._known_settled_ambiguities = set()
-        if not hasattr(context, "_payment_identities"):
-            context._payment_identities = {}
-        if not hasattr(context, "_origin_idempotency_keys"):
-            context._origin_idempotency_keys = {}
-        if not hasattr(context, "_navigation_states"):
-            context._navigation_states = {}
-        if not hasattr(context, "_navigation_pins"):
-            context._navigation_pins = {}
+        if self.policy:
+            # A Context can be used by different clients. Never import its
+            # operation references into another policy or reassign its lock.
+            lock = self.policy._session_spend_lock
+            with lock:
+                self.policy._session_operations.setdefault(context.session_id, {})
+            return lock
+        return context._payment_state_lock
+
+    def _payment_operation(self, context: ExecutionContext, fingerprint: str) -> _PaymentOperation:
+        with self._init_context_state(context):
+            operations = (self.policy._session_operations[context.session_id]
+                          if self.policy else context._operations)
+            operation = operations.setdefault(fingerprint, _PaymentOperation())
+            with context._payment_state_lock:
+                context._operations[fingerprint] = operation
+            return operation
 
     def _assert_payment_state_allows_402(self, context: ExecutionContext, fingerprint: str) -> None:
         """Give terminal operation state priority over retry counters and parsing."""
-        self._init_context_state(context)
-        with context._payment_state_lock:
-            state = context._payment_states.get(fingerprint, "not_started")
-            if state in {
-                "in_progress", "completed", "credential_reused", "ambiguous",
-                "settlement_unknown",
-            }:
+        with self._init_context_state(context):
+            operations = (self.policy._session_operations[context.session_id]
+                          if self.policy else context._operations)
+            operation = operations.get(fingerprint)
+            state = operation.phase if operation else context.get_payment_state(fingerprint)
+            if state in {"in_progress", "completed", "credential_reused", "ambiguous", "settlement_unknown"}:
                 raise PaymentExecutionError(
                     f"Ambiguous payment error: state is {state}. Irreversible action already attempted."
                 )
 
     def _check_and_set_payment_state(self, context: ExecutionContext, fingerprint: str) -> None:
-        self._init_context_state(context)
-        with context._payment_state_lock:
-            state = context._payment_states.get(fingerprint, "not_started")
-            if state in [
-                "in_progress", "completed", "credential_reused", "ambiguous",
-                "settlement_unknown",
-            ]:
-                raise PaymentExecutionError(f"Ambiguous payment error: state is {state}. Irreversible action already attempted.")
-            context._payment_states[fingerprint] = "in_progress"
+        with self._init_context_state(context):
+            self._assert_payment_state_allows_402(context, fingerprint)
+            operation = self._payment_operation(context, fingerprint)
+            operation.phase = "in_progress"
+            operation.owner = context._operation_owner
 
     def _update_payment_state(self, context: ExecutionContext, fingerprint: str, state: str) -> None:
-        self._init_context_state(context)
-        with context._payment_state_lock:
-            current = context._payment_states.get(fingerprint, "not_started")
-            if current in {
-                "completed", "credential_reused", "ambiguous",
-                "settlement_unknown", "confirmed_not_paid",
-            } and current != state:
+        with self._init_context_state(context):
+            operation = self._payment_operation(context, fingerprint)
+            if operation.owner not in {None, context._operation_owner}:
                 return
-            context._payment_states[fingerprint] = state
+            if operation.phase in {"completed", "credential_reused", "ambiguous", "settlement_unknown", "confirmed_not_paid"} and operation.phase != state:
+                return
+            operation.phase = state
 
-    def _mark_known_settled_ambiguity(
-        self, context: ExecutionContext, fingerprint: str
-    ) -> None:
-        """Mark paid-but-undelivered recovery without reserving spend twice."""
-        self._init_context_state(context)
-        with context._payment_state_lock:
-            context._known_settled_ambiguities.add(fingerprint)
-            context._payment_states[fingerprint] = "ambiguous"
+    def _mark_known_settled_ambiguity(self, context: ExecutionContext, fingerprint: str) -> None:
+        """Keep the paid fact distinct from delivery failure."""
+        with self._init_context_state(context):
+            operation = self._payment_operation(context, fingerprint)
+            operation.known_settled = True
+            operation.phase = "ambiguous"
 
     def _register_payment_identity(
         self, context: ExecutionContext, fingerprint: str, parsed: ParsedChallenge
@@ -871,33 +919,29 @@ class Payment402Client:
             for value in identities:
                 context._payment_identities[value] = fingerprint
 
-    def get_payment_operation_states(
-        self, context: ExecutionContext
-    ) -> Dict[str, Dict[str, Any]]:
-        """Return payment states without exposing credentials or preimages."""
-        self._init_context_state(context)
-        with context._payment_state_lock:
-            identities_by_fingerprint: Dict[str, List[str]] = {}
-            for identity, fingerprint in context._payment_identities.items():
-                identities_by_fingerprint.setdefault(fingerprint, []).append(identity)
+    def get_payment_operation_states(self, context: ExecutionContext) -> Dict[str, Dict[str, Any]]:
+        """Return derived states without credentials or preimages."""
+        with self._init_context_state(context):
+            with context._payment_state_lock:
+                identity_items = tuple(context._payment_identities.items())
+                operation_items = tuple(context._operations.items())
+            identities: Dict[str, List[str]] = {}
+            for identity, fingerprint in identity_items:
+                identities.setdefault(fingerprint, []).append(identity)
             return {
                 fingerprint: {
-                    "state": state,
-                    "identities": sorted(identities_by_fingerprint.get(fingerprint, [])),
+                    "state": operation.phase,
+                    "identities": sorted(identities.get(fingerprint, [])),
                     "ambiguous_reservation_usd": str(
-                        context._ambiguous_reservations.get(fingerprint, Decimal("0"))
+                        operation.amount if operation.budget_state == "reserved"
+                        and operation.phase in {"ambiguous", "settlement_unknown"} else Decimal("0")
                     ),
                     "ambiguity_kind": (
-                        "known_settled_delivery"
-                        if fingerprint in context._known_settled_ambiguities
-                        else (
-                            "settlement_unknown"
-                            if state in {"ambiguous", "settlement_unknown"}
-                            else None
-                        )
+                        "known_settled_delivery" if operation.known_settled else
+                        "settlement_unknown" if operation.phase in {"ambiguous", "settlement_unknown"} else None
                     ),
                 }
-                for fingerprint, state in context._payment_states.items()
+                for fingerprint, operation in operation_items
             }
 
     def resolve_ambiguous_payment(
@@ -930,143 +974,44 @@ class Payment402Client:
         self, context: ExecutionContext, operation_or_payment_id: str, outcome: str
     ) -> Tuple[str, Optional[PaymentEvidenceRecord]]:
         if outcome not in {"confirmed_paid", "confirmed_not_paid"}:
-            raise ValueError(
-                "outcome must be confirmed_paid or confirmed_not_paid"
-            )
-        self._init_context_state(context)
-        policy_lock = (
-            self.policy._session_spend_lock if self.policy else threading.RLock()
-        )
-        with policy_lock, context._payment_state_lock:
-            fingerprint = context._payment_identities.get(
-                operation_or_payment_id, operation_or_payment_id
-            )
-            local_state = context._payment_states.get(
-                fingerprint, "not_started"
-            )
-            known_settled = fingerprint in context._known_settled_ambiguities
-            if known_settled and outcome == "confirmed_not_paid":
-                raise PaymentExecutionError(
-                    "Known-settled payment cannot be recovered as not paid."
-                )
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-
-            # The policy journal is authoritative across ExecutionContexts.
-            # A stale hydrated context may observe the old reservation, but it
-            # cannot apply a second or conflicting terminal transition.
-            if global_event is not None and global_event[0] == "confirmed":
-                if outcome != "confirmed_paid":
-                    raise PaymentExecutionError(
-                        "Confirmed payment cannot be recovered as not paid."
-                    )
-                if local_state in {"ambiguous", "settlement_unknown"} and not known_settled:
-                    raise PaymentExecutionError(
-                        "Payment ambiguity was already resolved by another context."
-                    )
-                context._budget_reservations.pop(fingerprint, None)
-                context._ambiguous_reservations.pop(fingerprint, None)
-                context._known_settled_ambiguities.discard(fingerprint)
-                context._payment_states[fingerprint] = "completed"
-                return "completed", None
-            if global_event is not None and global_event[0] == "released":
-                if outcome != "confirmed_not_paid":
-                    raise PaymentExecutionError(
-                        "Released payment reservation cannot be recovered as paid."
-                    )
-                if local_state in {"ambiguous", "settlement_unknown"}:
-                    raise PaymentExecutionError(
-                        "Payment ambiguity was already resolved by another context."
-                    )
-                context._budget_reservations.pop(fingerprint, None)
-                context._ambiguous_reservations.pop(fingerprint, None)
-                context._payment_states[fingerprint] = "confirmed_not_paid"
-                return "confirmed_not_paid", None
-
-            if local_state not in {"ambiguous", "settlement_unknown"}:
-                if (
-                    local_state == "completed"
-                    and outcome == "confirmed_paid"
-                ) or (
-                    local_state == "confirmed_not_paid"
-                    and outcome == "confirmed_not_paid"
-                ):
-                    return local_state, None
-                raise PaymentExecutionError(
-                    "Payment operation is not awaiting ambiguity recovery."
-                )
-            reservation = Decimal("0")
-            if global_event is not None:
-                if global_event[0] != "reserved":
-                    raise PaymentExecutionError(
-                        "Payment operation has conflicting global budget state."
-                    )
-                reservation = global_event[1]
-            else:
-                reservation = context._ambiguous_reservations.get(
-                    fingerprint, Decimal("0")
-                )
-            if outcome == "confirmed_paid":
-                # A reservation for an unknown wallet outcome becomes actual
-                # spend.  Remove only the marker; do not refund the budget.
-                context._ambiguous_reservations.pop(fingerprint, None)
-                if self.policy and reservation:
-                    self.policy._session_reserved_usd = max(
-                        0.0,
-                        self.policy._session_reserved_usd - float(reservation),
-                    )
-                    self.policy._session_spent_usd += float(reservation)
-                    self.policy._session_ledger_version += 1
-                    self.policy._restored_session_reservations.setdefault(
-                        context.session_id, {}
-                    ).pop(fingerprint, None)
-                    self._set_session_budget_operation_event(
-                        context, fingerprint, "confirmed", reservation
-                    )
-                context._known_settled_ambiguities.discard(fingerprint)
-                context._payment_states[fingerprint] = "completed"
-            else:
-                context._budget_reservations.pop(fingerprint, None)
-                context._ambiguous_reservations.pop(fingerprint, None)
-                if self.policy and reservation:
-                    self.policy._session_reserved_usd = max(
-                        0.0,
-                        self.policy._session_reserved_usd - float(reservation),
-                    )
-                    self.policy._session_ledger_version += 1
-                    self.policy._restored_session_reservations.setdefault(
-                        context.session_id, {}
-                    ).pop(fingerprint, None)
-                    self._set_session_budget_operation_event(
-                        context, fingerprint, "released", reservation
-                    )
-                context._payment_states[fingerprint] = "confirmed_not_paid"
-            state = context._payment_states[fingerprint]
-
+            raise ValueError("outcome must be confirmed_paid or confirmed_not_paid")
+        with self._init_context_state(context):
+            fingerprint = context._payment_identities.get(operation_or_payment_id, operation_or_payment_id)
+            if fingerprint not in context._operations:
+                raise PaymentExecutionError("Payment operation is not awaiting ambiguity recovery.")
+            operation = self._payment_operation(context, fingerprint)
+            paid = outcome == "confirmed_paid"
+            state = "completed" if paid else "confirmed_not_paid"
+            terminal = "confirmed" if paid else "released"
+            if operation.known_settled and not paid:
+                raise PaymentExecutionError("Known-settled payment cannot be recovered as not paid.")
+            if operation.budget_state in {"confirmed", "released"}:
+                if operation.budget_state != terminal:
+                    raise PaymentExecutionError("Payment recovery conflicts with confirmed budget state.")
+                if operation.owner not in {None, context._operation_owner}:
+                    raise PaymentExecutionError("Payment ambiguity was already resolved by another context.")
+                operation.phase = state
+                operation.known_settled = False
+                return state, None
+            if operation.phase not in {"ambiguous", "settlement_unknown"}:
+                if operation.phase == state:
+                    return state, None
+                raise PaymentExecutionError("Payment operation is not awaiting ambiguity recovery.")
+            reservation = operation.amount if operation.budget_state == "reserved" else Decimal("0")
+            if self.policy and reservation:
+                self._set_budget_fact(operation, terminal, reservation, context._operation_owner)
+            operation.known_settled = False
+            operation.phase = state
         record = None
         if reservation > 0:
-            budget_event = (
-                "confirmed" if outcome == "confirmed_paid" else "released"
-            )
             amount = float(reservation)
             record = PaymentEvidenceRecord(
-                session_id=context.session_id,
-                correlation_id=context.correlation_id,
-                target_url=(
-                    "urn:ln-church:payment-operation:" + fingerprint
-                ),
-                method="RECOVERY",
-                error_message=(
-                    "ambiguity_resolved_" + outcome
-                ),
-                session_spend_delta_usd=(
-                    amount if budget_event == "confirmed" else 0.0
-                ),
-                session_budget_event=budget_event,
-                session_budget_operation_id=fingerprint,
-                session_budget_amount_usd=amount,
-                payment_performed=(budget_event == "confirmed"),
+                session_id=context.session_id, correlation_id=context.correlation_id,
+                target_url="urn:ln-church:payment-operation:" + fingerprint, method="RECOVERY",
+                error_message="ambiguity_resolved_" + outcome,
+                session_spend_delta_usd=amount if paid else 0.0,
+                session_budget_event=terminal, session_budget_operation_id=fingerprint,
+                session_budget_amount_usd=amount, payment_performed=paid,
             )
         return state, record
 
@@ -1437,310 +1382,103 @@ class Payment402Client:
     def _estimate_usd_value(self, parsed: ParsedChallenge) -> float:
         return float(self._estimate_usd_decimal(parsed))
 
-    def _session_budget_operation_event(
-        self, context: ExecutionContext, fingerprint: str
-    ) -> Optional[Tuple[str, Decimal]]:
-        if not self.policy:
-            return None
-        event = self.policy._session_budget_operation_journal.get(
-            context.session_id, {}
-        ).get(fingerprint)
-        if event is None:
-            return None
-        return event[0], Decimal(str(event[1]))
+    def _check_session_budget(self, amount: Decimal) -> None:
+        """One cap formula, applied both at approval and atomic reservation."""
+        projected = (Decimal(str(self.policy._session_spent_usd))
+                     + Decimal(str(self.policy._session_reserved_usd)) + amount)
+        if projected > Decimal(str(self.policy.max_spend_per_session_usd)):
+            raise PaymentExecutionError(
+                "Policy Violation: Total session spend including reservations "
+                f"({format(projected, 'f')} USD) would exceed limit."
+            )
 
-    def _set_session_budget_operation_event(
-        self,
-        context: ExecutionContext,
-        fingerprint: str,
-        state: str,
-        amount: Decimal,
-    ) -> None:
-        """Update the policy-owned, operation-keyed budget state.
+    def _set_budget_fact(self, operation: _PaymentOperation, state: str, amount: Decimal, owner: Optional[str]) -> None:
+        """Caller holds the policy lock; revision records ABA, not tuple equality."""
+        self.policy._session_ledger_version += 1
+        operation.budget_state = state
+        operation.amount = amount
+        operation.owner = owner
+        operation.revision = self.policy._session_ledger_version
 
-        Callers hold the policy ledger lock.  The per-operation mutation
-        version distinguishes ABA transitions whose final tuple is unchanged.
-        """
-        if not self.policy:
-            return
-        self.policy._session_budget_operation_journal.setdefault(
-            context.session_id, {}
-        )[fingerprint] = (state, float(amount))
-        self.policy._session_budget_operation_versions.setdefault(
-            context.session_id, {}
-        )[fingerprint] = self.policy._session_ledger_version
-
-    def _reserve_session_budget(
-        self,
-        context: ExecutionContext,
-        fingerprint: str,
-        approved_usd_value: Any,
-    ) -> Decimal:
-        """Atomically check and reserve one operation against session budget."""
+    def _reserve_session_budget(self, context: ExecutionContext, fingerprint: str, approved_usd_value: Any) -> Decimal:
         if not self.policy:
             return Decimal("0")
         reserve = Decimal(str(approved_usd_value))
         if not reserve.is_finite() or reserve < 0:
-            raise PaymentExecutionError(
-                "Fail-Closed: Session budget reservation cannot be negative."
-            )
+            raise PaymentExecutionError("Fail-Closed: Session budget reservation cannot be negative.")
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-            existing = context._budget_reservations.get(fingerprint)
-            ambiguous = context._ambiguous_reservations.get(fingerprint)
-            local_existing = existing if existing is not None else ambiguous
-            if global_event is not None:
-                global_state, global_amount = global_event
-                if global_state == "reserved":
-                    if local_existing is not None:
-                        if local_existing != global_amount:
-                            raise PaymentExecutionError(
-                                "Fail-Closed: Conflicting reservation amount for operation."
-                            )
-                        return local_existing
-                    raise PaymentExecutionError(
-                        "Ambiguous payment error: operation is already reserved "
-                        "in the session ledger."
-                    )
-                if global_state == "confirmed":
-                    raise PaymentExecutionError(
-                        "Ambiguous payment error: operation is already confirmed."
-                    )
-                if global_state == "released" and local_existing is not None:
-                    raise PaymentExecutionError(
-                        "Fail-Closed: Stale context retains a released reservation."
-                    )
-            if local_existing is not None:
-                return local_existing
-            projected = (
-                Decimal(str(self.policy._session_spent_usd))
-                + Decimal(str(self.policy._session_reserved_usd))
-                + reserve
-            )
-            limit = Decimal(str(self.policy.max_spend_per_session_usd))
-            if projected > limit:
-                raise PaymentExecutionError(
-                    "Policy Violation: Total session spend including reservations "
-                    f"({format(projected, 'f')} USD) would exceed limit."
-                )
-            context._budget_reservations[fingerprint] = reserve
-            self.policy._session_reserved_usd += float(reserve)
-            self.policy._session_ledger_version += 1
-            self.policy._budget_session_id = context.session_id
-            self._set_session_budget_operation_event(
-                context, fingerprint, "reserved", reserve
-            )
+        with self.policy._session_spend_lock:
+            operation = self._payment_operation(context, fingerprint)
+            if operation.budget_state == "reserved":
+                if operation.owner != context._operation_owner:
+                    raise PaymentExecutionError("Ambiguous payment error: operation is already reserved in the session ledger.")
+                if operation.amount != reserve:
+                    raise PaymentExecutionError("Fail-Closed: Conflicting reservation amount for operation.")
+                return operation.amount
+            if operation.budget_state == "confirmed":
+                raise PaymentExecutionError("Ambiguous payment error: operation is already confirmed.")
+            self._check_session_budget(reserve)
+            self._set_budget_fact(operation, "reserved", reserve, context._operation_owner)
             return reserve
 
-    def _confirm_session_budget(
-        self, context: ExecutionContext, fingerprint: str
-    ) -> Decimal:
-        """Commit a reservation without adding it to the ledger twice."""
+    def _confirm_session_budget(self, context: ExecutionContext, fingerprint: str) -> Decimal:
         if not self.policy:
             return Decimal("0")
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            local_reserve = context._budget_reservations.pop(fingerprint, None)
-            if local_reserve is None:
-                local_reserve = context._ambiguous_reservations.pop(
-                    fingerprint, Decimal("0")
-                )
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-            if global_event is not None and global_event[0] == "confirmed":
+        with self.policy._session_spend_lock:
+            operation = self._payment_operation(context, fingerprint)
+            if operation.budget_state == "confirmed":
                 return Decimal("0")
-            if global_event is not None and global_event[0] == "released":
-                raise PaymentExecutionError(
-                    "Fail-Closed: Released reservation cannot be confirmed."
-                )
-            if (
-                global_event is not None
-                and global_event[0] == "reserved"
-                and not local_reserve
-            ):
-                raise PaymentExecutionError(
-                    "Fail-Closed: Context does not own the global reservation."
-                )
-            if (
-                global_event is not None
-                and local_reserve
-                and local_reserve != global_event[1]
-            ):
-                raise PaymentExecutionError(
-                    "Fail-Closed: Local/global reservation amount mismatch."
-                )
-            reserve = (
-                global_event[1]
-                if global_event is not None else local_reserve
-            )
-            if reserve:
-                self.policy._session_reserved_usd = max(
-                    0.0,
-                    self.policy._session_reserved_usd - float(reserve),
-                )
-                self.policy._session_spent_usd += float(reserve)
-                self.policy._session_ledger_version += 1
-                self._set_session_budget_operation_event(
-                    context, fingerprint, "confirmed", reserve
-                )
-            self.policy._restored_session_reservations.setdefault(
-                context.session_id, {}
-            ).pop(fingerprint, None)
-            return reserve
+            if operation.budget_state == "released":
+                raise PaymentExecutionError("Fail-Closed: Released reservation cannot be confirmed.")
+            if operation.budget_state != "reserved":
+                return Decimal("0")
+            if operation.owner != context._operation_owner:
+                raise PaymentExecutionError("Fail-Closed: Context does not own the global reservation.")
+            self._set_budget_fact(operation, "confirmed", operation.amount, context._operation_owner)
+            return operation.amount
 
-    def _release_session_budget(
-        self, context: ExecutionContext, fingerprint: str
-    ) -> Decimal:
-        """Cancel a reservation and return capacity to the shared policy."""
+    def _release_session_budget(self, context: ExecutionContext, fingerprint: str) -> Decimal:
         if not self.policy:
             return Decimal("0")
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            local_reserve = context._budget_reservations.pop(fingerprint, None)
-            if local_reserve is None:
-                local_reserve = context._ambiguous_reservations.pop(
-                    fingerprint, Decimal("0")
-                )
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-            if global_event is not None and global_event[0] in {
-                "confirmed", "released",
-            }:
+        with self.policy._session_spend_lock:
+            operation = self._payment_operation(context, fingerprint)
+            if operation.budget_state != "reserved" or operation.owner != context._operation_owner:
                 return Decimal("0")
-            if (
-                global_event is not None
-                and global_event[0] == "reserved"
-                and not local_reserve
-            ):
-                # Cleanup for a failed duplicate operation must not cancel the
-                # reservation owned by another ExecutionContext.
-                return Decimal("0")
-            if (
-                global_event is not None
-                and local_reserve
-                and local_reserve != global_event[1]
-            ):
-                raise PaymentExecutionError(
-                    "Fail-Closed: Local/global reservation amount mismatch."
-                )
-            reserve = (
-                global_event[1]
-                if global_event is not None else local_reserve
-            )
-            if reserve:
-                self.policy._session_reserved_usd = max(
-                    0.0,
-                    self.policy._session_reserved_usd - float(reserve),
-                )
-                self.policy._session_ledger_version += 1
-                self._set_session_budget_operation_event(
-                    context, fingerprint, "released", reserve
-                )
-            self.policy._restored_session_reservations.setdefault(
-                context.session_id, {}
-            ).pop(fingerprint, None)
-            return reserve
+            self._set_budget_fact(operation, "released", operation.amount, context._operation_owner)
+            return operation.amount
 
-    def _mark_session_budget_unknown(
-        self, context: ExecutionContext, fingerprint: str
-    ) -> Decimal:
-        """Retain a reservation while exposing its settlement-unknown state."""
+    def _mark_session_budget_unknown(self, context: ExecutionContext, fingerprint: str) -> Decimal:
         if not self.policy:
             return Decimal("0")
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-            if global_event is not None and global_event[0] != "reserved":
+        with self.policy._session_spend_lock:
+            operation = self._payment_operation(context, fingerprint)
+            if operation.budget_state != "reserved" or operation.owner != context._operation_owner:
                 return Decimal("0")
-            reserve = context._budget_reservations.pop(fingerprint, None)
-            if reserve is None:
-                reserve = context._ambiguous_reservations.get(
-                    fingerprint, Decimal("0")
-                )
-            elif reserve:
-                context._ambiguous_reservations[fingerprint] = reserve
-            if not reserve and global_event is not None:
-                reserve = global_event[1]
-                context._ambiguous_reservations[fingerprint] = reserve
-            if reserve:
-                self.policy._restored_session_reservations.setdefault(
-                    context.session_id, {}
-                )[fingerprint] = float(reserve)
-                self._set_session_budget_operation_event(
-                    context, fingerprint, "reserved", reserve
-                )
-            return reserve
+            operation.phase = "settlement_unknown"
+            return operation.amount
 
     def _reserve_ambiguous_spend(
-        self,
-        context: ExecutionContext,
-        fingerprint: str,
-        parsed: ParsedChallenge,
+        self, context: ExecutionContext, fingerprint: str, parsed: ParsedChallenge,
         approved_usd_value: Optional[Any] = None,
     ) -> float:
-        """Reserve the canonical amount once after an irreversible call loses its result."""
         if not self.policy:
             return 0.0
-        reserve = (
-            Decimal(str(approved_usd_value))
-            if approved_usd_value is not None
-            else self._estimate_usd_decimal(parsed)
-        )
-        if reserve <= 0:
+        amount = (Decimal(str(approved_usd_value)) if approved_usd_value is not None
+                  else self._estimate_usd_decimal(parsed))
+        if amount <= 0:
             return 0.0
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            global_event = self._session_budget_operation_event(
-                context, fingerprint
-            )
-            existing = context._ambiguous_reservations.get(fingerprint)
-            if existing is not None:
-                if global_event is not None and global_event[0] != "reserved":
-                    raise PaymentExecutionError(
-                        "Fail-Closed: Ambiguous reservation conflicts with global state."
-                    )
-                return float(existing)
-            pre_reserved = context._budget_reservations.pop(fingerprint, None)
-            if pre_reserved is not None:
-                context._ambiguous_reservations[fingerprint] = pre_reserved
-                self.policy._restored_session_reservations.setdefault(
-                    context.session_id, {}
-                )[fingerprint] = float(pre_reserved)
-                self._set_session_budget_operation_event(
-                    context, fingerprint, "reserved", pre_reserved
-                )
-                return float(pre_reserved)
-            if global_event is not None:
-                raise PaymentExecutionError(
-                    "Ambiguous payment error: operation already has global budget state."
-                )
-            projected = (
-                Decimal(str(self.policy._session_spent_usd))
-                + Decimal(str(self.policy._session_reserved_usd))
-                + reserve
-            )
-            if projected > Decimal(str(self.policy.max_spend_per_session_usd)):
-                raise PaymentExecutionError(
-                    "Policy Violation: Ambiguous reservation exceeds session budget."
-                )
-            context._ambiguous_reservations[fingerprint] = reserve
-            self.policy._session_reserved_usd += float(reserve)
-            self.policy._session_ledger_version += 1
-            self.policy._budget_session_id = context.session_id
-            self.policy._restored_session_reservations.setdefault(
-                context.session_id, {}
-            )[fingerprint] = float(reserve)
-            self._set_session_budget_operation_event(
-                context, fingerprint, "reserved", reserve
-            )
-        return float(reserve)
+        with self.policy._session_spend_lock:
+            operation = self._payment_operation(context, fingerprint)
+            if operation.budget_state is None:
+                self._reserve_session_budget(context, fingerprint, amount)
+            elif operation.budget_state != "reserved" or operation.owner != context._operation_owner:
+                raise PaymentExecutionError("Fail-Closed: Ambiguous reservation conflicts with global state.")
+            operation.phase = "ambiguous"
+            return float(operation.amount)
 
     def _fold_budget_events(
         self, records: List[PaymentEvidenceRecord]
@@ -1810,260 +1548,87 @@ class Payment402Client:
         return float(legacy_total), journal
 
     def _merge_restored_session_budget(
-        self,
-        context: ExecutionContext,
-        restored_legacy_confirmed_usd: float,
-        restored_journal: Dict[str, Tuple[str, Decimal]],
-        start_version: int,
-        start_confirmed_usd: float,
-        start_journal: Dict[str, Tuple[str, float]],
-        start_operation_versions: Dict[str, int],
+        self, context: ExecutionContext, restored_legacy_usd: float,
+        restored_journal: Dict[str, Tuple[str, Decimal]], start_version: int,
+        start_baseline: Decimal,
     ) -> None:
-        """Merge Evidence history without conflating spend and reservations."""
-        if not self.policy:
-            return
+        """Merge imported events into the same live records, without amount copies."""
         self._init_context_state(context)
-        with self.policy._session_spend_lock, context._payment_state_lock:
-            if context.session_id in self.policy._restored_session_ids:
-                cached = self.policy._session_budget_operation_journal.get(
-                    context.session_id, {}
+        with self.policy._session_spend_lock:
+            operations = self.policy._session_operations[context.session_id]
+            if context.session_id not in self.policy._restored_session_ids:
+                # Legacy deltas have no operation identity. Preserve only changes
+                # to that baseline during I/O; operation spend is already owned.
+                self.policy._session_baseline_usd = (
+                    Decimal(str(restored_legacy_usd)) + max(Decimal("0"),
+                        self.policy._session_baseline_usd - start_baseline)
                 )
-                for operation_id, (state, amount_value) in cached.items():
-                    if state != "reserved":
-                        continue
-                    if context._payment_states.get(operation_id) in {
-                        "completed", "confirmed_not_paid",
-                    }:
-                        continue
-                    amount = Decimal(str(amount_value))
-                    context._ambiguous_reservations.setdefault(
-                        operation_id, amount
-                    )
-                    context._payment_states.setdefault(
-                        operation_id, "settlement_unknown"
-                    )
-                return
-            current_confirmed = Decimal(str(self.policy._session_spent_usd))
-            concurrent_mutation = (
-                self.policy._session_ledger_version != start_version
-            )
-            current_journal = dict(
-                self.policy._session_budget_operation_journal.get(
-                    context.session_id, {}
-                )
-            )
-            current_operation_versions = dict(
-                self.policy._session_budget_operation_versions.get(
-                    context.session_id, {}
-                )
-            )
-            combined_journal = dict(restored_journal)
-            if concurrent_mutation:
-                # Live journal changes happened after import began and are the
-                # newest view.  Overlay them by operation identity so an event
-                # exported during repository I/O is not counted twice when it
-                # also appears in the returned evidence snapshot.
-                for operation_id, event in current_journal.items():
-                    if current_operation_versions.get(operation_id, -1) > (
-                        start_operation_versions.get(operation_id, -1)
+                for key, (state, amount) in restored_journal.items():
+                    operation = operations.setdefault(key, _PaymentOperation())
+                    # Live facts retain their payer even when they predate the
+                    # import. A historical copy cannot steal that reservation.
+                    if (
+                        operation.owner is not None
+                        or operation.revision > start_version
+                        or operation.budget_state == "confirmed"
                     ):
-                        state, amount = event
-                        combined_journal[operation_id] = (
-                            state, Decimal(str(amount))
-                        )
-                confirmed_delta = max(
-                    Decimal("0"),
-                    current_confirmed - Decimal(str(start_confirmed_usd)),
-                )
-                tracked_confirmed_delta = Decimal("0")
-                for operation_id, (state, amount_value) in current_journal.items():
-                    if state != "confirmed":
                         continue
-                    prior_state, prior_amount_value = start_journal.get(
-                        operation_id, ("", 0.0)
-                    )
-                    prior_amount = (
-                        Decimal(str(prior_amount_value))
-                        if prior_state == "confirmed" else Decimal("0")
-                    )
-                    tracked_confirmed_delta += max(
-                        Decimal("0"),
-                        Decimal(str(amount_value)) - prior_amount,
-                    )
-                untracked_confirmed_delta = max(
-                    Decimal("0"),
-                    confirmed_delta - tracked_confirmed_delta,
-                )
-            else:
-                untracked_confirmed_delta = Decimal("0")
+                    self._set_budget_fact(operation, state, amount, None)
+                    if state == "reserved" and operation.phase not in {"completed", "confirmed_not_paid"}:
+                        operation.phase = "settlement_unknown"
+                self.policy._restored_session_ids.add(context.session_id)
+            for key, operation in operations.items():
+                if operation.budget_state == "reserved":
+                    with context._payment_state_lock:
+                        context._operations[key] = operation
+                    if operation.phase == "not_started":
+                        operation.phase = "settlement_unknown"
 
-            merged = (
-                Decimal(str(restored_legacy_confirmed_usd))
-                + sum(
-                    (
-                        amount for state, amount in combined_journal.values()
-                        if state == "confirmed"
-                    ),
-                    Decimal("0"),
-                )
-                + untracked_confirmed_delta
-            )
-            self.policy._session_spent_usd = float(merged)
+    def _session_restore_start(self, context: ExecutionContext):
+        if not self.policy or not self.evidence_repo or context.session_budget_restored:
+            return None
+        self._init_context_state(context)
+        with self.policy._session_spend_lock:
+            snapshot = (self.policy._session_ledger_version, self.policy._session_baseline_usd)
+            if context.session_id in self.policy._restored_session_ids:
+                self._merge_restored_session_budget(context, 0.0, {}, *snapshot)
+                context.session_budget_restored = True
+                return None
+            return snapshot
 
-            reservations = {
-                operation_id: amount
-                for operation_id, (state, amount) in combined_journal.items()
-                if state == "reserved" and amount > 0
-            }
-            for operation_id, amount in reservations.items():
-                if operation_id in context._budget_reservations:
-                    continue
-                context._ambiguous_reservations.setdefault(operation_id, amount)
-                context._payment_states.setdefault(
-                    operation_id, "settlement_unknown"
-                )
-            self.policy._session_reserved_usd = float(
-                sum(reservations.values(), Decimal("0"))
-            )
-            self.policy._budget_session_id = context.session_id
-            self.policy._restored_session_ids.add(context.session_id)
-            self.policy._restored_session_reservations[context.session_id] = {
-                operation_id: float(amount)
-                for operation_id, amount in reservations.items()
-            }
-            self.policy._session_budget_operation_journal[context.session_id] = {
-                operation_id: (state, float(amount))
-                for operation_id, (state, amount) in combined_journal.items()
-            }
-            self.policy._session_ledger_version += 1
-            merge_version = self.policy._session_ledger_version
-            self.policy._session_budget_operation_versions[context.session_id] = {
-                operation_id: max(
-                    merge_version,
-                    current_operation_versions.get(operation_id, -1),
-                )
-                for operation_id in combined_journal
-            }
+    def _session_restore_finish(self, context: ExecutionContext, records, snapshot) -> None:
+        legacy, journal = self._fold_budget_events(records or [])
+        self._merge_restored_session_budget(context, legacy, journal, *snapshot)
 
     def _restore_session_spend_from_evidence(self, context: ExecutionContext) -> None:
-        if (
-            not self.policy
-            or not self.evidence_repo
-            or context.session_budget_restored
-            or context._session_budget_restored
-        ):
-            return
-        cached_restore = False
-        with self.policy._session_spend_lock:
-            if context.session_id in self.policy._restored_session_ids:
-                cached_restore = True
-            start_version = self.policy._session_ledger_version
-            start_confirmed_usd = self.policy._session_spent_usd
-            start_journal = dict(
-                self.policy._session_budget_operation_journal.get(
-                    context.session_id, {}
-                )
-            )
-            start_operation_versions = dict(
-                self.policy._session_budget_operation_versions.get(
-                    context.session_id, {}
-                )
-            )
-        if cached_restore:
-            self._merge_restored_session_budget(
-                context, start_confirmed_usd, {}, start_version,
-                start_confirmed_usd, start_journal,
-                start_operation_versions,
-            )
-            context.session_budget_restored = True
-            context._session_budget_restored = True
+        snapshot = self._session_restore_start(context)
+        if snapshot is None:
             return
         try:
             if hasattr(self.evidence_repo, "import_session_evidence"):
-                records = self.evidence_repo.import_session_evidence(
-                    _redact_evidence_context(context)
-                )
-                restored_legacy_usd, journal = (
-                    self._fold_budget_events(records)
-                    if records else (0.0, {})
-                )
-                self._merge_restored_session_budget(
-                    context,
-                    restored_legacy_usd,
-                    journal,
-                    start_version,
-                    start_confirmed_usd,
-                    start_journal,
-                    start_operation_versions,
-                )
+                records = self.evidence_repo.import_session_evidence(_redact_evidence_context(context))
+                self._session_restore_finish(context, records, snapshot)
         except Exception:
             pass
         finally:
             context.session_budget_restored = True
-            context._session_budget_restored = True
 
     async def _restore_session_spend_from_evidence_async(self, context: ExecutionContext) -> None:
-        if (
-            not self.policy
-            or not self.evidence_repo
-            or context.session_budget_restored
-            or context._session_budget_restored
-        ):
-            return
-        cached_restore = False
-        with self.policy._session_spend_lock:
-            if context.session_id in self.policy._restored_session_ids:
-                cached_restore = True
-            start_version = self.policy._session_ledger_version
-            start_confirmed_usd = self.policy._session_spent_usd
-            start_journal = dict(
-                self.policy._session_budget_operation_journal.get(
-                    context.session_id, {}
-                )
-            )
-            start_operation_versions = dict(
-                self.policy._session_budget_operation_versions.get(
-                    context.session_id, {}
-                )
-            )
-        if cached_restore:
-            self._merge_restored_session_budget(
-                context, start_confirmed_usd, {}, start_version,
-                start_confirmed_usd, start_journal,
-                start_operation_versions,
-            )
-            context.session_budget_restored = True
-            context._session_budget_restored = True
+        snapshot = self._session_restore_start(context)
+        if snapshot is None:
             return
         try:
             if hasattr(self.evidence_repo, "import_session_evidence_async"):
-                records = await self.evidence_repo.import_session_evidence_async(
-                    _redact_evidence_context(context)
-                )
+                records = await self.evidence_repo.import_session_evidence_async(_redact_evidence_context(context))
             elif hasattr(self.evidence_repo, "import_session_evidence"):
-                records = self.evidence_repo.import_session_evidence(
-                    _redact_evidence_context(context)
-                )
+                records = self.evidence_repo.import_session_evidence(_redact_evidence_context(context))
             else:
                 records = []
-            restored_legacy_usd, journal = (
-                self._fold_budget_events(records)
-                if records else (0.0, {})
-            )
-            self._merge_restored_session_budget(
-                context,
-                restored_legacy_usd,
-                journal,
-                start_version,
-                start_confirmed_usd,
-                start_journal,
-                start_operation_versions,
-            )
+            self._session_restore_finish(context, records, snapshot)
         except Exception:
             pass
         finally:
             context.session_budget_restored = True
-            context._session_budget_restored = True
 
     def _import_evidence_best_effort(
         self, url: str, context: ExecutionContext
@@ -2202,16 +1767,7 @@ class Payment402Client:
         if usd_decimal > Decimal(str(self.policy.max_spend_per_tx_usd)):
             raise PaymentExecutionError(f"Policy Violation: Amount ({usd_value:.4f} USD) exceeds max_spend_per_tx_usd ({self.policy.max_spend_per_tx_usd}).")
         with self.policy._session_spend_lock:
-            projected = (
-                Decimal(str(self.policy._session_spent_usd))
-                + Decimal(str(self.policy._session_reserved_usd))
-                + usd_decimal
-            )
-            if projected > Decimal(str(self.policy.max_spend_per_session_usd)):
-                raise PaymentExecutionError(
-                    "Policy Violation: Total session spend including reservations "
-                    f"({float(projected):.4f} USD) would exceed limit."
-                )
+            self._check_session_budget(usd_decimal)
 
         if getattr(self.policy, "allowed_networks", None) is not None:
             if parsed.network not in self.policy.allowed_networks:
@@ -2494,23 +2050,7 @@ class Payment402Client:
                 )
         return requirement
 
-    def _record_session_spend(
-        self,
-        parsed: ParsedChallenge,
-        l402_report: Optional[Any] = None,
-        approved_usd_value: Optional[Any] = None,
-    ):
-        if not self.policy:
-            return
-        if l402_report and not getattr(l402_report, "payment_performed", True):
-            return
-        spend = (
-            float(Decimal(str(approved_usd_value)))
-            if approved_usd_value is not None
-            else self._estimate_usd_value(parsed)
-        )
-        with self.policy._session_spend_lock:
-            self.policy._session_spent_usd += spend
+
 
     def _capture_approved_receipt_snapshot(
         self, parsed: ParsedChallenge
@@ -3510,6 +3050,261 @@ class Payment402Client:
             safe_payload.update(safe_suggested_payload)
         return absolute_next, safe_headers, safe_payload, is_cross_origin
 
+    def _execution_result(self, res, wire_url: str, retry_count: int = 0, *, strict_json: bool = False) -> ExecutionResult:
+        try:
+            raw_json = res.json() if strict_json or res.content else {"status": "success"}
+            resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
+        except Exception:
+            if strict_json:
+                raise PaymentExecutionError(
+                    f"API Error {res.status_code}: Invalid JSON response.",
+                    status_code=res.status_code,
+                ) from None
+            resp_data = {"status": "success", "message": "unparseable"}
+
+        metadata = _paid_result_metadata(res.headers, wire_url)
+        proofs = tuple(metadata.get(key, "") for key in ("result_handle", "request_hash"))
+        result = ExecutionResult(
+            response=resp_data,
+            final_url=wire_url,
+            retry_count=retry_count,
+            response_headers=redact_paid_result_proof(_strip_sensitive_headers(res.headers), proofs),
+            paid_result_metadata=metadata,
+        )
+        return result
+
+    def _complete_success(self, res, wire_url, retry_count, current_hop, context, method, receipt, outcome_matcher):
+        result = self._execution_result(res, wire_url, retry_count)
+        resp_data = result.response
+
+        self._apply_server_receipt_state(
+            receipt, res.headers, res.status_code
+        )
+
+        if outcome_matcher:
+            context.hints["target_url"] = wire_url
+            context.hints["http_method"] = method
+
+            sig = inspect.signature(outcome_matcher)
+            if len(sig.parameters) == 3:
+                result.outcome = outcome_matcher(resp_data, receipt, context)
+            else:
+                result.outcome = outcome_matcher(resp_data, context)
+
+        sponsored_ev = None
+        sandbox_ev = None
+        if resp_data.get("access_path") == "sponsored_grant":
+            grant_diag = getattr(self, "_last_grant_diagnostics", None)
+            grant_token = getattr(self, "grant_token", None)
+            sponsored_ev = build_sponsored_access_evidence(grant_diagnostics=grant_diag, response_body=resp_data, grant_token=grant_token)
+            self._last_sponsored_access_evidence = sponsored_ev
+
+        if resp_data.get("evidence_ref") or resp_data.get("meta", {}).get("kind") == "sandbox_result":
+            sandbox_ev = build_sandbox_evidence_from_response(resp_data)
+            if sandbox_ev:
+                self._last_sandbox_evidence = sandbox_ev
+        record = None
+        if self.evidence_repo and retry_count == 0 and current_hop == 0 and (sponsored_ev or sandbox_ev):
+            record = PaymentEvidenceRecord(
+                session_id=context.session_id, correlation_id=context.correlation_id,
+                target_url=wire_url, method=method, outcome=result.outcome,
+                sponsored_access=sponsored_ev, sandbox=sandbox_ev,
+            )
+        return result, record
+
+    def _payment_failure(self, caught_error, *, context, fingerprint, parsed, wire_url,
+                         method, attempt_tracker, credential_reused, credential_only,
+                         credential_generated, payment_completed, session_budget_reserved,
+                         approved_receipt_snapshot, delta_usd, receipt, decision):
+        if credential_only and not payment_completed and receipt is not None and receipt.settlement_verified:
+            # Bound independent settlement evidence survives a failed result save.
+            # Reuse the ordinary confirmation and known-paid recovery path.
+            delta_usd = float(self._confirm_session_budget(context, fingerprint))
+            receipt.payment_performed = True
+            context._payment_executed = True
+            payment_completed = True
+        deferred_error_record = None
+        error_type = caught_error.__class__
+        irreversible_or_paid = (
+            (
+                attempt_tracker.irreversible_attempt_started
+                and not credential_reused
+            )
+            or payment_completed
+        )
+
+        reserve_delta = 0.0
+        if credential_reused:
+            self._release_session_budget(context, fingerprint)
+            self._update_payment_state(
+                context, fingerprint, "credential_reused"
+            )
+        elif (
+            credential_only
+            and credential_generated
+            and attempt_tracker.irreversible_attempt_started
+            and not payment_completed
+        ):
+            reserve_delta = float(
+                self._mark_session_budget_unknown(
+                    context, fingerprint
+                )
+            )
+            self._update_payment_state(
+                context, fingerprint, "settlement_unknown"
+            )
+        elif payment_completed:
+            self._mark_known_settled_ambiguity(context, fingerprint)
+        elif attempt_tracker.irreversible_attempt_started:
+            reserve_delta = self._reserve_ambiguous_spend(
+                context,
+                fingerprint,
+                parsed,
+                approved_usd_value=(
+                    approved_receipt_snapshot["usd_value"]
+                    if approved_receipt_snapshot is not None
+                    else None
+                ),
+            )
+            self._update_payment_state(context, fingerprint, "ambiguous")
+        elif session_budget_reserved:
+            self._release_session_budget(context, fingerprint)
+            self._update_payment_state(context, fingerprint, "validation_failed")
+        else:
+            self._update_payment_state(
+                context, fingerprint, "validation_failed"
+            )
+
+        if credential_reused:
+            final_err = "credential_delivery_failed"
+            deferred_error_type = PaymentExecutionError
+            deferred_error_message = final_err
+        elif irreversible_or_paid:
+            final_err = (
+                "settlement_unknown"
+                if credential_only and not payment_completed
+                else "ambiguous_payment_result"
+            )
+            deferred_error_type = PaymentExecutionError
+            deferred_error_message = f"Ambiguous payment error: {final_err}"
+        else:
+            final_err = "payment_validation_failed_before_irreversible_processing"
+            deferred_error_type = error_type
+            if isinstance(caught_error, PaymentExecutionError):
+                deferred_error_message = sanitize_error_msg(
+                    str(caught_error)
+                )
+            else:
+                deferred_error_message = final_err
+
+        if self.evidence_repo:
+            evidence_projection = approved_receipt_snapshot or {
+                "scheme": parsed.scheme,
+                "asset": parsed.asset,
+                "amount": parsed.amount,
+            }
+            record_kwargs = {
+                "session_id": context.session_id, "correlation_id": context.correlation_id,
+                "target_url": wire_url, "method": method,
+                "scheme": evidence_projection["scheme"],
+                "asset": evidence_projection["asset"],
+                "amount": evidence_projection["amount"],
+                "trust_decision": decision, "error_message": final_err,
+                "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
+                "sandbox": getattr(self, "_last_sandbox_evidence", None)
+            }
+            if (
+                not attempt_tracker.irreversible_attempt_started
+                and not payment_completed
+            ):
+                record_kwargs["payment_performed"] = False
+                record_kwargs["session_spend_delta_usd"] = 0.0
+            if credential_only and not payment_completed:
+                record_kwargs["payment_performed"] = False
+            if payment_completed:
+                record_kwargs["session_spend_delta_usd"] = delta_usd
+                record_kwargs["session_budget_event"] = "confirmed"
+                record_kwargs["session_budget_operation_id"] = fingerprint
+                record_kwargs["session_budget_amount_usd"] = delta_usd
+            elif reserve_delta > 0:
+                # Unknown settlement remains a reservation.  It is
+                # deliberately excluded from the confirmed-spend
+                # compatibility projection.
+                record_kwargs["payment_performed"] = False
+                record_kwargs["session_spend_delta_usd"] = 0.0
+                record_kwargs["session_budget_event"] = "reserved"
+                record_kwargs["session_budget_operation_id"] = fingerprint
+                record_kwargs["session_budget_amount_usd"] = reserve_delta
+                if receipt is not None:
+                    record_kwargs["receipt_summary"] = {
+                        "receipt_id": receipt.receipt_id,
+                        "verification_status": receipt.verification_status,
+                    }
+            if payment_completed and receipt is not None:
+                record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
+
+            deferred_error_record = PaymentEvidenceRecord(**record_kwargs)
+        if isinstance(caught_error, PaymentExecutionError) and caught_error.code is not None:
+            error = PaymentExecutionError(
+                str(caught_error), status_code=caught_error.status_code, code=caught_error.code,
+            )
+        else:
+            error = _new_sanitized_exception(deferred_error_type, deferred_error_message)
+        return error, deferred_error_record
+
+    def _payment_challenge(self, res, payload, wire_url, method_upper, idemp_key, context, fingerprint):
+        try:
+            parsed = self._parse_challenge(
+                res,
+                expected_asset=payload.get("asset", "SATS"),
+                expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None,
+                request_url=wire_url,
+                method=method_upper,
+                idempotency_key=idemp_key,
+            )
+        except Exception:
+            self._update_payment_state(
+                context, fingerprint, "validation_failed"
+            )
+            raise
+        self._last_parsed_challenge = parsed
+        return parsed
+
+    def _nonpurchase_get_request(self, endpoint_path, payload, headers):
+        url = self._resolve_url(endpoint_path)
+        self._check_local_policy(url)
+        headers = dict(headers or {})
+        if not any(key.lower() == "user-agent" for key in headers):
+            headers["User-Agent"] = CUSTOM_USER_AGENT
+        return self._final_wire_url("GET", url, payload or {}), headers
+
+    def _nonpurchase_get_result(self, res, wire_url):
+        if not 200 <= res.status_code < 300:
+            raise _http_response_error(res)
+        return self._execution_result(res, wire_url, strict_json=True)
+
+    def _execute_nonpurchase_get(self, endpoint_path, payload=None, headers=None):
+        wire_url, headers = self._nonpurchase_get_request(endpoint_path, payload, headers)
+        try:
+            res = self._request_sync("GET", wire_url, {
+                "json": None, "params": None, "headers": headers, "allow_redirects": False,
+            }, ExecutionContext())
+        except requests.RequestException as error:
+            raise _new_sanitized_exception(type(error), "Network request failed before payment processing.") from None
+        return self._nonpurchase_get_result(res, wire_url)
+
+    async def _execute_nonpurchase_get_async(self, endpoint_path, payload=None, headers=None):
+        wire_url, headers = self._nonpurchase_get_request(endpoint_path, payload, headers)
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(follow_redirects=False, trust_env=False)
+        try:
+            res = await self._request_async("GET", wire_url, {
+                "json": None, "params": None, "headers": headers, "follow_redirects": False,
+            }, ExecutionContext())
+        except httpx.RequestError as error:
+            raise _new_sanitized_exception(type(error), "Network request failed before payment processing.") from None
+        return self._nonpurchase_get_result(res, wire_url)
+
     def execute_detailed(
         self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None,
         _current_hop: int = 0, _payment_retry_count: int = 0,
@@ -3532,6 +3327,8 @@ class Payment402Client:
     ) -> ExecutionResult:
 
         url = self._resolve_url(endpoint_path)
+        if _is_paid_result_get(method, url):
+            return self._execute_nonpurchase_get(endpoint_path, payload, headers)
         self._check_local_policy(url)
         payload = payload or {}
         method_upper = method.upper()
@@ -3627,56 +3424,19 @@ class Payment402Client:
                 )
                 continue
 
+            if res.status_code in (500, 502):
+                response_error = _http_response_error(res)
+                if response_error.code is not None:
+                    self._apply_server_receipt_state(_current_receipt, res.headers, res.status_code)
+                    raise response_error from None
+
             if 200 <= res.status_code < 300:
-                try:
-                    raw_json = res.json() if res.content else {"status": "success"}
-                    resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
-                except Exception:
-                    resp_data = {"status": "success", "message": "unparseable"}
-
-                result = ExecutionResult(
-                    response=resp_data,
-                    final_url=wire_url,
-                    retry_count=_payment_retry_count,
-                    response_headers=_strip_sensitive_headers(res.headers)
+                result, record = self._complete_success(
+                    res, wire_url, _payment_retry_count, _current_hop,
+                    context, method, _current_receipt, outcome_matcher,
                 )
-
-                self._apply_server_receipt_state(
-                    _current_receipt, res.headers, res.status_code
-                )
-
-                if outcome_matcher:
-                    context.hints["target_url"] = wire_url
-                    context.hints["http_method"] = method
-
-                    sig = inspect.signature(outcome_matcher)
-                    if len(sig.parameters) == 3:
-                        result.outcome = outcome_matcher(resp_data, _current_receipt, context)
-                    else:
-                        result.outcome = outcome_matcher(resp_data, context)
-
-                sponsored_ev = None
-                sandbox_ev = None
-                if resp_data.get("access_path") == "sponsored_grant":
-                    grant_diag = getattr(self, "_last_grant_diagnostics", None)
-                    grant_token = getattr(self, "grant_token", None)
-                    sponsored_ev = build_sponsored_access_evidence(grant_diagnostics=grant_diag, response_body=resp_data, grant_token=grant_token)
-                    self._last_sponsored_access_evidence = sponsored_ev
-
-                if resp_data.get("evidence_ref") or resp_data.get("meta", {}).get("kind") == "sandbox_result":
-                    sandbox_ev = build_sandbox_evidence_from_response(resp_data)
-                    if sandbox_ev:
-                        self._last_sandbox_evidence = sandbox_ev
-
-                if getattr(self, "evidence_repo", None):
-                    if _payment_retry_count == 0 and _current_hop == 0 and (sponsored_ev or sandbox_ev):
-                        record = PaymentEvidenceRecord(
-                            session_id=context.session_id, correlation_id=context.correlation_id,
-                            target_url=wire_url, method=method, outcome=result.outcome,
-                            sponsored_access=sponsored_ev, sandbox=sandbox_ev
-                        )
-                        self._export_evidence_best_effort(record, context)
-
+                if record is not None:
+                    self._export_evidence_best_effort(record, context)
                 return result
 
             if res.status_code == 402:
@@ -3685,21 +3445,9 @@ class Payment402Client:
                     self._update_payment_state(context, fingerprint, "ambiguous")
                     raise PaymentExecutionError("Ambiguous payment error: Max 402 retries exceeded.")
 
-                try:
-                    parsed = self._parse_challenge(
-                        res,
-                        expected_asset=payload.get("asset", "SATS"),
-                        expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None,
-                        request_url=wire_url,
-                        method=method_upper,
-                        idempotency_key=idemp_key,
-                    )
-                except Exception:
-                    self._update_payment_state(
-                        context, fingerprint, "validation_failed"
-                    )
-                    raise
-                self._last_parsed_challenge = parsed
+                parsed = self._payment_challenge(
+                    res, payload, wire_url, method_upper, idemp_key, context, fingerprint,
+                )
 
                 if self.evidence_repo:
                     past_records = self._import_evidence_best_effort(wire_url, context)
@@ -3737,10 +3485,8 @@ class Payment402Client:
                 delta_usd = None
                 receipt = None
                 attempt_tracker = _PaymentAttemptTracker()
-                deferred_error_type = None
-                deferred_error_message = None
+                deferred_error = None
                 deferred_error_record = None
-                approval_completed = False
                 approved_receipt_snapshot = None
                 credential_generated = False
                 credential_only = False
@@ -3755,7 +3501,6 @@ class Payment402Client:
                         context=context,
                         fingerprint=fingerprint,
                     )
-                    approval_completed = True
                     approved_receipt_snapshot = (
                         self._capture_approved_receipt_snapshot(parsed)
                     )
@@ -3876,133 +3621,20 @@ class Payment402Client:
                     return next_result
 
                 except Exception as caught_error:
-                    error_type = caught_error.__class__
-                    irreversible_or_paid = (
-                        (
-                            attempt_tracker.irreversible_attempt_started
-                            and not credential_reused
-                        )
-                        or payment_completed
+                    deferred_error, deferred_error_record = self._payment_failure(
+                        caught_error, context=context, fingerprint=fingerprint, parsed=parsed,
+                        wire_url=wire_url, method=method, attempt_tracker=attempt_tracker,
+                        credential_reused=credential_reused, credential_only=credential_only,
+                        credential_generated=credential_generated, payment_completed=payment_completed,
+                        session_budget_reserved=session_budget_reserved,
+                        approved_receipt_snapshot=approved_receipt_snapshot, delta_usd=delta_usd,
+                        receipt=receipt, decision=decision,
                     )
-
-                    reserve_delta = 0.0
-                    if credential_reused:
-                        self._release_session_budget(context, fingerprint)
-                        self._update_payment_state(
-                            context, fingerprint, "credential_reused"
-                        )
-                    elif (
-                        credential_only
-                        and credential_generated
-                        and attempt_tracker.irreversible_attempt_started
-                        and not payment_completed
-                    ):
-                        reserve_delta = float(
-                            self._mark_session_budget_unknown(
-                                context, fingerprint
-                            )
-                        )
-                        self._update_payment_state(
-                            context, fingerprint, "settlement_unknown"
-                        )
-                    elif payment_completed:
-                        self._mark_known_settled_ambiguity(context, fingerprint)
-                    elif attempt_tracker.irreversible_attempt_started:
-                        reserve_delta = self._reserve_ambiguous_spend(
-                            context,
-                            fingerprint,
-                            parsed,
-                            approved_usd_value=(
-                                approved_receipt_snapshot["usd_value"]
-                                if approved_receipt_snapshot is not None
-                                else None
-                            ),
-                        )
-                        self._update_payment_state(context, fingerprint, "ambiguous")
-                    elif session_budget_reserved:
-                        self._release_session_budget(context, fingerprint)
-                        self._update_payment_state(context, fingerprint, "validation_failed")
-                    else:
-                        self._update_payment_state(
-                            context, fingerprint, "validation_failed"
-                        )
-
-                    if credential_reused:
-                        final_err = "credential_delivery_failed"
-                        deferred_error_type = PaymentExecutionError
-                        deferred_error_message = final_err
-                    elif irreversible_or_paid:
-                        final_err = (
-                            "settlement_unknown"
-                            if credential_only and not payment_completed
-                            else "ambiguous_payment_result"
-                        )
-                        deferred_error_type = PaymentExecutionError
-                        deferred_error_message = f"Ambiguous payment error: {final_err}"
-                    else:
-                        final_err = "payment_validation_failed_before_irreversible_processing"
-                        deferred_error_type = error_type
-                        if isinstance(caught_error, PaymentExecutionError):
-                            deferred_error_message = sanitize_error_msg(
-                                str(caught_error)
-                            )
-                        else:
-                            deferred_error_message = final_err
-
-                    if self.evidence_repo:
-                        evidence_projection = approved_receipt_snapshot or {
-                            "scheme": parsed.scheme,
-                            "asset": parsed.asset,
-                            "amount": parsed.amount,
-                        }
-                        record_kwargs = {
-                            "session_id": context.session_id, "correlation_id": context.correlation_id,
-                            "target_url": wire_url, "method": method,
-                            "scheme": evidence_projection["scheme"],
-                            "asset": evidence_projection["asset"],
-                            "amount": evidence_projection["amount"],
-                            "trust_decision": decision, "error_message": final_err,
-                            "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
-                            "sandbox": getattr(self, "_last_sandbox_evidence", None)
-                        }
-                        if (
-                            not attempt_tracker.irreversible_attempt_started
-                            and not payment_completed
-                        ):
-                            record_kwargs["payment_performed"] = False
-                            record_kwargs["session_spend_delta_usd"] = 0.0
-                        if credential_only and not payment_completed:
-                            record_kwargs["payment_performed"] = False
-                        if payment_completed:
-                            record_kwargs["session_spend_delta_usd"] = delta_usd
-                            record_kwargs["session_budget_event"] = "confirmed"
-                            record_kwargs["session_budget_operation_id"] = fingerprint
-                            record_kwargs["session_budget_amount_usd"] = delta_usd
-                        elif reserve_delta > 0:
-                            # Unknown settlement remains a reservation.  It is
-                            # deliberately excluded from the confirmed-spend
-                            # compatibility projection.
-                            record_kwargs["payment_performed"] = False
-                            record_kwargs["session_spend_delta_usd"] = 0.0
-                            record_kwargs["session_budget_event"] = "reserved"
-                            record_kwargs["session_budget_operation_id"] = fingerprint
-                            record_kwargs["session_budget_amount_usd"] = reserve_delta
-                            if receipt is not None:
-                                record_kwargs["receipt_summary"] = {
-                                    "receipt_id": receipt.receipt_id,
-                                    "verification_status": receipt.verification_status,
-                                }
-                        if payment_completed and receipt is not None:
-                            record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
-
-                        deferred_error_record = PaymentEvidenceRecord(**record_kwargs)
 
                 if deferred_error_record is not None:
                     self._export_evidence_best_effort(deferred_error_record, context)
-                if deferred_error_type is not None:
-                    raise _new_sanitized_exception(
-                        deferred_error_type, deferred_error_message
-                    ) from None
+                if deferred_error is not None:
+                    raise deferred_error from None
 
             break
 
@@ -4063,9 +3695,7 @@ class Payment402Client:
                     self._export_evidence_best_effort(record, context)
                 return next_result
 
-        error_msg = sanitize_error_msg(error_data.get('message', res.text) if res else "No response")
-        status_c = res.status_code if res else 500
-        raise PaymentExecutionError(f"API Error {status_c}: {error_msg}")
+        raise _http_response_error(res)
 
     async def execute_request_async(self, method: str, endpoint_path: str, payload: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
         result = await self.execute_detailed_async(method, endpoint_path, payload, headers)
@@ -4093,6 +3723,8 @@ class Payment402Client:
     ) -> ExecutionResult:
 
         url = self._resolve_url(endpoint_path)
+        if _is_paid_result_get(method, url):
+            return await self._execute_nonpurchase_get_async(endpoint_path, payload, headers)
         self._check_local_policy(url)
         payload = payload or {}
         method_upper = method.upper()
@@ -4196,64 +3828,19 @@ class Payment402Client:
                 )
                 continue
 
+            if res.status_code in (500, 502):
+                response_error = _http_response_error(res)
+                if response_error.code is not None:
+                    self._apply_server_receipt_state(_current_receipt, res.headers, res.status_code)
+                    raise response_error from None
+
             if 200 <= res.status_code < 300:
-                try:
-                    raw_json = res.json() if res.content else {"status": "success"}
-                    resp_data = raw_json if isinstance(raw_json, dict) else {"status": "success", "data": raw_json}
-                except Exception:
-                    resp_data = {"status": "success", "message": "unparseable"}
-
-                result = ExecutionResult(
-                    response=resp_data,
-                    final_url=wire_url,
-                    retry_count=_payment_retry_count,
-                    response_headers=_strip_sensitive_headers(res.headers)
+                result, record = self._complete_success(
+                    res, wire_url, _payment_retry_count, _current_hop,
+                    context, method, _current_receipt, outcome_matcher,
                 )
-
-                self._apply_server_receipt_state(
-                    _current_receipt, res.headers, res.status_code
-                )
-
-                if outcome_matcher:
-                    context.hints["target_url"] = wire_url
-                    context.hints["http_method"] = method
-
-                    loop = asyncio.get_running_loop()
-                    sig = inspect.signature(outcome_matcher)
-                    if len(sig.parameters) == 3:
-                        result.outcome = outcome_matcher(resp_data, _current_receipt, context)
-                    else:
-                        result.outcome = outcome_matcher(resp_data, context)
-
-                sponsored_ev = None
-                sandbox_ev = None
-
-                if resp_data.get("access_path") == "sponsored_grant":
-                    grant_diag = getattr(self, "_last_grant_diagnostics", None)
-                    grant_token = getattr(self, "grant_token", None)
-                    sponsored_ev = build_sponsored_access_evidence(
-                        grant_diagnostics=grant_diag,
-                        response_body=resp_data,
-                        grant_token=grant_token
-                    )
-                    self._last_sponsored_access_evidence = sponsored_ev
-
-                if resp_data.get("evidence_ref") or resp_data.get("meta", {}).get("kind") == "sandbox_result":
-                    sandbox_ev = build_sandbox_evidence_from_response(resp_data)
-                    if sandbox_ev:
-                        self._last_sandbox_evidence = sandbox_ev
-
-                if getattr(self, "evidence_repo", None):
-                    if _payment_retry_count == 0 and _current_hop == 0 and (sponsored_ev or sandbox_ev):
-                        record = PaymentEvidenceRecord(
-                            session_id=context.session_id, correlation_id=context.correlation_id,
-                            target_url=wire_url, method=method,
-                            outcome=result.outcome,
-                            sponsored_access=sponsored_ev,
-                            sandbox=sandbox_ev
-                        )
-                        await self._export_evidence_best_effort_async(record, context)
-
+                if record is not None:
+                    await self._export_evidence_best_effort_async(record, context)
                 return result
 
             if res.status_code == 402:
@@ -4262,21 +3849,9 @@ class Payment402Client:
                     self._update_payment_state(context, fingerprint, "ambiguous")
                     raise PaymentExecutionError("Ambiguous payment error: Max 402 retries exceeded")
 
-                try:
-                    parsed = self._parse_challenge(
-                        res,
-                        expected_asset=payload.get("asset", "SATS"),
-                        expected_chain_id=str(payload.get("chainId")) if payload.get("chainId") else None,
-                        request_url=wire_url,
-                        method=method_upper,
-                        idempotency_key=idemp_key,
-                    )
-                except Exception:
-                    self._update_payment_state(
-                        context, fingerprint, "validation_failed"
-                    )
-                    raise
-                self._last_parsed_challenge = parsed
+                parsed = self._payment_challenge(
+                    res, payload, wire_url, method_upper, idemp_key, context, fingerprint,
+                )
 
                 if getattr(self, "evidence_repo", None):
                     past_records = await self._import_evidence_best_effort_async(
@@ -4325,10 +3900,8 @@ class Payment402Client:
                 delta_usd = None
                 receipt = None
                 attempt_tracker = _PaymentAttemptTracker()
-                deferred_error_type = None
-                deferred_error_message = None
+                deferred_error = None
                 deferred_error_record = None
-                approval_completed = False
                 approved_receipt_snapshot = None
                 credential_generated = False
                 credential_only = False
@@ -4343,7 +3916,6 @@ class Payment402Client:
                         context=context,
                         fingerprint=fingerprint,
                     )
-                    approval_completed = True
                     approved_receipt_snapshot = (
                         self._capture_approved_receipt_snapshot(parsed)
                     )
@@ -4469,132 +4041,22 @@ class Payment402Client:
                     return next_result
 
                 except Exception as caught_error:
-                    error_type = caught_error.__class__
-                    irreversible_or_paid = (
-                        (
-                            attempt_tracker.irreversible_attempt_started
-                            and not credential_reused
-                        )
-                        or payment_completed
+                    deferred_error, deferred_error_record = self._payment_failure(
+                        caught_error, context=context, fingerprint=fingerprint, parsed=parsed,
+                        wire_url=wire_url, method=method, attempt_tracker=attempt_tracker,
+                        credential_reused=credential_reused, credential_only=credential_only,
+                        credential_generated=credential_generated, payment_completed=payment_completed,
+                        session_budget_reserved=session_budget_reserved,
+                        approved_receipt_snapshot=approved_receipt_snapshot, delta_usd=delta_usd,
+                        receipt=receipt, decision=decision,
                     )
-
-                    reserve_delta = 0.0
-                    if credential_reused:
-                        self._release_session_budget(context, fingerprint)
-                        self._update_payment_state(
-                            context, fingerprint, "credential_reused"
-                        )
-                    elif (
-                        credential_only
-                        and credential_generated
-                        and attempt_tracker.irreversible_attempt_started
-                        and not payment_completed
-                    ):
-                        reserve_delta = float(
-                            self._mark_session_budget_unknown(
-                                context, fingerprint
-                            )
-                        )
-                        self._update_payment_state(
-                            context, fingerprint, "settlement_unknown"
-                        )
-                    elif payment_completed:
-                        self._mark_known_settled_ambiguity(context, fingerprint)
-                    elif attempt_tracker.irreversible_attempt_started:
-                        reserve_delta = self._reserve_ambiguous_spend(
-                            context,
-                            fingerprint,
-                            parsed,
-                            approved_usd_value=(
-                                approved_receipt_snapshot["usd_value"]
-                                if approved_receipt_snapshot is not None
-                                else None
-                            ),
-                        )
-                        self._update_payment_state(context, fingerprint, "ambiguous")
-                    elif session_budget_reserved:
-                        self._release_session_budget(context, fingerprint)
-                        self._update_payment_state(context, fingerprint, "validation_failed")
-                    else:
-                        self._update_payment_state(
-                            context, fingerprint, "validation_failed"
-                        )
-
-                    if credential_reused:
-                        final_err = "credential_delivery_failed"
-                        deferred_error_type = PaymentExecutionError
-                        deferred_error_message = final_err
-                    elif irreversible_or_paid:
-                        final_err = (
-                            "settlement_unknown"
-                            if credential_only and not payment_completed
-                            else "ambiguous_payment_result"
-                        )
-                        deferred_error_type = PaymentExecutionError
-                        deferred_error_message = f"Ambiguous payment error: {final_err}"
-                    else:
-                        final_err = "payment_validation_failed_before_irreversible_processing"
-                        deferred_error_type = error_type
-                        if isinstance(caught_error, PaymentExecutionError):
-                            deferred_error_message = sanitize_error_msg(
-                                str(caught_error)
-                            )
-                        else:
-                            deferred_error_message = final_err
-
-                    if getattr(self, "evidence_repo", None):
-                        evidence_projection = approved_receipt_snapshot or {
-                            "scheme": parsed.scheme,
-                            "asset": parsed.asset,
-                            "amount": parsed.amount,
-                        }
-                        record_kwargs = {
-                            "session_id": context.session_id, "correlation_id": context.correlation_id,
-                            "target_url": wire_url, "method": method,
-                            "scheme": evidence_projection["scheme"],
-                            "asset": evidence_projection["asset"],
-                            "amount": evidence_projection["amount"],
-                            "trust_decision": decision, "error_message": final_err,
-                            "sponsored_access": getattr(self, "_last_sponsored_access_evidence", None),
-                            "sandbox": getattr(self, "_last_sandbox_evidence", None)
-                        }
-                        if (
-                            not attempt_tracker.irreversible_attempt_started
-                            and not payment_completed
-                        ):
-                            record_kwargs["payment_performed"] = False
-                            record_kwargs["session_spend_delta_usd"] = 0.0
-                        if credential_only and not payment_completed:
-                            record_kwargs["payment_performed"] = False
-                        if payment_completed:
-                            record_kwargs["session_spend_delta_usd"] = delta_usd
-                            record_kwargs["session_budget_event"] = "confirmed"
-                            record_kwargs["session_budget_operation_id"] = fingerprint
-                            record_kwargs["session_budget_amount_usd"] = delta_usd
-                        elif reserve_delta > 0:
-                            record_kwargs["payment_performed"] = False
-                            record_kwargs["session_spend_delta_usd"] = 0.0
-                            record_kwargs["session_budget_event"] = "reserved"
-                            record_kwargs["session_budget_operation_id"] = fingerprint
-                            record_kwargs["session_budget_amount_usd"] = reserve_delta
-                            if receipt is not None:
-                                record_kwargs["receipt_summary"] = {
-                                    "receipt_id": receipt.receipt_id,
-                                    "verification_status": receipt.verification_status,
-                                }
-                        if payment_completed and receipt is not None:
-                            record_kwargs["receipt_summary"] = {"receipt_id": receipt.receipt_id, "verification_status": receipt.verification_status}
-
-                        deferred_error_record = PaymentEvidenceRecord(**record_kwargs)
 
                 if deferred_error_record is not None:
                     await self._export_evidence_best_effort_async(
                         deferred_error_record, context
                     )
-                if deferred_error_type is not None:
-                    raise _new_sanitized_exception(
-                        deferred_error_type, deferred_error_message
-                    ) from None
+                if deferred_error is not None:
+                    raise deferred_error from None
 
             break
 
@@ -4655,9 +4117,7 @@ class Payment402Client:
                     await self._export_evidence_best_effort_async(record, context)
                 return next_result
 
-        error_msg = sanitize_error_msg(error_data.get('message', res.text) if res else "No response")
-        status_c = res.status_code if res else 500
-        raise PaymentExecutionError(f"API Error {status_c}: {error_msg}")
+        raise _http_response_error(res)
 
     async def aclose(self):
         if self._async_client:
@@ -4807,61 +4267,16 @@ class LnChurchClient(Payment402Client):
         telemetry_headers = self._inject_telemetry(headers)
         return await super().execute_request_async(method, endpoint_path, payload, telemetry_headers)
 
-    def _collect_execution_access_candidates(self, target_path: str, method: str, asset: str, scheme: str) -> List[_ExecutionAccessPlan]:
-        candidates = []
+    def _execution_access_override(self, target_path: str, method: str) -> Optional[dict]:
         if self.has_valid_scoped_grant(target_path, method):
-            candidates.append(_ExecutionAccessPlan(
-                unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
-                funding_policy=_FundingPolicy.FULLY_SPONSORED,
-                entitlement_kind=_EntitlementKind.GRANT,
-                settlement_scheme=scheme,
-                settlement_asset=asset,
-                selected_reason="Valid scoped grant token available."
-            ))
-
-        if self.faucet_token and target_path == "/api/agent/omikuji":
-            candidates.append(_ExecutionAccessPlan(
-                unlock=_ExecutionUnlock.ENTITLEMENT_PROOF,
-                funding_policy=_FundingPolicy.FULLY_SPONSORED,
-                entitlement_kind=_EntitlementKind.FAUCET,
-                settlement_scheme=scheme,
-                settlement_asset=asset,
-                selected_reason="Legacy faucet token available for Omikuji."
-            ))
-
-        candidates.append(_ExecutionAccessPlan(
-            unlock=_ExecutionUnlock.SETTLEMENT_PROOF,
-            funding_policy=_FundingPolicy.SELF_FUNDED,
-            entitlement_kind=None,
-            settlement_scheme=scheme,
-            settlement_asset=asset,
-            selected_reason="Direct 402 settlement."
-        ))
-
-        return candidates
-
-    def _select_execution_access_plan(self, candidates: List[_ExecutionAccessPlan]) -> _ExecutionAccessPlan:
-        for kind in [_EntitlementKind.GRANT, _EntitlementKind.FAUCET]:
-            for c in candidates:
-                if c.entitlement_kind == kind:
-                    return c
-        for c in candidates:
-            if c.unlock == _ExecutionUnlock.SETTLEMENT_PROOF:
-                return c
-        return candidates[-1]
-
-    def _build_payment_override_from_plan(self, plan: _ExecutionAccessPlan) -> Optional[dict]:
-        if plan.entitlement_kind == _EntitlementKind.GRANT:
             return {
-                "type": "grant",
-                "proof": self.grant_token,
-                "asset": AssetType.GRANT_CREDIT.value
+                "type": "grant", "proof": self.grant_token,
+                "asset": AssetType.GRANT_CREDIT.value,
             }
-        elif plan.entitlement_kind == _EntitlementKind.FAUCET:
+        if self.faucet_token and target_path == "/api/agent/omikuji":
             return {
-                "type": "faucet",
-                "proof": self.faucet_token,
-                "asset": AssetType.FAUCET_CREDIT.value
+                "type": "faucet", "proof": self.faucet_token,
+                "asset": AssetType.FAUCET_CREDIT.value,
             }
         return None
 
@@ -4885,17 +4300,15 @@ class LnChurchClient(Payment402Client):
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
 
-        candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
-        plan = self._select_execution_access_plan(candidates)
+        override = self._execution_access_override(target_path, "POST")
 
         payload = {
             "agentId": self.agent_id,
             "clientType": "AI",
-            "scheme": plan.settlement_scheme,
-            "asset": plan.settlement_asset
+            "scheme": target_scheme,
+            "asset": asset.value
         }
 
-        override = self._build_payment_override_from_plan(plan)
         if override:
             payload["paymentOverride"] = override
 
@@ -4986,17 +4399,15 @@ class LnChurchClient(Payment402Client):
         target_scheme = scheme or (SchemeType.l402.value if asset == AssetType.SATS else SchemeType.x402.value)
         target_path = "/api/agent/omikuji"
 
-        candidates = self._collect_execution_access_candidates(target_path, "POST", asset.value, target_scheme)
-        plan = self._select_execution_access_plan(candidates)
+        override = self._execution_access_override(target_path, "POST")
 
         payload = {
             "agentId": self.agent_id,
             "clientType": "AI",
-            "scheme": plan.settlement_scheme,
-            "asset": plan.settlement_asset
+            "scheme": target_scheme,
+            "asset": asset.value
         }
 
-        override = self._build_payment_override_from_plan(plan)
         if override:
             payload["paymentOverride"] = override
 
@@ -5074,18 +4485,8 @@ class LnChurchClient(Payment402Client):
         res = await self.execute_request_async("GET", f"/api/agent/monzen/graph", payload=payload)
         return MonzenGraphResponse(**res)
 
-    def run_l402_sandbox_harness(self) -> "InteropRunResult":
-        import json
-        import hashlib
-        import re
-        from .models import InteropRunResult
-
-        basic_path = "/api/agent/sandbox/l402/basic"
-        report_path = "/api/agent/sandbox/interop/report"
-
-        exec_result = self.execute_detailed("GET", basic_path)
+    def _l402_sandbox_projection(self, exec_result):
         resp = exec_result.response
-
         meta = resp.get("meta", {})
         run_id = meta.get("run_id", "")
         scenario_id = meta.get("scenario_id", "")
@@ -5135,22 +4536,8 @@ class LnChurchClient(Payment402Client):
             "payment_receipt_present": payment_receipt_present
         }
 
-        report_resp = {}
-        status_code = 500
-        accepted = False
-        try:
-            report_exec = self.execute_detailed("POST", report_path, payload=report_payload)
-            report_resp = report_exec.response
-            status_code = 200
-            accepted = report_resp.get("status") == "success"
-        except Exception as e:
-            m = re.search(r"API Error (\d+):", str(e))
-            if m:
-                status_code = int(m.group(1))
-            report_resp = {"error": str(e)}
-
-        return InteropRunResult(
-            ok=accepted and (expected_hash == observed_hash),
+        result_fields = dict(
+            ok=(expected_hash == observed_hash),
             target_url=exec_result.final_url,
             run_id=run_id,
             scenario_id=scenario_id,
@@ -5159,48 +4546,99 @@ class LnChurchClient(Payment402Client):
             canonical_hash_expected=expected_hash,
             canonical_hash_observed=observed_hash,
             canonical_hash_matched=(expected_hash == observed_hash),
-            report_status_code=status_code,
-            report_accepted=accepted,
             payment_performed=payment_performed,
             cached_token_used=cached_token_used,
             receipt_id=receipt.receipt_id if receipt else None,
-            raw_report_response=report_resp
         )
+        return report_payload, result_fields
+
+    @staticmethod
+    def _interop_report_result(result_fields, report_response=None, error=None):
+        from .models import InteropRunResult
+        status_code = 200
+        accepted = False
+        if error is not None:
+            match = re.search(r"API Error (\d+):", str(error))
+            status_code = int(match.group(1)) if match else 500
+            report_response = {"error": str(error)}
+        else:
+            accepted = report_response.get("status") == "success"
+        return InteropRunResult(
+            **dict(result_fields, ok=result_fields["ok"] and accepted),
+            report_status_code=status_code, report_accepted=accepted,
+            raw_report_response=report_response,
+        )
+
+    def run_l402_sandbox_harness(self) -> "InteropRunResult":
+        exec_result = self.execute_detailed("GET", "/api/agent/sandbox/l402/basic")
+        payload, result_fields = self._l402_sandbox_projection(exec_result)
+        try:
+            report = self.execute_detailed("POST", "/api/agent/sandbox/interop/report", payload=payload)
+        except Exception as error:
+            return self._interop_report_result(result_fields, error=error)
+        return self._interop_report_result(result_fields, report.response)
 
     async def run_l402_sandbox_harness_async(self) -> "InteropRunResult":
-        import json
-        import hashlib
-        import re
-        from .models import InteropRunResult
+        exec_result = await self.execute_detailed_async("GET", "/api/agent/sandbox/l402/basic")
+        payload, result_fields = self._l402_sandbox_projection(exec_result)
+        try:
+            report = await self.execute_detailed_async("POST", "/api/agent/sandbox/interop/report", payload=payload)
+        except Exception as error:
+            return self._interop_report_result(result_fields, error=error)
+        return self._interop_report_result(result_fields, report.response)
 
-        basic_path = "/api/agent/sandbox/l402/basic"
-        report_path = "/api/agent/sandbox/interop/report"
-
-        exec_result = await self.execute_detailed_async("GET", basic_path)
-        resp = exec_result.response
-
+    def _mpp_charge_sandbox_projection(self, exec_result, failure_reason):
+        resp = exec_result.response if exec_result else {}
+        basic_path = "/api/agent/sandbox/mpp/charge/basic"
         meta = resp.get("meta", {})
         run_id = meta.get("run_id", "")
         scenario_id = meta.get("scenario_id", "")
         expected_hash = meta.get("canonical_hash_expected", "")
         interop_token = meta.get("interop_token", "")
 
-        deterministic_payload = {
-            "message": resp.get("message"),
-            "scenario": resp.get("scenario"),
-            "contract": resp.get("contract"),
-            "verifiable": resp.get("verifiable")
-        }
-        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-        observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
+        observed_hash = ""
+        if not failure_reason:
+            deterministic_payload = {
+                "message": resp.get("message"),
+                "scenario": resp.get("scenario"),
+                "contract": resp.get("contract"),
+                "verifiable": resp.get("verifiable")
+            }
+            json_str = json.dumps(deterministic_payload, separators=(',', ':'))
+            observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
-        receipt = exec_result.settlement_receipt
-        payment_performed = receipt.payment_performed if receipt else True
+        parsed = getattr(self, "_last_parsed_challenge", None)
+
+        receipt = exec_result.settlement_receipt if exec_result else None
+        payment_performed = receipt.payment_performed if receipt else (failure_reason is None)
         cached_token_used = receipt.cached_token_used if receipt else False
-        delegate_source = receipt.delegate_source if receipt else "native"
-        executor_mode = "ln-church-agent-native" if delegate_source == "native" else delegate_source
+        executor_mode = "ln-church-agent-native"
 
-        auth_scheme = receipt.scheme if receipt and receipt.scheme else (exec_result.used_scheme or "L402")
+        if receipt and receipt.scheme:
+            auth_scheme = receipt.scheme
+        elif exec_result and exec_result.used_scheme:
+            auth_scheme = exec_result.used_scheme
+        elif parsed and parsed.scheme:
+            auth_scheme = parsed.scheme
+        else:
+            auth_scheme = "Payment"
+
+        credential_shape = "legacy-preimage" if receipt else "unsupported-payment-auth-json"
+
+        p_intent = "charge"
+        p_method = "lightning"
+        p_shape = "unknown"
+        p_b64 = False
+        p_decoded = False
+
+        if parsed:
+            if getattr(parsed, "payment_intent", "unknown") != "unknown":
+                p_intent = parsed.payment_intent
+            if getattr(parsed, "payment_method", "unknown") != "unknown":
+                p_method = parsed.payment_method
+            p_shape = getattr(parsed, "draft_shape", "unknown")
+            p_b64 = getattr(parsed, "request_b64_present", False)
+            p_decoded = getattr(parsed, "decoded_request_valid", False)
 
         payment_receipt_present = bool(
             receipt
@@ -5214,7 +4652,7 @@ class LnChurchClient(Payment402Client):
             "canonical_hash_expected": expected_hash,
             "canonical_hash_observed": observed_hash,
             "executor_mode": executor_mode,
-            "delegate_source": delegate_source,
+            "delegate_source": "native",
             "cached_token_used": cached_token_used,
             "payment_performed": payment_performed,
             "fee_sats": receipt.fee_sats if receipt else 0,
@@ -5222,321 +4660,61 @@ class LnChurchClient(Payment402Client):
             "interop_token": interop_token,
             "comparison_class": "production_like",
             "test_mode": "normal",
-            "rail": "L402",
-            "payment_intent": "charge",
+            "rail": "MPP",
+            "payment_intent": p_intent,
+            "payment_method": p_method,
             "authorization_scheme": auth_scheme,
-            "payment_receipt_present": payment_receipt_present
+            "draft_shape": p_shape,
+            "request_b64_present": p_b64,
+            "decoded_request_valid": p_decoded,
+            "credential_shape": credential_shape,
+            "payment_receipt_present": payment_receipt_present,
+            "failure_reason": failure_reason
         }
 
-        report_resp = {}
-        status_code = 500
-        accepted = False
-        try:
-            report_exec = await self.execute_detailed_async("POST", report_path, payload=report_payload)
-            report_resp = report_exec.response
-            status_code = 200
-            accepted = report_resp.get("status") == "success"
-        except Exception as e:
-            m = re.search(r"API Error (\d+):", str(e))
-            if m:
-                status_code = int(m.group(1))
-            report_resp = {"error": str(e)}
-
-        return InteropRunResult(
-            ok=accepted and (expected_hash == observed_hash),
-            target_url=exec_result.final_url,
+        result_fields = dict(
+            ok=(not failure_reason and expected_hash == observed_hash),
+            target_url=exec_result.final_url if exec_result else basic_path,
             run_id=run_id,
             scenario_id=scenario_id,
             executor_mode=executor_mode,
-            delegate_source=delegate_source,
+            delegate_source="native",
             canonical_hash_expected=expected_hash,
             canonical_hash_observed=observed_hash,
-            canonical_hash_matched=(expected_hash == observed_hash),
-            report_status_code=status_code,
-            report_accepted=accepted,
+            canonical_hash_matched=(expected_hash == observed_hash) if expected_hash else False,
             payment_performed=payment_performed,
             cached_token_used=cached_token_used,
             receipt_id=receipt.receipt_id if receipt else None,
-            raw_report_response=report_resp
         )
+        return report_payload, result_fields
 
     def run_mpp_charge_sandbox_harness(self) -> "InteropRunResult":
-        import json
-        import hashlib
-        import re
-        from .models import InteropRunResult
-
-        basic_path = "/api/agent/sandbox/mpp/charge/basic"
-        report_path = "/api/agent/sandbox/interop/report"
-
         exec_result = None
         failure_reason = None
-        error_msg = ""
-
         try:
-            exec_result = self.execute_detailed("GET", basic_path)
-            resp = exec_result.response
-        except Exception as e:
-            error_msg = str(e)
-            if "mpp_session_not_supported_yet" in error_msg:
-                failure_reason = "mpp_session_not_supported_yet"
-            else:
-                failure_reason = "payment_failed"
-            resp = {}
-
-        meta = resp.get("meta", {})
-        run_id = meta.get("run_id", "")
-        scenario_id = meta.get("scenario_id", "")
-        expected_hash = meta.get("canonical_hash_expected", "")
-        interop_token = meta.get("interop_token", "")
-
-        observed_hash = ""
-        if not failure_reason:
-            deterministic_payload = {
-                "message": resp.get("message"),
-                "scenario": resp.get("scenario"),
-                "contract": resp.get("contract"),
-                "verifiable": resp.get("verifiable")
-            }
-            json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-            observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        receipt = exec_result.settlement_receipt if exec_result else None
-        payment_performed = receipt.payment_performed if receipt else (failure_reason is None)
-        cached_token_used = receipt.cached_token_used if receipt else False
-        executor_mode = "ln-church-agent-native"
-
-        if receipt and receipt.scheme:
-            auth_scheme = receipt.scheme
-        elif exec_result and exec_result.used_scheme:
-            auth_scheme = exec_result.used_scheme
-        elif parsed and parsed.scheme:
-            auth_scheme = parsed.scheme
-        else:
-            auth_scheme = "Payment"
-
-        credential_shape = "legacy-preimage" if receipt else "unsupported-payment-auth-json"
-
-        p_intent = "charge"
-        p_method = "lightning"
-        p_shape = "unknown"
-        p_b64 = False
-        p_decoded = False
-
-        if parsed:
-            if getattr(parsed, "payment_intent", "unknown") != "unknown":
-                p_intent = parsed.payment_intent
-            if getattr(parsed, "payment_method", "unknown") != "unknown":
-                p_method = parsed.payment_method
-            p_shape = getattr(parsed, "draft_shape", "unknown")
-            p_b64 = getattr(parsed, "request_b64_present", False)
-            p_decoded = getattr(parsed, "decoded_request_valid", False)
-
-        payment_receipt_present = bool(
-            receipt
-            and getattr(receipt, "present", False)
-            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
-        )
-
-        report_payload = {
-            "run_id": run_id,
-            "scenario_id": scenario_id,
-            "canonical_hash_expected": expected_hash,
-            "canonical_hash_observed": observed_hash,
-            "executor_mode": executor_mode,
-            "delegate_source": "native",
-            "cached_token_used": cached_token_used,
-            "payment_performed": payment_performed,
-            "fee_sats": receipt.fee_sats if receipt else 0,
-            "sdk_version": SDK_VERSION,
-            "interop_token": interop_token,
-            "comparison_class": "production_like",
-            "test_mode": "normal",
-            "rail": "MPP",
-            "payment_intent": p_intent,
-            "payment_method": p_method,
-            "authorization_scheme": auth_scheme,
-            "draft_shape": p_shape,
-            "request_b64_present": p_b64,
-            "decoded_request_valid": p_decoded,
-            "credential_shape": credential_shape,
-            "payment_receipt_present": payment_receipt_present,
-            "failure_reason": failure_reason
-        }
-
-        report_resp = {}
-        status_code = 500
-        accepted = False
+            exec_result = self.execute_detailed("GET", "/api/agent/sandbox/mpp/charge/basic")
+        except Exception as error:
+            failure_reason = "mpp_session_not_supported_yet" if "mpp_session_not_supported_yet" in str(error) else "payment_failed"
+        payload, result_fields = self._mpp_charge_sandbox_projection(exec_result, failure_reason)
         try:
-            report_exec = self.execute_detailed("POST", report_path, payload=report_payload)
-            report_resp = report_exec.response
-            status_code = 200
-            accepted = report_resp.get("status") == "success"
-        except Exception as e:
-            m = re.search(r"API Error (\d+):", str(e))
-            if m: status_code = int(m.group(1))
-            report_resp = {"error": str(e)}
-
-        ok_status = accepted and (expected_hash == observed_hash) if not failure_reason else False
-
-        return InteropRunResult(
-            ok=ok_status,
-            target_url=exec_result.final_url if exec_result else basic_path,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            executor_mode=executor_mode,
-            delegate_source="native",
-            canonical_hash_expected=expected_hash,
-            canonical_hash_observed=observed_hash,
-            canonical_hash_matched=(expected_hash == observed_hash) if expected_hash else False,
-            report_status_code=status_code,
-            report_accepted=accepted,
-            payment_performed=payment_performed,
-            cached_token_used=cached_token_used,
-            receipt_id=receipt.receipt_id if receipt else None,
-            raw_report_response=report_resp
-        )
+            report = self.execute_detailed("POST", "/api/agent/sandbox/interop/report", payload=payload)
+        except Exception as error:
+            return self._interop_report_result(result_fields, error=error)
+        return self._interop_report_result(result_fields, report.response)
 
     async def run_mpp_charge_sandbox_harness_async(self) -> "InteropRunResult":
-        import json
-        import hashlib
-        import re
-        from .models import InteropRunResult
-
-        basic_path = "/api/agent/sandbox/mpp/charge/basic"
-        report_path = "/api/agent/sandbox/interop/report"
-
         exec_result = None
         failure_reason = None
-        error_msg = ""
-
         try:
-            exec_result = await self.execute_detailed_async("GET", basic_path)
-            resp = exec_result.response
-        except Exception as e:
-            error_msg = str(e)
-            if "mpp_session_not_supported_yet" in error_msg:
-                failure_reason = "mpp_session_not_supported_yet"
-            else:
-                failure_reason = "payment_failed"
-            resp = {}
-
-        meta = resp.get("meta", {})
-        run_id = meta.get("run_id", "")
-        scenario_id = meta.get("scenario_id", "")
-        expected_hash = meta.get("canonical_hash_expected", "")
-        interop_token = meta.get("interop_token", "")
-
-        observed_hash = ""
-        if not failure_reason:
-            deterministic_payload = {
-                "message": resp.get("message"),
-                "scenario": resp.get("scenario"),
-                "contract": resp.get("contract"),
-                "verifiable": resp.get("verifiable")
-            }
-            json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-            observed_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        receipt = exec_result.settlement_receipt if exec_result else None
-        payment_performed = receipt.payment_performed if receipt else (failure_reason is None)
-        cached_token_used = receipt.cached_token_used if receipt else False
-        executor_mode = "ln-church-agent-native"
-
-        if receipt and receipt.scheme:
-            auth_scheme = receipt.scheme
-        elif exec_result and exec_result.used_scheme:
-            auth_scheme = exec_result.used_scheme
-        elif parsed and parsed.scheme:
-            auth_scheme = parsed.scheme
-        else:
-            auth_scheme = "Payment"
-
-        credential_shape = "legacy-preimage" if receipt else "unsupported-payment-auth-json"
-
-        p_intent = "charge"
-        p_method = "lightning"
-        p_shape = "unknown"
-        p_b64 = False
-        p_decoded = False
-
-        if parsed:
-            if getattr(parsed, "payment_intent", "unknown") != "unknown":
-                p_intent = parsed.payment_intent
-            if getattr(parsed, "payment_method", "unknown") != "unknown":
-                p_method = parsed.payment_method
-            p_shape = getattr(parsed, "draft_shape", "unknown")
-            p_b64 = getattr(parsed, "request_b64_present", False)
-            p_decoded = getattr(parsed, "decoded_request_valid", False)
-
-        payment_receipt_present = bool(
-            receipt
-            and getattr(receipt, "present", False)
-            and getattr(receipt, "source", None) == AttestationSource.SERVER_JWS
-        )
-
-        report_payload = {
-            "run_id": run_id,
-            "scenario_id": scenario_id,
-            "canonical_hash_expected": expected_hash,
-            "canonical_hash_observed": observed_hash,
-            "executor_mode": executor_mode,
-            "delegate_source": "native",
-            "cached_token_used": cached_token_used,
-            "payment_performed": payment_performed,
-            "fee_sats": receipt.fee_sats if receipt else 0,
-            "sdk_version": SDK_VERSION,
-            "interop_token": interop_token,
-            "comparison_class": "production_like",
-            "test_mode": "normal",
-            "rail": "MPP",
-            "payment_intent": p_intent,
-            "payment_method": p_method,
-            "authorization_scheme": auth_scheme,
-            "draft_shape": p_shape,
-            "request_b64_present": p_b64,
-            "decoded_request_valid": p_decoded,
-            "credential_shape": credential_shape,
-            "payment_receipt_present": payment_receipt_present,
-            "failure_reason": failure_reason
-        }
-
-        report_resp = {}
-        status_code = 500
-        accepted = False
+            exec_result = await self.execute_detailed_async("GET", "/api/agent/sandbox/mpp/charge/basic")
+        except Exception as error:
+            failure_reason = "mpp_session_not_supported_yet" if "mpp_session_not_supported_yet" in str(error) else "payment_failed"
+        payload, result_fields = self._mpp_charge_sandbox_projection(exec_result, failure_reason)
         try:
-            report_exec = await self.execute_detailed_async("POST", report_path, payload=report_payload)
-            report_resp = report_exec.response
-            status_code = 200
-            accepted = report_resp.get("status") == "success"
-        except Exception as e:
-            m = re.search(r"API Error (\d+):", str(e))
-            if m: status_code = int(m.group(1))
-            report_resp = {"error": str(e)}
-
-        ok_status = accepted and (expected_hash == observed_hash) if not failure_reason else False
-
-        return InteropRunResult(
-            ok=ok_status,
-            target_url=exec_result.final_url if exec_result else basic_path,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            executor_mode=executor_mode,
-            delegate_source="native",
-            canonical_hash_expected=expected_hash,
-            canonical_hash_observed=observed_hash,
-            canonical_hash_matched=(expected_hash == observed_hash) if expected_hash else False,
-            report_status_code=status_code,
-            report_accepted=accepted,
-            payment_performed=payment_performed,
-            cached_token_used=cached_token_used,
-            receipt_id=receipt.receipt_id if receipt else None,
-            raw_report_response=report_resp
-        )
+            report = await self.execute_detailed_async("POST", "/api/agent/sandbox/interop/report", payload=payload)
+        except Exception as error:
+            return self._interop_report_result(result_fields, error=error)
+        return self._interop_report_result(result_fields, report.response)
 
     def run_corpus_replay(
         self,
@@ -5776,11 +4954,72 @@ class LnChurchClient(Payment402Client):
                 raw_descriptor=desc_data, raw_challenge_body=chal_data
             )
 
+    def _external_protocol_result(self, exec_result, error, target_url, scenario_id,
+                                  executor_mode, delegate_source, start_time, logs, dlog):
+        from .models import ExternalProtocolRunResult
+        import time
+        resp_data = exec_result.response if exec_result else None
+        receipt = exec_result.settlement_receipt if exec_result else None
+        status_code = 200 if exec_result else 500
+        stage = "response_shape_check" if exec_result else "challenge_fetch"
+        origin = "unknown"
+        upstream_host = None
+        error_reason = None
+        if error is not None:
+            error_reason = str(error)
+            if "LNBits Payment Failed" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_initiation"
+            elif "initiated but not settled" in error_reason:
+                origin = "payment_backend"
+                stage = "payment_settlement_check"
+            elif "402 challenge" in error_reason:
+                origin = "target_endpoint"
+                stage = "challenge_parse"
+
+            m_code = re.search(r"Error code (\d+)", error_reason)
+            if m_code: status_code = int(m_code.group(1))
+
+            m_host = re.search(r"host-status.*?>(.*?)</span>", error_reason, re.S)
+            if m_host:
+                upstream_host = re.sub('<[^>]*>', '', m_host.group(1)).strip()
+                dlog(f"Identified failing upstream host: {upstream_host}")
+        latency_ms = int((time.time() - start_time) * 1000)
+
+        response_shape_ok = False
+        if resp_data:
+            response_shape_ok = True
+            excerpt = str(resp_data)[:200]
+        else:
+            excerpt = ""
+
+        return ExternalProtocolRunResult(
+            ok=(status_code == 200 and response_shape_ok),
+            target_url=target_url,
+            scenario_id=scenario_id,
+            executor_mode=executor_mode,
+            delegate_source=delegate_source,
+            status_code_after_payment=status_code,
+            payment_performed=receipt.payment_performed if receipt else (origin == "payment_backend"),
+            cached_token_used=receipt.cached_token_used if receipt else False,
+            receipt_id=receipt.receipt_id if receipt else None,
+            latency_ms=latency_ms,
+            response_shape_ok=response_shape_ok,
+            response_excerpt=excerpt,
+            protocol_success=(status_code == 200),
+            schema_check_reason="Valid JSON" if response_shape_ok else "No response data",
+            error_stage=stage if status_code != 200 else None,
+            error_reason=error_reason,
+            suspected_failure_origin=origin,
+            upstream_status_code=status_code if status_code != 200 else None,
+            upstream_host_excerpt=upstream_host,
+            debug_logs=logs
+        )
+
     def run_external_protocol_verification(
         self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
     ) -> "ExternalProtocolRunResult":
         import time, re
-        from .models import ExternalProtocolRunResult
 
         logs = []
         def dlog(msg):
@@ -5788,15 +5027,9 @@ class LnChurchClient(Payment402Client):
             logs.append(msg)
 
         start_time = time.time()
-        stage = "init"
-        error_reason = None
-        resp_data = None
-        status_code = 500
-        receipt = None
-        origin = "unknown"
-        upstream_host = None
+        exec_result = None
+        error = None
 
-        is_get = True
         use_delegate = (
             self.prefer_lightninglabs_l402 and
             _netloc_is_allowlisted(target_url, self.l402_delegate_allowed_hosts)
@@ -5810,74 +5043,23 @@ class LnChurchClient(Payment402Client):
             dlog(f"Payment Backend: {masked_url}")
 
         try:
-            stage = "challenge_fetch"
             dlog("Step 1: Fetching 402 challenge...")
 
             exec_result = self.execute_detailed("GET", target_url)
 
-            stage = "response_shape_check"
-            resp_data = exec_result.response
-            receipt = exec_result.settlement_receipt
-            status_code = 200
             dlog("Step 2: Successfully received 200 OK after payment.")
 
-        except Exception as e:
-            error_reason = str(e)
-            if "LNBits Payment Failed" in error_reason:
-                origin = "payment_backend"
-                stage = "payment_initiation"
-            elif "initiated but not settled" in error_reason:
-                origin = "payment_backend"
-                stage = "payment_settlement_check"
-            elif "402 challenge" in error_reason:
-                origin = "target_endpoint"
-                stage = "challenge_parse"
-
-            m_code = re.search(r"Error code (\d+)", error_reason)
-            if m_code: status_code = int(m_code.group(1))
-
-            m_host = re.search(r"host-status.*?>(.*?)</span>", error_reason, re.S)
-            if m_host:
-                upstream_host = re.sub('<[^>]*>', '', m_host.group(1)).strip()
-                dlog(f"Identified failing upstream host: {upstream_host}")
-
-        latency_ms = int((time.time() - start_time) * 1000)
-
-        response_shape_ok = False
-        if resp_data:
-            response_shape_ok = True
-            excerpt = str(resp_data)[:200]
-        else:
-            excerpt = ""
-
-        return ExternalProtocolRunResult(
-            ok=(status_code == 200 and response_shape_ok),
-            target_url=target_url,
-            scenario_id=scenario_id,
-            executor_mode=executor_mode,
-            delegate_source=delegate_source,
-            status_code_after_payment=status_code,
-            payment_performed=receipt.payment_performed if receipt else (origin == "payment_backend"),
-            cached_token_used=receipt.cached_token_used if receipt else False,
-            receipt_id=receipt.receipt_id if receipt else None,
-            latency_ms=latency_ms,
-            response_shape_ok=response_shape_ok,
-            response_excerpt=excerpt,
-            protocol_success=(status_code == 200),
-            schema_check_reason="Valid JSON" if response_shape_ok else "No response data",
-            error_stage=stage if status_code != 200 else None,
-            error_reason=error_reason,
-            suspected_failure_origin=origin,
-            upstream_status_code=status_code if status_code != 200 else None,
-            upstream_host_excerpt=upstream_host,
-            debug_logs=logs
+        except Exception as caught_error:
+            error = caught_error
+        return self._external_protocol_result(
+            exec_result, error, target_url, scenario_id, executor_mode,
+            delegate_source, start_time, logs, dlog,
         )
 
     async def run_external_protocol_verification_async(
         self, target_url: str, scenario_id: str = "external_verification_v1", debug: bool = False
     ) -> "ExternalProtocolRunResult":
         import time, re
-        from .models import ExternalProtocolRunResult
 
         logs = []
         def dlog(msg):
@@ -5885,13 +5067,8 @@ class LnChurchClient(Payment402Client):
             logs.append(msg)
 
         start_time = time.time()
-        stage = "init"
-        error_reason = None
-        resp_data = None
-        status_code = 500
-        receipt = None
-        origin = "unknown"
-        upstream_host = None
+        exec_result = None
+        error = None
 
         use_delegate = (
             self.prefer_lightninglabs_l402 and
@@ -5906,227 +5083,78 @@ class LnChurchClient(Payment402Client):
             dlog(f"Payment Backend: {masked_url}")
 
         try:
-            stage = "challenge_fetch"
             dlog("Step 1: Fetching 402 challenge (Async)...")
 
             exec_result = await self.execute_detailed_async("GET", target_url)
 
-            stage = "response_shape_check"
-            resp_data = exec_result.response
-            receipt = exec_result.settlement_receipt
-            status_code = 200
             dlog("Step 2: Successfully received 200 OK after payment (Async).")
 
-        except Exception as e:
-            error_reason = str(e)
-            if "LNBits Payment Failed" in error_reason:
-                origin = "payment_backend"
-                stage = "payment_initiation"
-            elif "initiated but not settled" in error_reason:
-                origin = "payment_backend"
-                stage = "payment_settlement_check"
-            elif "402 challenge" in error_reason:
-                origin = "target_endpoint"
-                stage = "challenge_parse"
-
-            m_code = re.search(r"Error code (\d+)", error_reason)
-            if m_code: status_code = int(m_code.group(1))
-
-            m_host = re.search(r"host-status.*?>(.*?)</span>", error_reason, re.S)
-            if m_host:
-                upstream_host = re.sub('<[^>]*>', '', m_host.group(1)).strip()
-                dlog(f"Identified failing upstream host: {upstream_host}")
-
-        latency_ms = int((time.time() - start_time) * 1000)
-
-        response_shape_ok = False
-        if resp_data:
-            response_shape_ok = True
-            excerpt = str(resp_data)[:200]
-        else:
-            excerpt = ""
-
-        return ExternalProtocolRunResult(
-            ok=(status_code == 200 and response_shape_ok),
-            target_url=target_url,
-            scenario_id=scenario_id,
-            executor_mode=executor_mode,
-            delegate_source=delegate_source,
-            status_code_after_payment=status_code,
-            payment_performed=receipt.payment_performed if receipt else (origin == "payment_backend"),
-            cached_token_used=receipt.cached_token_used if receipt else False,
-            receipt_id=receipt.receipt_id if receipt else None,
-            latency_ms=latency_ms,
-            response_shape_ok=response_shape_ok,
-            response_excerpt=excerpt,
-            protocol_success=(status_code == 200),
-            schema_check_reason="Valid JSON" if response_shape_ok else "No response data",
-            error_stage=stage if status_code != 200 else None,
-            error_reason=error_reason,
-            suspected_failure_origin=origin,
-            upstream_status_code=status_code if status_code != 200 else None,
-            upstream_host_excerpt=upstream_host,
-            debug_logs=logs
+        except Exception as caught_error:
+            error = caught_error
+        return self._external_protocol_result(
+            exec_result, error, target_url, scenario_id, executor_mode,
+            delegate_source, start_time, logs, dlog,
         )
 
     # ==========================================
     # Phase 3: x402 Exact Sandbox Diagnostic Runners
     # ==========================================
-    def run_x402_evm_exact_sandbox_diagnostic(self) -> "X402ExactDiagnosticResult":
+    def _x402_diagnostic_result(self, rail, endpoint, error):
         from .models import X402ExactDiagnosticResult
+        expected_rejections = (
+            ["Invalid TxHash format", "Transaction not found"] if rail == "evm"
+            else ["Invalid Solana signature format", "Transaction not found"]
+        )
+        reason = str(error) if error is not None else None
+        expected = reason is not None and any(text in reason for text in expected_rejections)
+        parsed = getattr(self, "_last_parsed_challenge", None)
+        return X402ExactDiagnosticResult(
+            ok=expected, scenario_id=f"x402-{rail}-exact-basic-v1", endpoint=endpoint,
+            network=parsed.network if parsed else None,
+            asset=parsed.asset if parsed else None,
+            token_address=parsed.parameters.get("token_address") if parsed else None,
+            draft_shape=parsed.draft_shape if parsed else None,
+            challenge_shape_ok=parsed is not None, expected_rejection=expected,
+            rejection_reason=reason,
+            diagnostic_class="post_settlement_proof_required" if expected else None,
+            failure_class="settlement_model_mismatch" if expected else None,
+        )
+
+    def run_x402_evm_exact_sandbox_diagnostic(self) -> "X402ExactDiagnosticResult":
         endpoint = "/api/agent/sandbox/x402/evm/exact/basic"
-        expected_rejections = ["Invalid TxHash format", "Transaction not found"]
-
-        ok = False
-        rejection_reason = None
-        diagnostic_class = None
-        failure_class = None
-
+        error = None
         try:
             self.execute_detailed("GET", endpoint, payload={"asset": "USDC"})
-        except Exception as e:
-            error_msg = str(e)
-            if any(r in error_msg for r in expected_rejections):
-                ok = True
-                rejection_reason = error_msg
-                diagnostic_class = "post_settlement_proof_required"
-                failure_class = "settlement_model_mismatch"
-            else:
-                rejection_reason = error_msg
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        return X402ExactDiagnosticResult(
-            ok=ok,
-            scenario_id="x402-evm-exact-basic-v1",
-            endpoint=endpoint,
-            network=parsed.network if parsed else None,
-            asset=parsed.asset if parsed else None,
-            token_address=parsed.parameters.get("token_address") if parsed else None,
-            draft_shape=parsed.draft_shape if parsed else None,
-            challenge_shape_ok=parsed is not None,
-            expected_rejection=ok,
-            rejection_reason=rejection_reason,
-            diagnostic_class=diagnostic_class,
-            failure_class=failure_class
-        )
+        except Exception as caught_error:
+            error = caught_error
+        return self._x402_diagnostic_result("evm", endpoint, error)
 
     async def run_x402_evm_exact_sandbox_diagnostic_async(self) -> "X402ExactDiagnosticResult":
-        from .models import X402ExactDiagnosticResult
         endpoint = "/api/agent/sandbox/x402/evm/exact/basic"
-        expected_rejections = ["Invalid TxHash format", "Transaction not found"]
-
-        ok = False
-        rejection_reason = None
-        diagnostic_class = None
-        failure_class = None
-
+        error = None
         try:
             await self.execute_detailed_async("GET", endpoint, payload={"asset": "USDC"})
-        except Exception as e:
-            error_msg = str(e)
-            if any(r in error_msg for r in expected_rejections):
-                ok = True
-                rejection_reason = error_msg
-                diagnostic_class = "post_settlement_proof_required"
-                failure_class = "settlement_model_mismatch"
-            else:
-                rejection_reason = error_msg
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        return X402ExactDiagnosticResult(
-            ok=ok,
-            scenario_id="x402-evm-exact-basic-v1",
-            endpoint=endpoint,
-            network=parsed.network if parsed else None,
-            asset=parsed.asset if parsed else None,
-            token_address=parsed.parameters.get("token_address") if parsed else None,
-            draft_shape=parsed.draft_shape if parsed else None,
-            challenge_shape_ok=parsed is not None,
-            expected_rejection=ok,
-            rejection_reason=rejection_reason,
-            diagnostic_class=diagnostic_class,
-            failure_class=failure_class
-        )
+        except Exception as caught_error:
+            error = caught_error
+        return self._x402_diagnostic_result("evm", endpoint, error)
 
     def run_x402_svm_exact_sandbox_diagnostic(self) -> "X402ExactDiagnosticResult":
-        from .models import X402ExactDiagnosticResult
         endpoint = "/api/agent/sandbox/x402/svm/exact/basic"
-        expected_rejections = ["Invalid Solana signature format", "Transaction not found"]
-
-        ok = False
-        rejection_reason = None
-        diagnostic_class = None
-        failure_class = None
-
+        error = None
         try:
             self.execute_detailed("GET", endpoint)
-        except Exception as e:
-            error_msg = str(e)
-            if any(r in error_msg for r in expected_rejections):
-                ok = True
-                rejection_reason = error_msg
-                diagnostic_class = "post_settlement_proof_required"
-                failure_class = "settlement_model_mismatch"
-            else:
-                rejection_reason = error_msg
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        return X402ExactDiagnosticResult(
-            ok=ok,
-            scenario_id="x402-svm-exact-basic-v1",
-            endpoint=endpoint,
-            network=parsed.network if parsed else None,
-            asset=parsed.asset if parsed else None,
-            token_address=parsed.parameters.get("token_address") if parsed else None,
-            draft_shape=parsed.draft_shape if parsed else None,
-            challenge_shape_ok=parsed is not None,
-            expected_rejection=ok,
-            rejection_reason=rejection_reason,
-            diagnostic_class=diagnostic_class,
-            failure_class=failure_class
-        )
+        except Exception as caught_error:
+            error = caught_error
+        return self._x402_diagnostic_result("svm", endpoint, error)
 
     async def run_x402_svm_exact_sandbox_diagnostic_async(self) -> "X402ExactDiagnosticResult":
-        from .models import X402ExactDiagnosticResult
         endpoint = "/api/agent/sandbox/x402/svm/exact/basic"
-        expected_rejections = ["Invalid Solana signature format", "Transaction not found"]
-
-        ok = False
-        rejection_reason = None
-        diagnostic_class = None
-        failure_class = None
-
+        error = None
         try:
             await self.execute_detailed_async("GET", endpoint)
-        except Exception as e:
-            error_msg = str(e)
-            if any(r in error_msg for r in expected_rejections):
-                ok = True
-                rejection_reason = error_msg
-                diagnostic_class = "post_settlement_proof_required"
-                failure_class = "settlement_model_mismatch"
-            else:
-                rejection_reason = error_msg
-
-        parsed = getattr(self, "_last_parsed_challenge", None)
-
-        return X402ExactDiagnosticResult(
-            ok=ok,
-            scenario_id="x402-svm-exact-basic-v1",
-            endpoint=endpoint,
-            network=parsed.network if parsed else None,
-            asset=parsed.asset if parsed else None,
-            token_address=parsed.parameters.get("token_address") if parsed else None,
-            draft_shape=parsed.draft_shape if parsed else None,
-            challenge_shape_ok=parsed is not None,
-            expected_rejection=ok,
-            rejection_reason=rejection_reason,
-            diagnostic_class=diagnostic_class,
-            failure_class=failure_class
-        )
+        except Exception as caught_error:
+            error = caught_error
+        return self._x402_diagnostic_result("svm", endpoint, error)
 
     # ==========================================
     # Phase 3: External Observation API (M2M)
@@ -6139,21 +5167,55 @@ class LnChurchClient(Payment402Client):
             for k, v in value.items():
                 if _is_secret_key(k):
                     continue
-                clean[k] = self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list, tuple)) else v
+                clean[k] = self._strip_secrets_from_evidence(v) if isinstance(v, (dict, list, tuple)) else redact_paid_result_proof(v)
             return clean
         if isinstance(value, list):
             return [
                 self._strip_secrets_from_evidence(v)
-                if isinstance(v, (dict, list, tuple)) else v
+                if isinstance(v, (dict, list, tuple)) else redact_paid_result_proof(v)
                 for v in value
             ]
         if isinstance(value, tuple):
             return tuple(
                 self._strip_secrets_from_evidence(v)
-                if isinstance(v, (dict, list, tuple)) else v
+                if isinstance(v, (dict, list, tuple)) else redact_paid_result_proof(v)
                 for v in value
             )
-        return value
+        return redact_paid_result_proof(value)
+
+    def _external_observation_payload(
+        self,
+        target_url: str,
+        method: str = "GET",
+        status_code: int = 402,
+        source_scope: str = "external_agent_report",
+        evidence_class: str = "self_reported_challenge",
+        protocol: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        challenge: Optional[dict] = None,
+        sdk_version: Optional[str] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None,
+    ) -> dict:
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": redact_paid_result_proof(target_url),
+            "method": method,
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "evidence_class": evidence_class,
+            "protocol": self._strip_secrets_from_evidence(protocol or {}),
+            "evidence": self._strip_secrets_from_evidence(evidence),
+            "challenge": self._strip_secrets_from_evidence(challenge),
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
+
+        return payload
 
     def submit_external_observation(
         self,
@@ -6169,26 +5231,8 @@ class LnChurchClient(Payment402Client):
         protocol_roles: Optional[list] = None,
         verification_cost_vector: Optional[dict] = None,
     ) -> dict:
-        payload = {
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "targetUrl": target_url,
-            "method": method,
-            "statusCode": status_code,
-            "source_scope": source_scope,
-            "evidence_class": evidence_class,
-            "protocol": self._strip_secrets_from_evidence(protocol or {}),
-            "evidence": self._strip_secrets_from_evidence(evidence),
-            "challenge": self._strip_secrets_from_evidence(challenge),
-            "sdk_version": sdk_version or SDK_VERSION
-        }
-
-        if protocol_roles is not None:
-            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
-        if verification_cost_vector is not None:
-            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
-
+        payload = self._external_observation_payload(target_url, method, status_code, source_scope, evidence_class, protocol, evidence, challenge, sdk_version, protocol_roles, verification_cost_vector)
         return self.execute_request("POST", "/api/agent/external/observe", payload=payload)
-
     async def submit_external_observation_async(
         self,
         target_url: str,
@@ -6203,26 +5247,8 @@ class LnChurchClient(Payment402Client):
         protocol_roles: Optional[list] = None,
         verification_cost_vector: Optional[dict] = None,
     ) -> dict:
-        payload = {
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "targetUrl": target_url,
-            "method": method,
-            "statusCode": status_code,
-            "source_scope": source_scope,
-            "evidence_class": evidence_class,
-            "protocol": self._strip_secrets_from_evidence(protocol or {}),
-            "evidence": self._strip_secrets_from_evidence(evidence),
-            "challenge": self._strip_secrets_from_evidence(challenge),
-            "sdk_version": sdk_version or SDK_VERSION
-        }
-
-        if protocol_roles is not None:
-            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
-        if verification_cost_vector is not None:
-            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
-
+        payload = self._external_observation_payload(target_url, method, status_code, source_scope, evidence_class, protocol, evidence, challenge, sdk_version, protocol_roles, verification_cost_vector)
         return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
-
     def get_external_observations(
         self, limit: int = 50, rail: Optional[str] = None, quality: Optional[str] = None, source: Optional[str] = None
     ) -> dict:
@@ -6241,6 +5267,62 @@ class LnChurchClient(Payment402Client):
         if source: params["source"] = source
         return await self.execute_request_async("GET", "/api/agent/external/observations", payload=params)
 
+    def _unmapped_observation_payload(
+        self,
+        target_url: str,
+        detection_note: str,
+        method: str = "GET",
+        status_code: int = 402,
+        rails_detected: Optional[List[str]] = None,
+        source_scope: str = "external_agent_report",
+        challenge_shape: Optional[str] = None,
+        evidence_class: str = "crawler_detected_402",
+        extra_protocol: Optional[dict] = None,
+        missing_information: Optional[List[str]] = None,
+        sdk_version: Optional[str] = None,
+    ) -> dict:
+        rail = "unknown"
+        if rails_detected and len(rails_detected) == 1 and rails_detected[0] in ["x402", "L402", "MPP"]:
+            rail = rails_detected[0]
+
+        protocol = {
+            "rail": rail,
+            "network": "unknown",
+            "asset": "unknown",
+            "authorization_scheme": "unknown",
+            "draft_shape": challenge_shape or detection_note,
+            "payment_intent": "unknown",
+            "payment_method": "unknown"
+        }
+        if extra_protocol:
+            protocol.update(self._strip_secrets_from_evidence(extra_protocol))
+
+        evidence = {
+            "evidence_class": evidence_class,
+            "verification_status": "unverified",
+            "verification_method": "none",
+            "payment_performed": False,
+            "payment_receipt_present": False
+        }
+
+        miss_info = missing_information.copy() if missing_information else []
+        for m in [detection_note, "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"]:
+            if m not in miss_info:
+                miss_info.append(m)
+
+        payload = {
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "targetUrl": target_url,
+            "method": method.upper(),
+            "statusCode": status_code,
+            "source_scope": source_scope,
+            "protocol": protocol,
+            "evidence": evidence,
+            "missing_information": miss_info,
+            "sdk_version": sdk_version or SDK_VERSION
+        }
+        return redact_paid_result_proof(payload)
+
     def submit_unmapped_observation(
         self,
         target_url: str,
@@ -6255,48 +5337,8 @@ class LnChurchClient(Payment402Client):
         missing_information: Optional[List[str]] = None,
         sdk_version: Optional[str] = None,
     ) -> dict:
-        rail = "unknown"
-        if rails_detected and len(rails_detected) == 1 and rails_detected[0] in ["x402", "L402", "MPP"]:
-            rail = rails_detected[0]
-
-        protocol = {
-            "rail": rail,
-            "network": "unknown",
-            "asset": "unknown",
-            "authorization_scheme": "unknown",
-            "draft_shape": challenge_shape or detection_note,
-            "payment_intent": "unknown",
-            "payment_method": "unknown"
-        }
-        if extra_protocol:
-            protocol.update(self._strip_secrets_from_evidence(extra_protocol))
-
-        evidence = {
-            "evidence_class": evidence_class,
-            "verification_status": "unverified",
-            "verification_method": "none",
-            "payment_performed": False,
-            "payment_receipt_present": False
-        }
-
-        miss_info = missing_information.copy() if missing_information else []
-        for m in [detection_note, "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"]:
-            if m not in miss_info:
-                miss_info.append(m)
-
-        payload = {
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "targetUrl": target_url,
-            "method": method.upper(),
-            "statusCode": status_code,
-            "source_scope": source_scope,
-            "protocol": protocol,
-            "evidence": evidence,
-            "missing_information": miss_info,
-            "sdk_version": sdk_version or SDK_VERSION
-        }
+        payload = self._unmapped_observation_payload(target_url, detection_note, method, status_code, rails_detected, source_scope, challenge_shape, evidence_class, extra_protocol, missing_information, sdk_version)
         return self.execute_request("POST", "/api/agent/external/observe", payload=payload)
-
     async def submit_unmapped_observation_async(
         self,
         target_url: str,
@@ -6311,47 +5353,58 @@ class LnChurchClient(Payment402Client):
         missing_information: Optional[List[str]] = None,
         sdk_version: Optional[str] = None,
     ) -> dict:
-        rail = "unknown"
-        if rails_detected and len(rails_detected) == 1 and rails_detected[0] in ["x402", "L402", "MPP"]:
-            rail = rails_detected[0]
-
-        protocol = {
-            "rail": rail,
-            "network": "unknown",
-            "asset": "unknown",
-            "authorization_scheme": "unknown",
-            "draft_shape": challenge_shape or detection_note,
-            "payment_intent": "unknown",
-            "payment_method": "unknown"
-        }
-        if extra_protocol:
-            protocol.update(self._strip_secrets_from_evidence(extra_protocol))
-
-        evidence = {
-            "evidence_class": evidence_class,
-            "verification_status": "unverified",
-            "verification_method": "none",
-            "payment_performed": False,
-            "payment_receipt_present": False
-        }
-
-        miss_info = missing_information.copy() if missing_information else []
-        for m in [detection_note, "settlement_rail_not_declared", "network_not_declared", "asset_not_declared"]:
-            if m not in miss_info:
-                miss_info.append(m)
-
-        payload = {
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "targetUrl": target_url,
-            "method": method.upper(),
-            "statusCode": status_code,
-            "source_scope": source_scope,
-            "protocol": protocol,
-            "evidence": evidence,
-            "missing_information": miss_info,
-            "sdk_version": sdk_version or SDK_VERSION
-        }
+        payload = self._unmapped_observation_payload(target_url, detection_note, method, status_code, rails_detected, source_scope, challenge_shape, evidence_class, extra_protocol, missing_information, sdk_version)
         return await self.execute_request_async("POST", "/api/agent/external/observe", payload=payload)
+    @staticmethod
+    def _surface_preflight_params(surface_key, target_url, method, rail, network, asset, authorization_scheme, draft_shape):
+        if surface_key and target_url:
+            raise ValueError("Provide either surface_key or target_url, not both.")
+        if not surface_key and not target_url:
+            raise ValueError("Either surface_key or target_url must be provided.")
+
+        if surface_key:
+            if surface_key.startswith("surface_"):
+                surface_key = surface_key[8:]
+            if not re.match(r"^[a-fA-F0-9]{24}$", surface_key):
+                raise ValueError("Invalid surface_key format. Must be 24-character hex.")
+
+        if target_url and not target_url.strip():
+            raise ValueError("target_url cannot be empty.")
+
+        params = {}
+        if surface_key:
+            params["surface_key"] = surface_key
+        else:
+            params.update({
+                "target_url": target_url,
+                "method": method.upper(),
+                "rail": rail,
+                "network": network,
+                "asset": asset,
+                "authorization_scheme": authorization_scheme,
+                "draft_shape": draft_shape
+            })
+
+        return params
+
+    @staticmethod
+    def _validate_surface_preflight(data):
+        if data.get("schema_version") != SURFACE_PREFLIGHT_SCHEMA_VERSION:
+            raise ValueError(f"Invalid schema_version. Expected {SURFACE_PREFLIGHT_SCHEMA_VERSION}")
+        if data.get("not_a_recommendation") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_recommendation' must be true")
+        if data.get("not_a_verdict") is not True:
+            raise ValueError("Safety boundary missing: 'not_a_verdict' must be true")
+
+        guardrails = data.get("guardrails") or {}
+        if guardrails.get("final_authority") != "local_runtime":
+            raise ValueError("Safety boundary missing: guardrails.final_authority must be local_runtime")
+        if guardrails.get("this_read_model_does_not_execute_payments") is not True:
+            raise ValueError("Safety boundary missing: read model must not execute payments")
+        if guardrails.get("this_read_model_does_not_prove_settlement") is not True:
+            raise ValueError("Safety boundary missing: read model must not prove settlement")
+
+        return data
 
     def get_surface_preflight(
         self,
@@ -6370,33 +5423,9 @@ class LnChurchClient(Payment402Client):
         Fetch public-safe observational memory for a surface before interacting.
         This endpoint is strictly read-only and does NOT execute payments.
         """
-        if surface_key and target_url:
-            raise ValueError("Provide either surface_key or target_url, not both.")
-        if not surface_key and not target_url:
-            raise ValueError("Either surface_key or target_url must be provided.")
-
-        if surface_key:
-            if surface_key.startswith("surface_"):
-                surface_key = surface_key[8:]
-            if not re.match(r"^[a-fA-F0-9]{24}$", surface_key):
-                raise ValueError("Invalid surface_key format. Must be 24-character hex.")
-
-        if target_url and not target_url.strip():
-            raise ValueError("target_url cannot be empty.")
-
-        params = {}
-        if surface_key:
-            params["surface_key"] = surface_key
-        else:
-            params.update({
-                "target_url": target_url,
-                "method": method.upper(),
-                "rail": rail,
-                "network": network,
-                "asset": asset,
-                "authorization_scheme": authorization_scheme,
-                "draft_shape": draft_shape
-            })
+        params = self._surface_preflight_params(
+            surface_key, target_url, method, rail, network, asset, authorization_scheme, draft_shape,
+        )
 
         headers = {"User-Agent": CUSTOM_USER_AGENT}
         url = self.base_url.rstrip("/") + "/api/agent/monzen/surface-preflight"
@@ -6409,23 +5438,7 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             raise ValueError(f"Failed to fetch surface preflight read model: {e}")
 
-        if data.get("schema_version") != SURFACE_PREFLIGHT_SCHEMA_VERSION:
-            raise ValueError(f"Invalid schema_version. Expected {SURFACE_PREFLIGHT_SCHEMA_VERSION}")
-        if data.get("not_a_recommendation") is not True:
-            raise ValueError("Safety boundary missing: 'not_a_recommendation' must be true")
-        if data.get("not_a_verdict") is not True:
-            raise ValueError("Safety boundary missing: 'not_a_verdict' must be true")
-
-        guardrails = data.get("guardrails") or {}
-        if guardrails.get("final_authority") != "local_runtime":
-            raise ValueError("Safety boundary missing: guardrails.final_authority must be local_runtime")
-        if guardrails.get("this_read_model_does_not_execute_payments") is not True:
-            raise ValueError("Safety boundary missing: read model must not execute payments")
-        if guardrails.get("this_read_model_does_not_prove_settlement") is not True:
-            raise ValueError("Safety boundary missing: read model must not prove settlement")
-
-        return data
-
+        return self._validate_surface_preflight(data)
     async def get_surface_preflight_async(
         self,
         *,
@@ -6443,33 +5456,9 @@ class LnChurchClient(Payment402Client):
         Async: Fetch public-safe observational memory for a surface before interacting.
         This endpoint is strictly read-only and does NOT execute payments.
         """
-        if surface_key and target_url:
-            raise ValueError("Provide either surface_key or target_url, not both.")
-        if not surface_key and not target_url:
-            raise ValueError("Either surface_key or target_url must be provided.")
-
-        if surface_key:
-            if surface_key.startswith("surface_"):
-                surface_key = surface_key[8:]
-            if not re.match(r"^[a-fA-F0-9]{24}$", surface_key):
-                raise ValueError("Invalid surface_key format. Must be 24-character hex.")
-
-        if target_url and not target_url.strip():
-            raise ValueError("target_url cannot be empty.")
-
-        params = {}
-        if surface_key:
-            params["surface_key"] = surface_key
-        else:
-            params.update({
-                "target_url": target_url,
-                "method": method.upper(),
-                "rail": rail,
-                "network": network,
-                "asset": asset,
-                "authorization_scheme": authorization_scheme,
-                "draft_shape": draft_shape
-            })
+        params = self._surface_preflight_params(
+            surface_key, target_url, method, rail, network, asset, authorization_scheme, draft_shape,
+        )
 
         headers = {"User-Agent": CUSTOM_USER_AGENT}
         url = self.base_url.rstrip("/") + "/api/agent/monzen/surface-preflight"
@@ -6483,22 +5472,37 @@ class LnChurchClient(Payment402Client):
         except Exception as e:
             raise ValueError(f"Failed to fetch surface preflight read model: {e}")
 
-        if data.get("schema_version") != SURFACE_PREFLIGHT_SCHEMA_VERSION:
-            raise ValueError(f"Invalid schema_version. Expected {SURFACE_PREFLIGHT_SCHEMA_VERSION}")
-        if data.get("not_a_recommendation") is not True:
-            raise ValueError("Safety boundary missing: 'not_a_recommendation' must be true")
-        if data.get("not_a_verdict") is not True:
-            raise ValueError("Safety boundary missing: 'not_a_verdict' must be true")
+        return self._validate_surface_preflight(data)
+    def _goal_observation_payload(
+        self,
+        goal: dict,
+        attempt: dict,
+        steps: Optional[list] = None,
+        outcome: Optional[dict] = None,
+        evidence: Optional[dict] = None,
+        schema_version: str = "goal_attempt.v1",
+        intent_sidecar_metadata: Optional[dict] = None,
+        protocol_roles: Optional[list] = None,
+        verification_cost_vector: Optional[dict] = None
+    ) -> dict:
+        payload = {
+            "schema_version": schema_version,
+            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
+            "goal": self._strip_secrets_from_evidence(goal),
+            "attempt": self._strip_secrets_from_evidence(attempt),
+            "steps": self._strip_secrets_from_evidence(steps or []),
+            "evidence": self._strip_secrets_from_evidence(evidence or {})
+        }
+        if outcome is not None:
+            payload["outcome"] = self._strip_secrets_from_evidence(outcome)
+        if intent_sidecar_metadata is not None:
+            payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
+        if protocol_roles is not None:
+            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
+        if verification_cost_vector is not None:
+            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
 
-        guardrails = data.get("guardrails") or {}
-        if guardrails.get("final_authority") != "local_runtime":
-            raise ValueError("Safety boundary missing: guardrails.final_authority must be local_runtime")
-        if guardrails.get("this_read_model_does_not_execute_payments") is not True:
-            raise ValueError("Safety boundary missing: read model must not execute payments")
-        if guardrails.get("this_read_model_does_not_prove_settlement") is not True:
-            raise ValueError("Safety boundary missing: read model must not prove settlement")
-
-        return data
+        return payload
 
     def submit_goal_attempt_observation(
         self,
@@ -6526,25 +5530,8 @@ class LnChurchClient(Payment402Client):
 
         If outcome is omitted, the attempt is recorded as unassessed.
         """
-        payload = {
-            "schema_version": schema_version,
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "goal": self._strip_secrets_from_evidence(goal),
-            "attempt": self._strip_secrets_from_evidence(attempt),
-            "steps": self._strip_secrets_from_evidence(steps or []),
-            "evidence": self._strip_secrets_from_evidence(evidence or {})
-        }
-        if outcome is not None:
-            payload["outcome"] = self._strip_secrets_from_evidence(outcome)
-        if intent_sidecar_metadata is not None:
-            payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
-        if protocol_roles is not None:
-            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
-        if verification_cost_vector is not None:
-            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
-
+        payload = self._goal_observation_payload(goal, attempt, steps, outcome, evidence, schema_version, intent_sidecar_metadata, protocol_roles, verification_cost_vector)
         return self.execute_request("POST", "/api/agent/external/attempt/observe", payload=payload)
-
     async def submit_goal_attempt_observation_async(
         self,
         goal: dict,
@@ -6557,38 +5544,25 @@ class LnChurchClient(Payment402Client):
         protocol_roles: Optional[list] = None,
         verification_cost_vector: Optional[dict] = None
     ) -> dict:
-        """
-        Submit a Day 1 Goal Attempt Observation to the LN Church Observatory.
-
-        This records what an agent attempted to accomplish for a declared goal,
-        including free, paid, mixed, observe-only, or simulated steps.
-
-        This method is explicit-only:
-        - it does not execute payments,
-        - it does not recommend recipes,
-        - it does not auto-submit telemetry from execute_detailed(),
-        - it strips local secrets before submission.
-
-        If outcome is omitted, the attempt is recorded as unassessed.
-        """
-        payload = {
-            "schema_version": schema_version,
-            "agentId": getattr(self, "agent_id", "Anonymous_Agent"),
-            "goal": self._strip_secrets_from_evidence(goal),
-            "attempt": self._strip_secrets_from_evidence(attempt),
-            "steps": self._strip_secrets_from_evidence(steps or []),
-            "evidence": self._strip_secrets_from_evidence(evidence or {})
-        }
-        if outcome is not None:
-            payload["outcome"] = self._strip_secrets_from_evidence(outcome)
-        if intent_sidecar_metadata is not None:
-            payload["intent_sidecar_metadata"] = self._strip_secrets_from_evidence(intent_sidecar_metadata)
-        if protocol_roles is not None:
-            payload["protocol_roles"] = self._strip_secrets_from_evidence(protocol_roles)
-        if verification_cost_vector is not None:
-            payload["verification_cost_vector"] = self._strip_secrets_from_evidence(verification_cost_vector)
-
+        """Async version of submit_goal_attempt_observation."""
+        payload = self._goal_observation_payload(goal, attempt, steps, outcome, evidence, schema_version, intent_sidecar_metadata, protocol_roles, verification_cost_vector)
         return await self.execute_request_async("POST", "/api/agent/external/attempt/observe", payload=payload)
+    def _goal_summary_params(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        include_unassessed: bool = True,
+        limit: int = 20
+    ) -> dict:
+        params = {
+            "include_unassessed": "true" if include_unassessed else "false",
+            "limit": limit
+        }
+        if goal_type: params["goal_type"] = goal_type
+        if domain_hint: params["domain_hint"] = domain_hint
+        if getattr(self, "agent_id", None): params["agentId"] = self.agent_id
+
+        return params
 
     def get_goal_attempt_summary(
         self,
@@ -6603,16 +5577,8 @@ class LnChurchClient(Payment402Client):
         This endpoint is strictly free and does not invoke payment logic or 402 negotiation blocks.
         Use this to understand block ratios and upgrade signals prior to querying raw surfaces.
         """
-        params = {
-            "include_unassessed": "true" if include_unassessed else "false",
-            "limit": limit
-        }
-        if goal_type: params["goal_type"] = goal_type
-        if domain_hint: params["domain_hint"] = domain_hint
-        if getattr(self, "agent_id", None): params["agentId"] = self.agent_id
-
-        return self.execute_request("GET", "/api/agent/monzen/goal-attempts/summary", payload=params)
-
+        params = self._goal_summary_params(goal_type, domain_hint, include_unassessed, limit)
+        return self._execute_nonpurchase_get("/api/agent/monzen/goal-attempts/summary", params).response
     async def get_goal_attempt_summary_async(
         self,
         goal_type: Optional[str] = None,
@@ -6620,16 +5586,31 @@ class LnChurchClient(Payment402Client):
         include_unassessed: bool = True,
         limit: int = 20
     ) -> dict:
-        """Async version of get_goal_attempt_summary"""
+        """Async version of get_goal_attempt_summary."""
+        params = self._goal_summary_params(goal_type, domain_hint, include_unassessed, limit)
+        return (await self._execute_nonpurchase_get_async("/api/agent/monzen/goal-attempts/summary", params)).response
+    def _goal_candidates_params(
+        self,
+        goal_type: Optional[str] = None,
+        domain_hint: Optional[str] = None,
+        prefer_free_first: bool = True,
+        include_unassessed: bool = True,
+        limit: int = 10,
+        asset: AssetType = AssetType.SATS,
+        scheme: Optional[str] = "L402"
+    ) -> dict:
         params = {
+            "prefer_free_first": "true" if prefer_free_first else "false",
             "include_unassessed": "true" if include_unassessed else "false",
-            "limit": limit
+            "limit": limit,
+            "asset": asset.value if hasattr(asset, "value") else str(asset),
+            "scheme": scheme,
+            "agentId": getattr(self, "agent_id", "unknown")
         }
         if goal_type: params["goal_type"] = goal_type
         if domain_hint: params["domain_hint"] = domain_hint
-        if getattr(self, "agent_id", None): params["agentId"] = self.agent_id
 
-        return await self.execute_request_async("GET", "/api/agent/monzen/goal-attempts/summary", payload=params)
+        return params
 
     def get_goal_surface_candidates(
         self,
@@ -6650,21 +5631,9 @@ class LnChurchClient(Payment402Client):
         - This is a historical read model, NOT a recommendation or workflow recipe.
         - Missing outcomes or unassessed steps do not imply execution failure.
         """
-        params = {
-            "prefer_free_first": "true" if prefer_free_first else "false",
-            "include_unassessed": "true" if include_unassessed else "false",
-            "limit": limit,
-            "asset": asset.value if hasattr(asset, "value") else str(asset),
-            "scheme": scheme,
-            "agentId": getattr(self, "agent_id", "unknown")
-        }
-        if goal_type: params["goal_type"] = goal_type
-        if domain_hint: params["domain_hint"] = domain_hint
-
-        # GET 402 negotiation loop via execute_detailed internally
+        params = self._goal_candidates_params(goal_type, domain_hint, prefer_free_first, include_unassessed, limit, asset, scheme)
         result = self.execute_detailed("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
         return result.response
-
     async def get_goal_surface_candidates_async(
         self,
         goal_type: Optional[str] = None,
@@ -6675,30 +5644,12 @@ class LnChurchClient(Payment402Client):
         asset: AssetType = AssetType.SATS,
         scheme: Optional[str] = "L402"
     ) -> dict:
-        """Async version of get_goal_surface_candidates"""
-        params = {
-            "prefer_free_first": "true" if prefer_free_first else "false",
-            "include_unassessed": "true" if include_unassessed else "false",
-            "limit": limit,
-            "asset": asset.value if hasattr(asset, "value") else str(asset),
-            "scheme": scheme,
-            "agentId": getattr(self, "agent_id", "unknown")
-        }
-        if goal_type: params["goal_type"] = goal_type
-        if domain_hint: params["domain_hint"] = domain_hint
-
+        """Async version of get_goal_surface_candidates."""
+        params = self._goal_candidates_params(goal_type, domain_hint, prefer_free_first, include_unassessed, limit, asset, scheme)
         result = await self.execute_detailed_async("GET", "/api/agent/monzen/goal-attempts/candidates", payload=params)
         return result.response
-
-    def ensure_reporter_verification(self, public_key_type: str = "evm", force_refresh: bool = False) -> dict:
-        """
-        Verifies key control with the LN Church to attach a 'key_control_verified' status to your reports.
-        Note: This verifies key control, not report truth.
-        """
+    def _reporter_cached_verification(self, public_key_type, force_refresh):
         import time
-        from eth_account.messages import encode_defunct
-        from eth_account import Account
-
         if public_key_type != "evm":
             raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
         if not self.private_key:
@@ -6715,17 +5666,18 @@ class LnChurchClient(Payment402Client):
                 "proof_id": getattr(self, "_reporter_proof_id", None)
             }
 
-        # 1. Challenge
-        chal_res = self.execute_request("GET", f"/api/agent/identity/challenge?agentId={self.agent_id}&public_key_type=evm")
+        return None
+
+    def _reporter_verification_payload(self, chal_res):
+        from eth_account.messages import encode_defunct
+        from eth_account import Account
         challenge_id = chal_res["challenge_id"]
         message = chal_res["message"]
 
-        # 2. Sign
         signable_msg = encode_defunct(text=message)
         signed = Account.from_key(self.private_key).sign_message(signable_msg)
         signature = signed.signature.hex()
 
-        # 3. Verify
         payload = {
             "schema_version": "agent_identity_verify.v1",
             "agentId": self.agent_id,
@@ -6733,6 +5685,19 @@ class LnChurchClient(Payment402Client):
             "public_key_type": "evm",
             "signature": signature if signature.startswith("0x") else f"0x{signature}"
         }
+
+        return payload
+
+    def ensure_reporter_verification(self, public_key_type: str = "evm", force_refresh: bool = False) -> dict:
+        """
+        Verifies key control with the LN Church to attach a 'key_control_verified' status to your reports.
+        Note: This verifies key control, not report truth.
+        """
+        cached = self._reporter_cached_verification(public_key_type, force_refresh)
+        if cached is not None:
+            return cached
+        chal_res = self.execute_request("GET", f"/api/agent/identity/challenge?agentId={self.agent_id}&public_key_type=evm")
+        payload = self._reporter_verification_payload(chal_res)
 
         verify_res = self.execute_request("POST", "/api/agent/identity/verify", payload=payload)
 
@@ -6743,42 +5708,11 @@ class LnChurchClient(Payment402Client):
 
     async def ensure_reporter_verification_async(self, public_key_type: str = "evm", force_refresh: bool = False) -> dict:
         """Async version of ensure_reporter_verification. This verifies key control, not report truth."""
-        import time
-        from eth_account.messages import encode_defunct
-        from eth_account import Account
-
-        if public_key_type != "evm":
-            raise ValueError("Only 'evm' public_key_type is currently supported. Solana/Nostr/LN are future scope.")
-        if not self.private_key:
-            raise ValueError("EVM private_key is strictly required for EVM reporter verification. Custom signers are future scope.")
-
-
-        now = int(time.time() * 1000)
-        cached_until = getattr(self, "_reporter_verified_until", 0)
-
-        if not force_refresh and cached_until > now:
-            return {
-                "status": "cached",
-                "reporter_verification_status": "key_control_verified",
-                "verified_until": cached_until,
-                "proof_id": getattr(self, "_reporter_proof_id", None)
-            }
-
+        cached = self._reporter_cached_verification(public_key_type, force_refresh)
+        if cached is not None:
+            return cached
         chal_res = await self.execute_request_async("GET", f"/api/agent/identity/challenge?agentId={self.agent_id}&public_key_type=evm")
-        challenge_id = chal_res["challenge_id"]
-        message = chal_res["message"]
-
-        signable_msg = encode_defunct(text=message)
-        signed = Account.from_key(self.private_key).sign_message(signable_msg)
-        signature = signed.signature.hex()
-
-        payload = {
-            "schema_version": "agent_identity_verify.v1",
-            "agentId": self.agent_id,
-            "challenge_id": challenge_id,
-            "public_key_type": "evm",
-            "signature": signature if signature.startswith("0x") else f"0x{signature}"
-        }
+        payload = self._reporter_verification_payload(chal_res)
 
         verify_res = await self.execute_request_async("POST", "/api/agent/identity/verify", payload=payload)
 
@@ -6825,14 +5759,12 @@ class LnChurchClient(Payment402Client):
             headers["Idempotency-Key"] = idempotency_key
 
         result = self.execute_detailed("POST", endpoint_path, payload=payload, headers=headers)
-        data = result.response
-
-        # Backend headers -> body fallback extraction
-        rh_lower = {k.lower(): v for k, v in result.response_headers.items()}
-        if "result_handle" not in data and "x-ln-result-handle" in rh_lower:
-            data["result_handle"] = rh_lower["x-ln-result-handle"]
-        if "request_hash" not in data and "x-ln-request-hash" in rh_lower:
-            data["request_hash"] = rh_lower["x-ln-request-hash"]
+        data = dict(result.response)
+        metadata = _paid_result_metadata(result.response_headers, endpoint_path)
+        metadata.update(dict(result.paid_result_metadata))
+        for field, value in metadata.items():
+            if field not in data:
+                data[field] = value
 
         return DomainObservationSlotResponse(**data)
 
@@ -7043,21 +5975,12 @@ class LnChurchClient(Payment402Client):
             headers=headers
         )
 
-        data = result.response.get("data", result.response)
-
-        def get_header(keys: list) -> Optional[str]:
-            for k in keys:
-                val = result.response_headers.get(k) or result.response_headers.get(k.lower())
-                if val: return val
-            return None
-
-        result_handle = get_header(["X-LN-Result-Handle", "x-ln-church-result-handle"]) or data.get("result_handle")
-        request_hash = get_header(["X-LN-Request-Hash", "x-ln-church-request-hash"]) or data.get("request_hash")
-
-        if "result_handle" not in data and result_handle:
-            data["result_handle"] = result_handle
-        if "request_hash" not in data and request_hash:
-            data["request_hash"] = request_hash
+        data = dict(result.response.get("data", result.response))
+        metadata = _paid_result_metadata(result.response_headers, endpoint_path)
+        metadata.update(dict(result.paid_result_metadata))
+        for field, value in metadata.items():
+            if field not in data and value:
+                data[field] = value
 
         from .models import VerifiedDomainTrackRegistrationResponse
         return VerifiedDomainTrackRegistrationResponse(**data)
@@ -7093,6 +6016,8 @@ class LnChurchClient(Payment402Client):
             "public_read_model_url": registration.public_read_model_url,
             "created_at": registration.created_at
         }
+        if registration.result_expires_at is not None:
+            proof_data["result_expires_at"] = registration.result_expires_at
 
         dir_path = os.path.dirname(os.path.abspath(file_path))
         if dir_path:

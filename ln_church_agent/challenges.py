@@ -4,7 +4,8 @@ import math
 import re
 import time
 import httpx
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Tuple, Union
+from enum import Enum
 from decimal import Decimal, InvalidOperation
 
 from .models import ParsedChallenge, ChallengeSource, SchemeType, CanonicalPaymentRequirement
@@ -356,6 +357,38 @@ _SUPPORTED_DIRECT_PAYMENT_SCHEMES = (
 )
 _SUPPORTED_PAYMENT_AUTH_SCHEMES = frozenset({"l402", "mpp", "payment", "x402"})
 _NON_PAYMENT_AUTH_SCHEMES = frozenset({"basic", "bearer", "digest", "negotiate"})
+
+_PAYMENT_CHALLENGE_HEADERS = frozenset({
+    "payment-required", "x-payment-required", "x-402-payment-required",
+})
+_SETTLEMENT_BODY_MARKERS = frozenset({
+    "challenge", "accepts", "accepted_payments", "x402Version",
+    "paymentRequirements", "resource",
+})
+
+
+class _ChallengeParserOutcome(Enum):
+    NOT_APPLICABLE = "not_applicable"
+    PARSED = "parsed"
+    NO_VALID_CHALLENGE = "no_valid_challenge"
+    PARSE_FAILURE = "parse_failure"
+    UNEXPECTED_ERROR = "unexpected_error"
+
+
+class _ChallengeAbsence(NamedTuple):
+    """Validated declaration facts when no settlement rail was selected."""
+
+    payment_marker_present: bool
+    required_commerce_protocol: Optional[str]
+
+
+class _InspectChallenge(NamedTuple):
+    outcome: _ChallengeParserOutcome
+    challenge: Optional[ParsedChallenge] = None
+    required_commerce_protocol: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return f"_InspectChallenge({self.outcome.value})"
 
 
 class _UnselectedPolicyAmountView:
@@ -1383,16 +1416,7 @@ def _validate_response_body_payment_markers(body: Any) -> None:
                 _raise_malformed_payment_challenge()
         _validate_body_challenge_marker(body["challenge"])
         return
-    if any(
-        marker in body
-        for marker in (
-            "accepts",
-            "accepted_payments",
-            "x402Version",
-            "paymentRequirements",
-            "resource",
-        )
-    ):
+    if _SETTLEMENT_BODY_MARKERS.intersection(body):
         _validate_payment_payload(body)
 
 
@@ -2268,7 +2292,7 @@ def _parse_paid_surface_challenge(
         "Fail-Closed: no executable canonical paid-surface option."
     )
 
-def parse_challenge_from_response(
+def _parse_challenge_from_response(
     response: httpx.Response,
     expected_asset: str = "USDC",
     expected_chain_id: Optional[str] = None,
@@ -2278,7 +2302,7 @@ def parse_challenge_from_response(
     request_url: Optional[str] = None,
     request_method: Optional[str] = None,
     request_idempotency_key: Optional[str] = None,
-) -> ParsedChallenge:
+) -> Union[ParsedChallenge, _ChallengeAbsence]:
     h = response.headers
 
     try:
@@ -2306,11 +2330,7 @@ def parse_challenge_from_response(
     payment_headers = []
     for header_name, header_value in h.items():
         normalized_name = str(header_name).casefold()
-        if normalized_name in {
-            "payment-required",
-            "x-payment-required",
-            "x-402-payment-required",
-        }:
+        if normalized_name in _PAYMENT_CHALLENGE_HEADERS:
             payment_headers.append((normalized_name, header_value))
 
     auth_schemes = _www_authenticate_schemes(auth_h) if auth_h else ()
@@ -2328,18 +2348,8 @@ def parse_challenge_from_response(
     if auth_h and (not auth_schemes or unsupported_auth_schemes):
         _raise_malformed_payment_challenge()
 
-    body_has_payment_marker = type(body) is dict and any(
-        marker in body
-        for marker in (
-            "challenge",
-            "accepts",
-            "accepted_payments",
-            "x402Version",
-            "paymentRequirements",
-            "resource",
-            "payment",
-            "settlement",
-        )
+    body_has_payment_marker = type(body) is dict and bool(
+        (_SETTLEMENT_BODY_MARKERS | {"payment", "settlement"}).intersection(body)
     )
     leading_auth_scheme = auth_h.strip().split(None, 1)[0].casefold() if auth_h.strip() else ""
     legacy_l402_body_view = (
@@ -2734,6 +2744,62 @@ def parse_challenge_from_response(
             pc._canonical_requirement = canonical_req
         return pc
 
-    raise NoValidPaymentChallengeError(
-        "No valid 402 challenge found in headers or body."
+    # Keep raw absence facts in the parse result. Inspect must not re-read
+    # headers/body or independently define auth, alias, and OKX marker rules.
+    # A validated OKX marker is commerce-only and must not borrow an AP2/ACP
+    # classification when those surfaces have higher detection priority.
+    return _ChallengeAbsence(
+        payment_marker_present=bool(payment_headers) or (
+            "www-authenticate" in h and not auth_schemes
+        ) or (type(body) is dict and bool(_SETTLEMENT_BODY_MARKERS.intersection(body))),
+        required_commerce_protocol=(
+            "okx_app" if type(body) is dict and {"payment", "settlement"}.intersection(body)
+            else None
+        ),
     )
+
+
+def parse_challenge_from_response(
+    response: httpx.Response,
+    expected_asset: str = "USDC",
+    expected_chain_id: Optional[str] = None,
+    allowed_networks: Optional[list] = None,
+    prefer_svm: bool = False,
+    now: Optional[int] = None,
+    request_url: Optional[str] = None,
+    request_method: Optional[str] = None,
+    request_idempotency_key: Optional[str] = None,
+) -> ParsedChallenge:
+    """Project the shared declaration interpretation to the purchase API."""
+    parsed = _parse_challenge_from_response(
+        response, expected_asset, expected_chain_id, allowed_networks,
+        prefer_svm, now, request_url, request_method, request_idempotency_key,
+    )
+    if isinstance(parsed, _ChallengeAbsence):
+        raise NoValidPaymentChallengeError(
+            "No valid 402 challenge found in headers or body."
+        )
+    return parsed
+
+
+def _inspect_challenge_from_response(response: httpx.Response) -> _InspectChallenge:
+    """Project one declaration parse to Inspect's fixed, secret-free outcomes."""
+    if response.status_code not in (401, 402, 403):
+        return _InspectChallenge(_ChallengeParserOutcome.NOT_APPLICABLE)
+    try:
+        parsed = _parse_challenge_from_response(response)
+        if isinstance(parsed, _ChallengeAbsence):
+            return _InspectChallenge(
+                _ChallengeParserOutcome.PARSE_FAILURE if parsed.payment_marker_present
+                else _ChallengeParserOutcome.NO_VALID_CHALLENGE,
+                required_commerce_protocol=parsed.required_commerce_protocol,
+            )
+        if getattr(parsed, "_inspect_semantically_valid", None) is not True:
+            return _InspectChallenge(_ChallengeParserOutcome.PARSE_FAILURE)
+        return _InspectChallenge(_ChallengeParserOutcome.PARSED, parsed)
+    except NoValidPaymentChallengeError:
+        return _InspectChallenge(_ChallengeParserOutcome.NO_VALID_CHALLENGE)
+    except PaymentChallengeError:
+        return _InspectChallenge(_ChallengeParserOutcome.PARSE_FAILURE)
+    except Exception:
+        return _InspectChallenge(_ChallengeParserOutcome.UNEXPECTED_ERROR)

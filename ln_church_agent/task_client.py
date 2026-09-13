@@ -521,15 +521,9 @@ class AgentTaskClient:
     ) -> TaskDomainObservationResponse:
         try:
             request.canonical_digest()
-            payload = copy.deepcopy(
-                request.model_dump(mode="json")
-            )
-            # Keep the exact body supplied to the transport independently
-            # strict and bounded as well.
-            TaskDomainObservationSubmission.model_validate(
-                payload,
-                strict=True,
-            )
+            # The public boundary already validated and exclusively owns this
+            # Submission. Project fresh transport data from that accepted value.
+            payload = request.model_dump(mode="json")
         except Exception:
             raise _local_invalid("TASK_CREDENTIAL_INVALID") from None
 
@@ -890,12 +884,7 @@ class AgentTaskClient:
         credential_fingerprint: str,
     ) -> TaskDomainObservationSubmission:
         try:
-            stored_submission = (
-                TaskDomainObservationSubmission._validated_snapshot(
-                    checkpoint.submission
-                )
-            )
-            stored_digest = stored_submission.canonical_digest_hex()
+            stored_submission = checkpoint._owned_model("submission")
             supplied_bytes = supplied_submission.canonical_bytes()
             stored_bytes = stored_submission.canonical_bytes()
             if (
@@ -912,35 +901,15 @@ class AgentTaskClient:
                 or checkpoint.credential_fingerprint
                 != credential_fingerprint
                 or checkpoint.submission_id
-                != stored_submission.submission_id
-                or checkpoint.submission_id
                 != supplied_submission.submission_id
-                or checkpoint.submission_sha256 != stored_digest
                 or checkpoint.submission_sha256
                 != submission_sha256
                 or supplied_bytes != stored_bytes
             ):
                 raise ValueError
-            state = _checkpoint_state_value(checkpoint)
-            receipt = checkpoint.register_receipt
-            if state == "REGISTER_PENDING":
-                if (
-                    receipt is not None
-                    or checkpoint.observation_id is not None
-                ):
-                    raise ValueError
-            elif state == "REGISTERED":
-                if (
-                    type(receipt) is not TaskDomainObservationResponse
-                    or receipt.task_id != checkpoint.task_id
-                    or receipt.submission_id
-                    != checkpoint.submission_id
-                    or checkpoint.observation_id
-                    != receipt.observation_id
-                ):
-                    raise ValueError
-            else:
-                raise ValueError
+            # Checkpoint construction already checks its own phase, digest
+            # and receipt IDs. Here only the independent caller/Claim binding
+            # remains; no second definition of the checkpoint invariants.
             return stored_submission
         except TaskError:
             raise
@@ -957,9 +926,15 @@ class AgentTaskClient:
         request_bytes_sent: bool,
     ) -> None:
         if checkpoint_sink is None:
-            return
+            raise TaskCheckpointPersistenceError(
+                request_bytes_sent=request_bytes_sent,
+            )
         try:
-            emitted = _guided_checkpoint_snapshot(checkpoint)
+            # This is an external callback boundary: hand the sink an
+            # independently validated copy, never the owned sending value.
+            emitted = TaskDomainObservationCheckpoint.model_validate(
+                checkpoint.model_dump(mode="python"), strict=True
+            )
         except TaskError:
             raise
         except Exception:
@@ -989,7 +964,11 @@ class AgentTaskClient:
             Callable[[TaskDomainObservationCheckpoint], None]
         ] = None,
     ) -> TaskDomainObservationGuidedResult:
-        """Register an observation and deterministically report Completion."""
+        """Register and complete after each required caller-owned durable save.
+
+        A checkpoint sink's normal return promises completed durable storage.
+        Fresh/pending runs need a sink; a valid saved REGISTERED resume does not.
+        """
 
         self._require_open()
         if checkpoint_sink is not None and not callable(checkpoint_sink):

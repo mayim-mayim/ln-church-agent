@@ -1,167 +1,66 @@
-import pytest
-import json
-import hashlib
 import asyncio
-from unittest.mock import patch, AsyncMock
+import hashlib
+import json
+from unittest.mock import patch
+
+import pytest
 from ln_church_agent.client import LnChurchClient
 from ln_church_agent.models import ExecutionResult, SettlementReceipt, AttestationSource
 
-@patch("ln_church_agent.client.LnChurchClient.execute_detailed")
-def test_mpp_sandbox_harness_dynamic_telemetry(mock_execute):
-    """
-    MPP Harness がハードコードされた Authorization Scheme を使わず、
-    動的に Receipt から抽出した値を送信し、拡張テレメトリを含めることを確認する。
-    """
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    
-    # Raw token は保持せず、receipt state と digest のみを模擬する。
-    mock_receipt = SettlementReceipt(
-        receipt_id="r_123", scheme="MPP_Draft_v2", network="Lightning", 
-        asset="SATS", settled_amount=10, proof_reference="preimage123",
-        receipt_token_hash="sha256:" + "a" * 64, present=True,
-        source=AttestationSource.SERVER_JWS
+
+@pytest.mark.parametrize('async_mode', [False, True])
+@pytest.mark.parametrize('rail', ['l402', 'mpp_charge'])
+def test_sandbox_dynamic_telemetry_and_result(async_mode, rail):
+    client = LnChurchClient(base_url='https://api.test')
+    scheme = 'L402' if rail == 'l402' else 'MPP_Draft_v2'
+    receipt = SettlementReceipt(
+        receipt_id='r_123', scheme=scheme, network='Lightning', asset='SATS',
+        settled_amount=10, proof_reference='preimage123', receipt_token_hash='sha256:' + 'a' * 64,
+        present=True, source=AttestationSource.SERVER_JWS,
     )
-    
-    deterministic_payload = {
-        "message": "MPP success", "scenario": "mpp-charge-basic-v1", 
-        "contract": "stable", "verifiable": True
-    }
-    json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-    expected_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
-
-    get_result = ExecutionResult(
-        response={
-            **deterministic_payload,
-            "meta": {
-                "run_id": "run_123", "scenario_id": "mpp-charge-basic-v1",
-                "canonical_hash_expected": expected_hash, "interop_token": "token:1:2:3:4"
-            }
-        },
-        final_url="http://mock/sandbox/mpp",
-        settlement_receipt=mock_receipt,
-        used_scheme="MPP_Draft_v2"
-    )
-    
-    post_result = ExecutionResult(response={"status": "success"}, final_url="http://mock/report")
-    mock_execute.side_effect = [get_result, post_result]
-    
-    res = client.run_mpp_charge_sandbox_harness()
-    
-    assert res.ok is True
-    
-    args, kwargs = mock_execute.call_args_list[1]
-    assert args[0] == "POST"
-    
-    payload = kwargs["payload"]
-    assert payload["rail"] == "MPP"
-    assert payload["payment_intent"] == "charge"
-    assert payload["authorization_scheme"] == "MPP_Draft_v2"
-    assert payload["payment_receipt_present"] is True
+    body = dict(message='success', scenario=rail, contract='stable', verifiable=True)
+    digest = hashlib.sha256(json.dumps(body, separators=(',', ':')).encode()).hexdigest()
+    fetched = ExecutionResult(response=dict(body, meta={
+        'run_id': 'run_123', 'scenario_id': rail, 'canonical_hash_expected': digest, 'interop_token': 'token',
+    }), final_url='https://api.test/basic', settlement_receipt=receipt, used_scheme=scheme)
+    reported = ExecutionResult(response={'status': 'success'}, final_url='https://api.test/report')
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_detailed' + suffix, side_effect=[fetched, reported]) as execute:
+        method = getattr(client, 'run_' + rail + '_sandbox_harness' + suffix)
+        result = asyncio.run(method()) if async_mode else method()
+    assert result.ok and result.canonical_hash_matched and result.report_accepted
+    assert result.receipt_id == 'r_123' and result.report_status_code == 200
+    assert [call.args[0] for call in execute.call_args_list] == ['GET', 'POST']
+    payload = execute.call_args_list[1].kwargs['payload']
+    assert payload['rail'] == ('L402' if rail == 'l402' else 'MPP')
+    assert payload['payment_intent'] == 'charge' and payload['authorization_scheme'] == scheme
+    assert payload['payment_receipt_present'] is True
+    assert payload['canonical_hash_observed'] == digest
 
 
-@patch("ln_church_agent.client.LnChurchClient.execute_detailed_async")
-def test_mpp_sandbox_harness_async_dynamic_telemetry(mock_execute_async):
-    """
-    MPP Harness の非同期 (async) 版でも動的抽出と拡張テレメトリが正常に機能するかを確認する。
-    """
-    async def run_test():
-        client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-        
-        # Raw token は保持せず、receipt state と digest のみを模擬する。
-        mock_receipt = SettlementReceipt(
-            receipt_id="r_123", scheme="MPP_Async_Test", network="Lightning", 
-            asset="SATS", settled_amount=10, proof_reference="preimage123",
-            receipt_token_hash="sha256:" + "a" * 64, present=True,
-            source=AttestationSource.SERVER_JWS
-        )
-
-        deterministic_payload = {
-            "message": "MPP async success", "scenario": "mpp-charge-basic-v1", 
-            "contract": "stable", "verifiable": True
-        }
-        json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-        expected_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
-
-        get_result = ExecutionResult(
-            response={
-                **deterministic_payload,
-                "meta": {
-                    "run_id": "run_async_123", "scenario_id": "mpp-charge-basic-v1",
-                    "canonical_hash_expected": expected_hash, "interop_token": "token:1:2:3:4"
-                }
-            },
-            final_url="http://mock/sandbox/mpp",
-            settlement_receipt=mock_receipt,
-            used_scheme="MPP_Async_Test"
-        )
-        
-        post_result = ExecutionResult(response={"status": "success"}, final_url="http://mock/report")
-        mock_execute_async.side_effect = [get_result, post_result]
-        
-        res = await client.run_mpp_charge_sandbox_harness_async()
-        
-        assert res.ok is True
-        
-        args, kwargs = mock_execute_async.call_args_list[1]
-        assert args[0] == "POST"
-        payload = kwargs["payload"]
-        
-        assert payload["rail"] == "MPP"
-        assert payload["payment_intent"] == "charge"
-        assert payload["authorization_scheme"] == "MPP_Async_Test"
-        assert payload["payment_receipt_present"] is True
-
-    asyncio.run(run_test())
+@pytest.mark.parametrize('async_mode', [False, True])
+@pytest.mark.parametrize('message, failure', [
+    ('mpp_session_not_supported_yet', 'mpp_session_not_supported_yet'),
+    ('network failed', 'payment_failed'),
+])
+def test_mpp_fetch_failure_still_reports_without_claiming_payment(async_mode, message, failure):
+    client = LnChurchClient(base_url='https://api.test')
+    report = ExecutionResult(response={'status': 'success'}, final_url='https://api.test/report')
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_detailed' + suffix, side_effect=[RuntimeError(message), report]) as execute:
+        method = getattr(client, 'run_mpp_charge_sandbox_harness' + suffix)
+        result = asyncio.run(method()) if async_mode else method()
+    assert not result.ok and not result.payment_performed and not result.canonical_hash_matched
+    assert execute.call_args_list[1].kwargs['payload']['failure_reason'] == failure
 
 
-# 💡 復活: 欠落してしまっていたL402のテストケース
-@patch("ln_church_agent.client.LnChurchClient.execute_detailed")
-def test_l402_sandbox_harness_extended_telemetry(mock_execute):
-    """
-    L402 Harness でも MPP と同様に拡張テレメトリ (rail, payment_intent 等) が
-    送信されるよう修正されたことを確認する。
-    """
-    client = LnChurchClient(private_key="0x0000000000000000000000000000000000000000000000000000000000000001")
-    
-    # 💡 修正: こちらのモックにも追加しておく
-    mock_receipt = SettlementReceipt(
-        receipt_id="r_123", scheme="L402", network="Lightning", 
-        asset="SATS", settled_amount=10, proof_reference="preimage123",
-        receipt_token_hash="sha256:" + "a" * 64, present=True,
-        source=AttestationSource.SERVER_JWS
-    )
-
-    deterministic_payload = {
-        "message": "L402 success", "scenario": "l402-basic-v1", 
-        "contract": "stable", "verifiable": True
-    }
-    json_str = json.dumps(deterministic_payload, separators=(',', ':'))
-    expected_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
-
-    get_result = ExecutionResult(
-        response={
-            **deterministic_payload,
-            "meta": {
-                "run_id": "run_123", "scenario_id": "l402-basic-v1",
-                "canonical_hash_expected": expected_hash, "interop_token": "token:1:2:3:4"
-            }
-        },
-        final_url="http://mock/sandbox/l402",
-        settlement_receipt=mock_receipt,
-        used_scheme="L402"
-    )
-    
-    post_result = ExecutionResult(response={"status": "success"}, final_url="http://mock/report")
-    mock_execute.side_effect = [get_result, post_result]
-    
-    res = client.run_l402_sandbox_harness()
-    
-    assert res.ok is True
-    
-    args, kwargs = mock_execute.call_args_list[1]
-    payload = kwargs["payload"]
-    
-    assert payload["rail"] == "L402"
-    assert payload["payment_intent"] == "charge"
-    assert payload["authorization_scheme"] == "L402"
-    assert payload["payment_receipt_present"] is True
+@pytest.mark.parametrize('async_mode', [False, True])
+@pytest.mark.parametrize('rail', ['l402', 'mpp_charge'])
+def test_report_failure_retains_http_status(async_mode, rail):
+    client = LnChurchClient(base_url='https://api.test')
+    fetched = ExecutionResult(response={}, final_url='https://api.test/basic')
+    suffix = '_async' if async_mode else ''
+    with patch.object(client, 'execute_detailed' + suffix, side_effect=[fetched, RuntimeError('API Error 429: limited')]):
+        method = getattr(client, 'run_' + rail + '_sandbox_harness' + suffix)
+        result = asyncio.run(method()) if async_mode else method()
+    assert result.report_status_code == 429 and not result.report_accepted and not result.ok

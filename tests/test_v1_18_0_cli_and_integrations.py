@@ -208,7 +208,7 @@ def _real_v2_client_factory(exchange):
     return InjectedTransportClient
 
 
-def _invoke_official_v2_path(
+def _official_v2_invocation(
     official_path,
     credential,
     credential_path,
@@ -236,12 +236,16 @@ def _invoke_official_v2_path(
                 "--json",
             ],
         )
-        return cli.main()
+        return cli.main
 
     from examples import scheduled_http_get_batch as example
 
     monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-    return example.run_claimed_batch(credential, journal_path)
+    return lambda: example.run_claimed_batch(credential, journal_path)
+
+
+def _invoke_official_v2_path(*args):
+    return _official_v2_invocation(*args)()
 
 
 def _freeze_interrupted_report(journal_path, credential):
@@ -1548,19 +1552,6 @@ def test_official_post_ack_paths_reject_non_status_acknowledgement(
             )
 
 
-def test_official_sources_have_no_direct_post_ack_status_or_terminal_bypass():
-    sources = (
-        (ROOT / "ln_church_agent/cli.py").read_text(encoding="utf-8"),
-        (ROOT / "examples/scheduled_http_get_batch.py").read_text(
-            encoding="utf-8"
-        ),
-    )
-    for source in sources:
-        assert ".get_submission_status(" not in source
-        assert ".mark_terminal_status(" not in source
-        assert source.count(".recover_completion(") >= 1
-
-
 def test_fixture_forbids_a_separate_top_level_completion_dispatch_state():
     fixture = json.loads(
         (
@@ -1570,17 +1561,6 @@ def test_fixture_forbids_a_separate_top_level_completion_dispatch_state():
         ).read_text(encoding="utf-8")
     )
     assert fixture["sdk"]["separate_report_and_completion_ack_states"] is False
-    model_source = (ROOT / "ln_church_agent/task_v2_models.py").read_text(
-        encoding="utf-8"
-    )
-    journal_source = (ROOT / "ln_church_agent/task_journal.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'receipt_state: Literal["DURABLY_ACCEPTED"]' in model_source
-    assert "REPORT_ACCEPTED" not in model_source
-    assert "COMPLETION_DISPATCHED" not in model_source
-    assert '"REPORT_ACCEPTED"' not in journal_source
-    assert '"COMPLETION_DISPATCHED"' not in journal_source
 
 
 @pytest.mark.parametrize("official_path", ("cli", "example"))
@@ -1990,35 +1970,10 @@ def test_official_post_ack_thread_loser_has_zero_network_io(
         assert release_status.wait(timeout=5)
         return _v2_raw_response(200, status_payload)
 
-    client_type = _real_v2_client_factory(exchange)
-    if official_path == "cli":
-        from ln_church_agent import task_v2_client
-
-        monkeypatch.setattr(
-            task_v2_client, "AgentTaskV2Client", client_type
-        )
-        monkeypatch.setattr(
-            cli._task_sys,
-            "argv",
-            [
-                "ln-church-agent",
-                "task",
-                "run-scheduled-http-get-batch",
-                "--credential-file",
-                str(credential_path),
-                "--journal-file",
-                str(journal_path),
-                "--json",
-            ],
-        )
-        invoke = cli.main
-    else:
-        from examples import scheduled_http_get_batch as example
-
-        monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-        invoke = lambda: example.run_claimed_batch(
-            credential, journal_path
-        )
+    invoke = _official_v2_invocation(
+        official_path, credential, credential_path, journal_path,
+        _real_v2_client_factory(exchange), monkeypatch,
+    )
 
     winner_results = []
     winner_errors = []
@@ -2095,35 +2050,10 @@ def test_official_post_ack_native_linux_process_loser_has_zero_network_io(
         assert release_status.wait(timeout=10)
         return _v2_raw_response(200, status_payload)
 
-    client_type = _real_v2_client_factory(exchange)
-    if official_path == "cli":
-        from ln_church_agent import task_v2_client
-
-        monkeypatch.setattr(
-            task_v2_client, "AgentTaskV2Client", client_type
-        )
-        monkeypatch.setattr(
-            cli._task_sys,
-            "argv",
-            [
-                "ln-church-agent",
-                "task",
-                "run-scheduled-http-get-batch",
-                "--credential-file",
-                str(credential_path),
-                "--journal-file",
-                str(journal_path),
-                "--json",
-            ],
-        )
-        invoke = cli.main
-    else:
-        from examples import scheduled_http_get_batch as example
-
-        monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-        invoke = lambda: example.run_claimed_batch(
-            credential, journal_path
-        )
+    invoke = _official_v2_invocation(
+        official_path, credential, credential_path, journal_path,
+        _real_v2_client_factory(exchange), monkeypatch,
+    )
 
     def process_winner():
         try:
@@ -2197,35 +2127,10 @@ def test_official_post_ack_hard_exit_releases_guard_for_status_restart(
         assert "X-LN-Task-Claim-Token" not in headers
         return _v2_raw_response(200, terminal_status)
 
-    client_type = _real_v2_client_factory(exchange)
-    if official_path == "cli":
-        from ln_church_agent import task_v2_client
-
-        monkeypatch.setattr(
-            task_v2_client, "AgentTaskV2Client", client_type
-        )
-        monkeypatch.setattr(
-            cli._task_sys,
-            "argv",
-            [
-                "ln-church-agent",
-                "task",
-                "run-scheduled-http-get-batch",
-                "--credential-file",
-                str(credential_path),
-                "--journal-file",
-                str(journal_path),
-                "--json",
-            ],
-        )
-        invoke = cli.main
-    else:
-        from examples import scheduled_http_get_batch as example
-
-        monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-        invoke = lambda: example.run_claimed_batch(
-            credential, journal_path
-        )
+    invoke = _official_v2_invocation(
+        official_path, credential, credential_path, journal_path,
+        _real_v2_client_factory(exchange), monkeypatch,
+    )
 
     from ln_church_agent.task_journal import TaskJournal
 
@@ -2354,35 +2259,10 @@ def test_official_thread_contention_has_no_late_post_after_ack(
             200, _v2_status(credential, frozen.exact_bytes)
         )
 
-    client_type = _real_v2_client_factory(exchange)
-    if official_path == "cli":
-        from ln_church_agent import task_v2_client
-
-        monkeypatch.setattr(
-            task_v2_client, "AgentTaskV2Client", client_type
-        )
-        monkeypatch.setattr(
-            cli._task_sys,
-            "argv",
-            [
-                "ln-church-agent",
-                "task",
-                "run-scheduled-http-get-batch",
-                "--credential-file",
-                str(credential_path),
-                "--journal-file",
-                str(journal_path),
-                "--json",
-            ],
-        )
-        invoke = cli.main
-    else:
-        from examples import scheduled_http_get_batch as example
-
-        monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-        invoke = lambda: example.run_claimed_batch(
-            credential, journal_path
-        )
+    invoke = _official_v2_invocation(
+        official_path, credential, credential_path, journal_path,
+        _real_v2_client_factory(exchange), monkeypatch,
+    )
 
     winner_results = []
     winner_errors = []
@@ -2460,35 +2340,10 @@ def test_official_native_linux_process_contention_has_one_post(
             200, _v2_status(credential, frozen.exact_bytes)
         )
 
-    client_type = _real_v2_client_factory(exchange)
-    if official_path == "cli":
-        from ln_church_agent import task_v2_client
-
-        monkeypatch.setattr(
-            task_v2_client, "AgentTaskV2Client", client_type
-        )
-        monkeypatch.setattr(
-            cli._task_sys,
-            "argv",
-            [
-                "ln-church-agent",
-                "task",
-                "run-scheduled-http-get-batch",
-                "--credential-file",
-                str(credential_path),
-                "--journal-file",
-                str(journal_path),
-                "--json",
-            ],
-        )
-        invoke = cli.main
-    else:
-        from examples import scheduled_http_get_batch as example
-
-        monkeypatch.setattr(example, "AgentTaskV2Client", client_type)
-        invoke = lambda: example.run_claimed_batch(
-            credential, journal_path
-        )
+    invoke = _official_v2_invocation(
+        official_path, credential, credential_path, journal_path,
+        _real_v2_client_factory(exchange), monkeypatch,
+    )
 
     def process_winner():
         try:

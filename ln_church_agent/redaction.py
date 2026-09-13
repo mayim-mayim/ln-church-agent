@@ -14,6 +14,28 @@ from .navigation import FORBIDDEN_REDIRECT_PORTS
 
 
 QUERY_REDACTION = "REDACTED"
+_PAID_RESULT_PATH_RE = re.compile(r"(/api/bazaar/paid-results/)[^\s<>\"'?#]+")
+_PAID_RESULT_HANDLE_RE = re.compile(r"\bpr_[a-zA-Z0-9_-]+\b")
+_PAID_RESULT_QUERY_RE = re.compile(r"([?&](?:request_hash|result_handle)=)[^&\s<>\"']*", re.IGNORECASE)
+
+
+def redact_paid_result_proof(value: Any, proof_values=()) -> Any:
+    """Copy purchaser data for public output without changing its business value."""
+    if isinstance(value, dict):
+        return {key: redact_paid_result_proof(item, proof_values) for key, item in value.items()
+                if str(key).lower().replace("-", "_") not in {"result_handle", "request_hash"}}
+    if isinstance(value, (list, tuple)):
+        return [redact_paid_result_proof(item, proof_values) for item in value]
+    if isinstance(value, str):
+        for proof in proof_values:
+            if proof:
+                value = value.replace(proof, QUERY_REDACTION)
+        value = _PAID_RESULT_PATH_RE.sub(r"\1" + QUERY_REDACTION, value)
+        value = _PAID_RESULT_HANDLE_RE.sub(QUERY_REDACTION, value)
+        return _PAID_RESULT_QUERY_RE.sub(r"\1" + QUERY_REDACTION, value)
+    return value
+
+
 _ABSOLUTE_HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _INSPECT_PRIVATE_HOST_SUFFIXES = (
     ".localhost",
@@ -430,7 +452,10 @@ def redact_urls_in_text(value: Any) -> Any:
 
 def redact_remote_metadata(value: Any, *, field_name: Any = None) -> Any:
     """Return a non-mutating advisory copy with secret fields redacted."""
-    if field_name is not None and is_secret_query_key(field_name):
+    if field_name is not None and (
+        is_secret_query_key(field_name)
+        or _normalize_name(field_name) in {"result-handle", "request-hash"}
+    ):
         return QUERY_REDACTION
     if isinstance(value, dict):
         return {
@@ -442,5 +467,5 @@ def redact_remote_metadata(value: Any, *, field_name: Any = None) -> Any:
     if isinstance(value, tuple):
         return [redact_remote_metadata(item) for item in value]
     if isinstance(value, str):
-        return redact_urls_in_text(value)
+        return redact_paid_result_proof(redact_urls_in_text(value))
     return value

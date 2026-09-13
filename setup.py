@@ -9,13 +9,14 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.0",
+    version="1.18.2",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     package_data={"ln_church_agent": ["contracts/*.json"]},
     install_requires=[
         "requests>=2.31.0",
         "pydantic>=2.0.0",
         "eth-account>=0.11.0",
+        "eth-hash[pycryptodome]>=0.3.1",
         "httpx>=0.25.0",
         "bolt11>=2.1.0,<2.1.1",
     ],

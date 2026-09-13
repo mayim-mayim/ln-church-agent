@@ -16,7 +16,9 @@ from ln_church_agent.task_journal import (
 )
 from ln_church_agent.task_v2_models import (
     ScheduledCompletionAcknowledgement,
+    ScheduledCompletionReport,
     ScheduledRewardStatus,
+    ScheduledTargetResult,
 )
 
 
@@ -413,12 +415,95 @@ def test_failure_report_rejects_null_placeholders_and_unknown_fields(
     journal.start_manifest_attempt()
     report = json.loads(_failure_report().decode("utf-8"))
     report["manifest_fetch"][field] = value
+    if value is None:
+        # Optional wire None is omitted by serialization; the stored report
+        # must already have the exact sparse shape and rejects placeholders.
+        model = ScheduledCompletionReport.model_validate(report)
+        assert field not in model.manifest_fetch.model_dump()
     with pytest.raises(JournalError, match="^JOURNAL_INVALID$"):
         journal.freeze_report(
             jcs_canonical_bytes(report),
             submission_id=SUBMISSION_ID,
             manifest_fetch_outcome="release_timeout",
         )
+
+
+@pytest.mark.parametrize(
+    "field,value,accepted",
+    [
+        ("elapsed_ms", 0, True), ("elapsed_ms", 5000, True),
+        ("elapsed_ms", -1, False), ("elapsed_ms", 5001, False),
+        ("elapsed_ms", True, False), ("elapsed_ms", 0.5, False),
+        ("http_status", 201, True), ("http_status", 599, True),
+        ("http_status", 200, False), ("http_status", 600, False),
+        ("http_status", True, False), ("http_status", 201.5, False),
+    ],
+)
+def test_manifest_integer_vectors_reach_wire_and_journal(
+    tmp_path, field, value, accepted
+):
+    journal = _journal(tmp_path)
+    journal.create()
+    journal.mark_offer_rechecked(DIGEST)
+    journal.start_manifest_attempt()
+    report = json.loads(_failure_report("release_http_unexpected_status"))
+    report["manifest_fetch"].update({"http_status": 503, field: value})
+    if accepted:
+        ScheduledCompletionReport.model_validate(report)
+        snapshot = journal.freeze_report(
+            jcs_canonical_bytes(report), submission_id=SUBMISSION_ID,
+            manifest_fetch_outcome="release_http_unexpected_status",
+        )
+        assert snapshot.state == "REPORT_FROZEN"
+    else:
+        with pytest.raises(ValueError):
+            ScheduledCompletionReport.model_validate(report)
+        with pytest.raises(JournalError, match="^JOURNAL_INVALID$"):
+            journal.freeze_report(
+                json.dumps(report, sort_keys=True, separators=(",", ":")).encode(),
+                submission_id=SUBMISSION_ID,
+                manifest_fetch_outcome="release_http_unexpected_status",
+            )
+        assert journal.load().state == "MANIFEST_FETCH_STARTED"
+
+
+@pytest.mark.parametrize(
+    "field,value,accepted",
+    [
+        ("elapsed_ms", 0, True), ("elapsed_ms", 12000, True),
+        ("elapsed_ms", -1, False), ("elapsed_ms", 12001, False),
+        ("elapsed_ms", True, False), ("elapsed_ms", 1.0, False),
+        ("http_status", 200, True), ("http_status", 599, True),
+        ("http_status", 199, False), ("http_status", 600, False),
+        ("http_status", True, False), ("http_status", 200.0, False),
+    ],
+)
+def test_target_integer_vectors_reach_wire_and_write_ahead_journal(
+    tmp_path, field, value, accepted
+):
+    journal = _journal(tmp_path)
+    journal.create()
+    journal.mark_offer_rechecked(DIGEST)
+    journal.start_manifest_attempt()
+    journal.bind_verified_manifest(DIGEST, 2, manifest_bytes=MANIFEST)
+    journal.mark_target_attempt_started(0)
+    values = {"http_status": 200, "elapsed_ms": 1, field: value}
+    if accepted:
+        ScheduledTargetResult(
+            position=0, target_url="https://example.com/a",
+            outcome="http_response", **values,
+        )
+        journal.record_target_result(0, "http_response", **values)
+        assert journal.load().payload["targets"][0][field] == value
+    else:
+        with pytest.raises(ValueError):
+            ScheduledTargetResult(
+                position=0, target_url="https://example.com/a",
+                outcome="http_response", **values,
+            )
+        with pytest.raises(JournalError, match="^JOURNAL_INVALID$"):
+            journal.record_target_result(0, "http_response", **values)
+        assert journal.load().state == "ATTEMPT_STARTED"
 
 
 @pytest.mark.parametrize(

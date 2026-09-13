@@ -1,12 +1,13 @@
 import uuid
 import time
 from enum import Enum
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, field_serializer
 from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 from decimal import Decimal
 import threading
+import copy
 
 class ChallengeSource(str, Enum):
     STANDARD_X402 = "payment_required_header"
@@ -162,6 +163,17 @@ class PaymentEvidenceRecord(BaseModel):
     sponsored_access: Optional[SponsoredAccessEvidence] = None
     sandbox: Optional[SandboxEvidence] = None
 
+@dataclass
+class _PaymentOperation:
+    """One operation's runtime and budget facts; never a public/secret DTO."""
+    phase: str = "not_started"
+    amount: Decimal = Decimal("0")
+    budget_state: Optional[str] = None
+    owner: Optional[str] = None
+    revision: int = 0
+    known_settled: bool = False
+
+
 class ExecutionContext(BaseModel):
     intent_label: str = "default_intent"
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -170,38 +182,32 @@ class ExecutionContext(BaseModel):
     past_evidence: Optional[List[PaymentEvidenceRecord]] = None
     session_budget_restored: bool = False
 
-    _session_budget_restored: bool = PrivateAttr(default=False)
     _payment_executed: bool = PrivateAttr(default=False)
     _idempotency_key: Optional[str] = PrivateAttr(default=None)
     _logical_operation_id: Optional[str] = PrivateAttr(default=None)
     _origin_idempotency_keys: Dict[str, str] = PrivateAttr(default_factory=dict)
-    _payment_states: Dict[str, str] = PrivateAttr(default_factory=dict)
+    _operations: Dict[str, _PaymentOperation] = PrivateAttr(default_factory=dict)
+    _operation_owner: str = PrivateAttr(default_factory=lambda: str(uuid.uuid4()))
     _payment_identities: Dict[str, str] = PrivateAttr(default_factory=dict)
-    _budget_reservations: Dict[str, Decimal] = PrivateAttr(default_factory=dict)
-    _ambiguous_reservations: Dict[str, Decimal] = PrivateAttr(default_factory=dict)
-    _known_settled_ambiguities: set = PrivateAttr(default_factory=set)
     _navigation_urls: set = PrivateAttr(default_factory=set)
     _navigation_hops: int = PrivateAttr(default=0)
     _navigation_states: Dict[str, Any] = PrivateAttr(default_factory=dict)
     _navigation_pins: Dict[str, Any] = PrivateAttr(default_factory=dict)
     _payment_state_lock: threading.RLock = PrivateAttr(default_factory=threading.RLock)
 
-    def model_post_init(self, __context: Any) -> None:
-        """Bridge the v1.16.1 public flag to the private runtime state."""
-        self._session_budget_restored = self.session_budget_restored
-
     def get_payment_state(self, fingerprint: str) -> str:
         with self._payment_state_lock:
-            return self._payment_states.get(fingerprint, "not_started")
+            operation = self._operations.get(fingerprint)
+            return operation.phase if operation else "not_started"
 
     def set_payment_state(self, fingerprint: str, state: str):
         with self._payment_state_lock:
-            self._payment_states[fingerprint] = state
+            self._operations.setdefault(fingerprint, _PaymentOperation()).phase = state
 
     def list_payment_states(self) -> Dict[str, str]:
         """Return a snapshot suitable for ambiguity/status recovery tooling."""
         with self._payment_state_lock:
-            return dict(self._payment_states)
+            return {key: operation.phase for key, operation in self._operations.items()}
 
 class ParsedChallenge(BaseModel):
     scheme: str
@@ -244,17 +250,46 @@ class TrustEvidence(BaseModel):
     agent_hints: dict = Field(default_factory=dict)
 
 class ExecutionResult(BaseModel):
-    response: dict
-    final_url: str
+    _paid_result_metadata: Dict[str, str] = PrivateAttr(default_factory=dict)
+
+    def __init__(self, **data: Any):
+        metadata = data.pop("paid_result_metadata", {})
+        super().__init__(**data)
+        self._paid_result_metadata = {
+            key: value for key, value in metadata.items()
+            if key in {"result_handle", "request_hash", "result_expires_at"}
+            and isinstance(value, str)
+        }
+
+    @property
+    def paid_result_metadata(self) -> Dict[str, str]:
+        """Purchaser-only received metadata; each access returns a detached copy."""
+        return dict(self._paid_result_metadata)
+
+    response: dict = Field(repr=False)
+    final_url: str = Field(repr=False)
     retry_count: int = 0
     response_headers: Dict[str, str] = Field(default_factory=dict)
     settlement_receipt: Optional[Any] = None
     used_scheme: Optional[str] = None
     used_asset: Optional[str] = None
     verification_status: Optional[str] = None
-    outcome: Optional[OutcomeSummary] = None
+    outcome: Optional[OutcomeSummary] = Field(default=None, repr=False)
     credential_shape: Optional[str] = None
     failure_reason: Optional[str] = None
+
+    @field_serializer("response", "outcome")
+    def _public_response(self, value):
+        from .redaction import redact_paid_result_proof
+        if isinstance(value, BaseModel):
+            value = value.model_dump()
+        proofs = tuple(self._paid_result_metadata.get(key, "") for key in ("result_handle", "request_hash"))
+        return redact_paid_result_proof(value, proofs)
+
+    @field_serializer("final_url")
+    def _public_final_url(self, value):
+        from .redaction import redact_paid_result_proof, redact_url_query
+        return redact_paid_result_proof(redact_url_query(value))
 
 class EvidenceRepository:
     def export_evidence(self, record: PaymentEvidenceRecord, context: ExecutionContext) -> None:
@@ -290,13 +325,29 @@ class PaymentPolicy:
         # Keep the runtime lock outside dataclass fields: dataclasses.asdict()
         # deep-copies fields and an RLock is intentionally not serializable.
         self._session_spend_lock = threading.RLock()
-        self._session_reserved_usd = 0.0
         self._session_ledger_version = 0
-        self._budget_session_id = None
         self._restored_session_ids = set()
-        self._restored_session_reservations = {}
-        self._session_budget_operation_journal = {}
-        self._session_budget_operation_versions = {}
+        self._session_operations = {}
+
+    def _budget_total(self, state: str) -> Decimal:
+        return sum(
+            (operation.amount for operations in self._session_operations.values()
+             for operation in operations.values() if operation.budget_state == state),
+            Decimal("0"),
+        )
+
+    @property
+    def _session_reserved_usd(self) -> float:
+        return float(self._budget_total("reserved"))
+
+    def _get_session_spend(self) -> float:
+        if not hasattr(self, "_session_operations"):
+            return float(self._session_baseline_usd)
+        return float(self._session_baseline_usd + self._budget_total("confirmed"))
+
+    def _set_session_spend(self, value: float) -> None:
+        confirmed = self._budget_total("confirmed") if hasattr(self, "_session_operations") else Decimal("0")
+        self._session_baseline_usd = Decimal(str(value)) - confirmed
 
     def __deepcopy__(self, memo):
         """Copy policy configuration/ledger while creating a fresh lock."""
@@ -316,24 +367,18 @@ class PaymentPolicy:
             blocked_hosts=list(self.blocked_hosts),
             _session_spent_usd=self._session_spent_usd,
         )
-        copied._session_reserved_usd = self._session_reserved_usd
         copied._session_ledger_version = self._session_ledger_version
-        copied._budget_session_id = self._budget_session_id
         copied._restored_session_ids = set(self._restored_session_ids)
-        copied._restored_session_reservations = {
-            session_id: dict(reservations)
-            for session_id, reservations in self._restored_session_reservations.items()
-        }
-        copied._session_budget_operation_journal = {
-            session_id: dict(events)
-            for session_id, events in self._session_budget_operation_journal.items()
-        }
-        copied._session_budget_operation_versions = {
-            session_id: dict(versions)
-            for session_id, versions in self._session_budget_operation_versions.items()
-        }
+        copied._session_baseline_usd = self._session_baseline_usd
+        copied._session_operations = copy.deepcopy(self._session_operations, memo)
         memo[id(self)] = copied
         return copied
+
+# Install after dataclass construction: constructor/default/asdict keep the
+# historical float field while runtime reads derive it from the owned facts.
+PaymentPolicy._session_spent_usd = property(
+    PaymentPolicy._get_session_spend, PaymentPolicy._set_session_spend
+)
 
 class SettlementReceipt(BaseModel):
     receipt_id: str
@@ -543,26 +588,9 @@ class MonzenGraphResponse(BaseModel):
     data: Dict[str, Any]
     next_action: Optional[NextAction] = None
 
-class _ExecutionUnlock(str, Enum):
-    SETTLEMENT_PROOF = "settlement_proof"
-    ENTITLEMENT_PROOF = "entitlement_proof"
 
-class _FundingPolicy(str, Enum):
-    SELF_FUNDED = "self_funded"
-    SUBSIDIZED = "subsidized"
-    FULLY_SPONSORED = "fully_sponsored"
 
-class _EntitlementKind(str, Enum):
-    FAUCET = "faucet"
-    GRANT = "grant"
 
-class _ExecutionAccessPlan(BaseModel):
-    unlock: _ExecutionUnlock
-    funding_policy: _FundingPolicy
-    entitlement_kind: Optional[_EntitlementKind] = None
-    settlement_scheme: str
-    settlement_asset: str
-    selected_reason: str = ""
 
 class InteropRunResult(BaseModel):
     ok: bool
@@ -852,8 +880,9 @@ class DomainObservationSlotResponse(BaseModel):
     expires_at: Optional[str] = None
     status_url: Optional[str] = None
     public_read_model_url: Optional[str] = None
-    result_handle: Optional[str] = None
-    request_hash: Optional[str] = None
+    result_handle: Optional[str] = Field(default=None, repr=False, exclude=True)
+    request_hash: Optional[str] = Field(default=None, repr=False, exclude=True)
+    result_expires_at: Optional[str] = None
     constraints: Dict[str, Any] = Field(default_factory=dict)
 
 class VerifiedDomainTrackPrice(BaseModel):
@@ -894,8 +923,9 @@ class VerifiedDomainTrackRegistrationResponse(BaseModel):
     sponsor_challenge_url: Optional[str] = None
     status_url: Optional[str] = None
     public_read_model_url: Optional[str] = None
-    result_handle: Optional[str] = None
-    request_hash: Optional[str] = None
+    result_handle: Optional[str] = Field(default=None, repr=False, exclude=True)
+    request_hash: Optional[str] = Field(default=None, repr=False, exclude=True)
+    result_expires_at: Optional[str] = None
     next_actions: List[VerifiedDomainTrackNextAction] = Field(default_factory=list)
     not_a_verdict: bool = True
     not_a_security_scan: bool = True

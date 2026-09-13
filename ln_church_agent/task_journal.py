@@ -23,6 +23,8 @@ import tempfile
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
 from .task_contract import jcs_canonical_bytes, validate_task_id
+from .task_v2_contract import _is_elapsed_ms, _is_http_status
+from ._private_file_io import fsync_directory, read_bounded, write_all
 
 
 JOURNAL_SCHEMA_VERSION = "ln_church.scheduled_http_get_batch_journal.v1"
@@ -374,9 +376,7 @@ def _decoded_frozen_report(
     observed = manifest_fetch.get("observed_sha256")
     fetch_status = manifest_fetch.get("http_status")
     fetch_elapsed = manifest_fetch.get("elapsed_ms")
-    if "elapsed_ms" in manifest_fetch and (
-        type(fetch_elapsed) is not int or not 0 <= fetch_elapsed <= 5000
-    ):
+    if "elapsed_ms" in manifest_fetch and not _is_elapsed_ms(fetch_elapsed, 5000):
         raise JournalError("JOURNAL_INVALID")
     if fetch_outcome == "retrieved":
         fetch_fields_valid = (
@@ -384,8 +384,7 @@ def _decoded_frozen_report(
         )
     elif fetch_outcome == "release_http_unexpected_status":
         fetch_fields_valid = (
-            type(fetch_status) is int
-            and 201 <= fetch_status <= 599
+            _is_http_status(fetch_status, 201)
             and observed is None
         )
     elif fetch_outcome == "release_digest_mismatch":
@@ -416,17 +415,11 @@ def _decoded_frozen_report(
             or result_outcome not in _TARGET_OUTCOMES
             or (
                 "elapsed_ms" in result
-                and (
-                    type(result.get("elapsed_ms")) is not int
-                    or not 0 <= result["elapsed_ms"] <= 12000
-                )
+                and not _is_elapsed_ms(result.get("elapsed_ms"), 12000)
             )
             or (
                 result_outcome == "http_response"
-                and (
-                    type(result.get("http_status")) is not int
-                    or not 200 <= result["http_status"] <= 599
-                )
+                and not _is_http_status(result.get("http_status"), 200)
             )
             or (
                 result_outcome != "http_response"
@@ -823,12 +816,12 @@ def _validate_payload(payload: Any) -> Dict[str, Any]:
             raise JournalError("JOURNAL_INVALID")
         status = target.get("http_status")
         if item_outcome == "http_response":
-            if type(status) is not int or not 200 <= status <= 599:
+            if not _is_http_status(status, 200):
                 raise JournalError("JOURNAL_INVALID")
         elif status is not None:
             raise JournalError("JOURNAL_INVALID")
         elapsed = target.get("elapsed_ms")
-        if elapsed is not None and (type(elapsed) is not int or not 0 <= elapsed <= 12000):
+        if elapsed is not None and not _is_elapsed_ms(elapsed, 12000):
             raise JournalError("JOURNAL_INVALID")
     state = payload["state"]
     if state == "INIT":
@@ -1148,12 +1141,7 @@ class TaskJournal:
                 or (os.name != "nt" and stat.S_IMODE(before.st_mode) != 0o600)
             ):
                 raise JournalError("JOURNAL_INVALID")
-            content = bytearray()
-            while len(content) <= JOURNAL_MAXIMUM_BYTES:
-                chunk = os.read(descriptor, min(65536, JOURNAL_MAXIMUM_BYTES + 1 - len(content)))
-                if not chunk:
-                    break
-                content.extend(chunk)
+            content = read_bounded(descriptor, JOURNAL_MAXIMUM_BYTES)
             after = os.fstat(descriptor)
             if (
                 len(content) > JOURNAL_MAXIMUM_BYTES
@@ -1220,12 +1208,7 @@ class TaskJournal:
             )
             if os.name != "nt":
                 os.fchmod(temporary_fd, 0o600)
-            view = memoryview(encoded)
-            while view:
-                written = os.write(temporary_fd, view)
-                if written <= 0:
-                    raise OSError
-                view = view[written:]
+            write_all(temporary_fd, encoded)
             self._fault("after_temp_write")
             os.fsync(temporary_fd)
             self._fault("after_file_fsync")
@@ -1237,13 +1220,7 @@ class TaskJournal:
             os.replace(temporary_name, str(self.path))
             replaced = True
             self._fault("after_replace")
-            if os.name != "nt":
-                flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-                directory_fd = os.open(str(self.path.parent), flags)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+            fsync_directory(self.path.parent)
             self._fault("after_directory_fsync")
         except BaseException:
             if temporary_fd >= 0:
@@ -1410,13 +1387,13 @@ class TaskJournal:
                 "outcome": outcome,
             }
             if outcome == "http_response":
-                if type(http_status) is not int or not 200 <= http_status <= 599:
+                if not _is_http_status(http_status, 200):
                     raise JournalError("JOURNAL_INVALID")
                 item["http_status"] = http_status
             elif http_status is not None:
                 raise JournalError("JOURNAL_INVALID")
             if elapsed_ms is not None:
-                if type(elapsed_ms) is not int or not 0 <= elapsed_ms <= 12000:
+                if not _is_elapsed_ms(elapsed_ms, 12000):
                     raise JournalError("JOURNAL_INVALID")
                 item["elapsed_ms"] = elapsed_ms
             payload["targets"][position] = item

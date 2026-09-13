@@ -2,6 +2,14 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
+## [1.18.2] - 2026-09-11 (Source Simplification)
+* **Runtime simplification**: Consolidates internal payment, parsing, redaction, model-validation, and private-file handling while retaining the existing public interfaces and payment-authority boundaries.
+* **Purchase-result recovery**: Retains the received result handle, request hash, and result expiry as private metadata. Recovery GETs never initiate a purchase, including on an unexpected HTTP 402; missing or expired results do not prove non-payment.
+* **Guided Task checkpoints**: Documents caller-owned durable checkpoint storage and the existing `REGISTERED` resume boundary. Non-purchasing goal-summary reads preserve their HTTP failure status without entering payment or navigation flows.
+* **Tests and package identity**: Removes obsolete historical-identity and compatibility scaffolding, retains current behavior checks, and synchronizes package and SDK identities to `1.18.2`. The accepted package definition includes the explicit `eth-hash[pycryptodome]>=0.3.1` dependency.
+* **Verification boundary**: Reuses the accepted source and targeted correction evidence. Native Windows evidence covers one isolated journal create/replace/load and guard-contention condition; it is not full native-platform qualification.
+* **Details**: [v1.18.2 release notes](docs/release_notes/v1.18.2.md)
+
 ## [1.18.0] - 2026-08-31 (Scheduled HTTP GET Batch SDK)
 * **Generic v2 Task profile**: Adds strict v2 Task detection, one-attempt Claim, readiness, abandonment, compound Completion, and Submission-status recovery for `scheduled_http_get_batch.v1`, while preserving released v1 models, flat errors, routes, and retry semantics. An indeterminate Claim becomes `CLAIM_OUTCOME_UNKNOWN` and is never replayed.
 * **Controlled Manifest transport**: Reuses the exact signed Manifest URL, resolves fresh A/AAAA answers per attempt, and validates IPv6 fail-closed against a pinned, runtime-network-free IANA allocation and special-purpose snapshot. It rejects a whole answer set containing any forbidden address before socket creation, pins the numeric peer, verifies connected-peer equality, and preserves canonical-host TLS SNI, certificate, and `Host` handling. Redirects, ambient proxies, cookies, authorization, `netrc`, request bodies, caller headers, and automatic decoding are prohibited.
@@ -469,3 +477,4 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 
 ## [1.0.0] - Initial Stable Release
 * Introduced the autonomous `Probe → Pay → Execute` loop across `L402`/`MPP` (Lightning), `x402` (Polygon), and `x402-solana` (Solana).
+

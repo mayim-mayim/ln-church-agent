@@ -10,17 +10,15 @@ import sys as _task_sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from enum import Enum
-from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional, List, Tuple, Type
 from .models import InspectResult, SettlementOption, ObservatoryMetadata
-from .challenges import parse_challenge_from_response
-from .exceptions import NoValidPaymentChallengeError, PaymentChallengeError
+from .challenges import _ChallengeParserOutcome, _inspect_challenge_from_response
 from .app_inspect import detect_commerce_surface, detect_app_surface, build_commerce_guidance
 from .grant_signals import detect_grant_signals
 from .models import GrantSignalObservation
 from .inspect_transport import InspectTransportError, _inspect_request
 from .redaction import _contains_inspect_secret_material, redact_inspect_public_url
+from ._private_file_io import fsync_directory, read_bounded, write_all
 
 
 _TASK_FILE_MAX_BYTES = 256 * 1024
@@ -493,12 +491,7 @@ class _TaskCredentialReservation:
             raise ValueError("TASK_CREDENTIAL_INVALID")
         os.lseek(self.fd, 0, os.SEEK_SET)
         os.ftruncate(self.fd, 0)
-        view = memoryview(encoded)
-        while view:
-            written = os.write(self.fd, view)
-            if written <= 0:
-                raise OSError
-            view = view[written:]
+        write_all(self.fd, encoded)
         os.fsync(self.fd)
         self._require_identity()
 
@@ -529,12 +522,7 @@ class _TaskCredentialReservation:
         ).encode("utf-8")
         os.lseek(self.fd, 0, os.SEEK_SET)
         os.ftruncate(self.fd, 0)
-        view = memoryview(encoded)
-        while view:
-            written = os.write(self.fd, view)
-            if written <= 0:
-                raise OSError
-            view = view[written:]
+        write_all(self.fd, encoded)
         os.fsync(self.fd)
 
     def remove_own_reservation(self) -> None:
@@ -756,18 +744,7 @@ class _TaskCheckpointFile:
                 or before.st_size > _TASK_CHECKPOINT_FILE_MAX_BYTES
             ):
                 raise ValueError("TASK_CREDENTIAL_INVALID")
-            while len(content) <= _TASK_CHECKPOINT_FILE_MAX_BYTES:
-                chunk = os.read(
-                    descriptor,
-                    min(
-                        64 * 1024,
-                        _TASK_CHECKPOINT_FILE_MAX_BYTES + 1
-                        - len(content),
-                    ),
-                )
-                if not chunk:
-                    break
-                content.extend(chunk)
+            content = read_bounded(descriptor, _TASK_CHECKPOINT_FILE_MAX_BYTES)
             self._require_regular_file(
                 descriptor,
                 self.path,
@@ -782,30 +759,7 @@ class _TaskCheckpointFile:
                 raise ValueError("TASK_CREDENTIAL_INVALID")
         finally:
             os.close(descriptor)
-        parse_failed = False
-        value: Any = None
-        try:
-            value = json.loads(
-                bytes(content).decode("utf-8"),
-                object_pairs_hook=_reject_task_json_object_pairs,
-                parse_constant=_reject_task_json_constant,
-            )
-        except (
-            UnicodeDecodeError,
-            TypeError,
-            ValueError,
-            json.JSONDecodeError,
-        ):
-            parse_failed = True
-        if parse_failed:
-            content.clear()
-            value = None
-            raise ValueError("TASK_CREDENTIAL_INVALID")
-        if type(value) is not dict:
-            content.clear()
-            value = None
-            raise ValueError("TASK_CREDENTIAL_INVALID")
-        return value
+        return _decoded_task_file_json(content)
 
     def write_payload(self, payload: Dict[str, Any]) -> None:
         self._require_lock_identity()
@@ -846,12 +800,7 @@ class _TaskCheckpointFile:
                 temporary_fd, temporary_path
             )
 
-            view = memoryview(encoded)
-            while view:
-                written = os.write(temporary_fd, view)
-                if written <= 0:
-                    raise OSError
-                view = view[written:]
+            write_all(temporary_fd, encoded)
             os.fsync(temporary_fd)
             self._require_regular_file(
                 temporary_fd,
@@ -884,20 +833,7 @@ class _TaskCheckpointFile:
             os.replace(temporary_name, str(self.path))
             replaced = True
 
-            if os.name != "nt":
-                directory_flags = os.O_RDONLY
-                if hasattr(os, "O_DIRECTORY"):
-                    directory_flags |= os.O_DIRECTORY
-                if hasattr(os, "O_CLOEXEC"):
-                    directory_flags |= os.O_CLOEXEC
-                directory_fd = os.open(
-                    str(self.path.parent),
-                    directory_flags,
-                )
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+            fsync_directory(self.path.parent)
 
             new_fd = os.open(
                 str(self.path), self._data_open_flags()
@@ -958,6 +894,24 @@ def _reject_task_json_constant(_value: str) -> None:
     raise ValueError("TASK_CREDENTIAL_INVALID")
 
 
+def _decoded_task_file_json(content: bytearray) -> Dict[str, Any]:
+    parse_failed = False
+    value: Any = None
+    try:
+        value = json.loads(
+            bytes(content).decode("utf-8"),
+            object_pairs_hook=_reject_task_json_object_pairs,
+            parse_constant=_reject_task_json_constant,
+        )
+    except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
+        parse_failed = True
+    if parse_failed or type(value) is not dict:
+        content.clear()
+        value = None
+        raise ValueError("TASK_CREDENTIAL_INVALID")
+    return value
+
+
 def _read_task_json_file(path: str, *, require_private: bool) -> Dict[str, Any]:
     candidate = _validated_task_file_path(
         path,
@@ -984,15 +938,7 @@ def _read_task_json_file(path: str, *, require_private: bool) -> Dict[str, Any]:
                 raise ValueError("TASK_CREDENTIAL_INVALID")
             if hasattr(os, "geteuid") and before.st_uid != os.geteuid():
                 raise ValueError("TASK_CREDENTIAL_INVALID")
-        content = bytearray()
-        while len(content) <= _TASK_FILE_MAX_BYTES:
-            chunk = os.read(
-                descriptor,
-                min(64 * 1024, _TASK_FILE_MAX_BYTES + 1 - len(content)),
-            )
-            if not chunk:
-                break
-            content.extend(chunk)
+        content = read_bounded(descriptor, _TASK_FILE_MAX_BYTES)
         after = os.fstat(descriptor)
         path_info = os.stat(str(candidate), follow_symlinks=False)
         if (
@@ -1006,56 +952,8 @@ def _read_task_json_file(path: str, *, require_private: bool) -> Dict[str, Any]:
             raise ValueError("TASK_CREDENTIAL_INVALID")
     finally:
         os.close(descriptor)
-    parse_failed = False
-    value: Any = None
-    try:
-        value = json.loads(
-            bytes(content).decode("utf-8"),
-            object_pairs_hook=_reject_task_json_object_pairs,
-            parse_constant=_reject_task_json_constant,
-        )
-    except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
-        parse_failed = True
-    if parse_failed:
-        content.clear()
-        value = None
-        raise ValueError("TASK_CREDENTIAL_INVALID")
-    if type(value) is not dict:
-        content.clear()
-        value = None
-        raise ValueError("TASK_CREDENTIAL_INVALID")
-    return value
+    return _decoded_task_file_json(content)
 
-
-class _ChallengeParserOutcome(Enum):
-    """Fixed internal outcome; attacker-controlled exception text is excluded."""
-
-    NOT_APPLICABLE = "not_applicable"
-    PARSED = "parsed"
-    NO_VALID_CHALLENGE = "no_valid_challenge"
-    PARSE_FAILURE = "parse_failure"
-    UNEXPECTED_ERROR = "unexpected_error"
-
-
-_PAYMENT_CHALLENGE_HEADERS = frozenset({
-    "payment-required",
-    "x-payment-required",
-    "x-402-payment-required",
-})
-_NON_PAYMENT_AUTH_SCHEMES = frozenset({
-    "basic",
-    "bearer",
-    "digest",
-    "negotiate",
-})
-_SETTLEMENT_BODY_MARKERS = frozenset({
-    "challenge",
-    "accepts",
-    "accepted_payments",
-    "x402Version",
-    "paymentRequirements",
-    "resource",
-})
 
 def _requests_to_httpx_response(req_res: requests.Response, method: str = "GET") -> httpx.Response:
     # Body access is part of the response adapter boundary.  If it fails, let
@@ -1403,122 +1301,6 @@ def _extract_settlement_options(parsed: Optional[any]) -> Tuple[List[SettlementO
     return options, selected_option
 
 
-def _www_authenticate_schemes(value: str) -> Tuple[str, ...]:
-    """Return auth challenge schemes without reading quoted auth params."""
-    masked = []
-    quoted = False
-    escaped = False
-    for char in value:
-        if escaped:
-            escaped = False
-            masked.append(" ")
-        elif char == "\\" and quoted:
-            escaped = True
-            masked.append(" ")
-        elif char == '"':
-            quoted = not quoted
-            masked.append(" ")
-        elif quoted:
-            masked.append(" ")
-        else:
-            masked.append(char)
-
-    unquoted = "".join(masked)
-    schemes = []
-    for match in re.finditer(
-        r"(?:^|,)\s*([!#$%&'*+\-.^_`|~0-9A-Za-z]+)",
-        unquoted,
-    ):
-        cursor = match.end(1)
-        while cursor < len(unquoted) and unquoted[cursor].isspace():
-            cursor += 1
-        if cursor < len(unquoted) and unquoted[cursor] == "=":
-            continue
-        schemes.append(match.group(1).lower())
-    return tuple(schemes)
-
-
-def _has_payment_or_settlement_marker(
-    response: httpx.Response,
-    commerce_info,
-) -> bool:
-    """Detect marker presence only when the parser reported true absence.
-
-    A successfully parsed challenge remains governed by the existing parser.
-    This predicate prevents an ignored or malformed marker from borrowing a
-    successful AP2/ACP/OKX commerce classification.
-    """
-    headers = {
-        str(name).lower(): str(value)
-        for name, value in response.headers.items()
-    }
-    if any(name in headers for name in _PAYMENT_CHALLENGE_HEADERS):
-        return True
-
-    auth_value = headers.get("www-authenticate")
-    if auth_value is not None:
-        auth_schemes = _www_authenticate_schemes(auth_value)
-        if not auth_schemes:
-            return True
-        if any(
-            scheme not in _NON_PAYMENT_AUTH_SCHEMES
-            for scheme in auth_schemes
-        ):
-            return True
-
-    try:
-        payload = response.json()
-    except Exception:
-        return False
-    if type(payload) is not dict:
-        return False
-    if any(field in payload for field in _SETTLEMENT_BODY_MARKERS):
-        return True
-    marker_fields = [
-        field for field in ("payment", "settlement") if field in payload
-    ]
-    if marker_fields:
-        if (
-            len(marker_fields) != 1
-            or type(commerce_info) is not dict
-            or commerce_info.get("commerce_protocol") != "okx_app"
-        ):
-            return True
-        marker = payload[marker_fields[0]]
-        if type(marker) is not dict or not marker:
-            return True
-        method = marker.get("method")
-        network = marker.get("network")
-        asset = marker.get("asset")
-        if (
-            type(method) is not str
-            or method.lower() != "eip3009"
-            or type(network) is not str
-            or network.lower() not in {
-                "196", "eip155:196", "xlayer", "x-layer",
-            }
-            or type(asset) is not str
-            or asset.upper() != "USDG"
-        ):
-            return True
-        if "amount" in marker:
-            amount = marker["amount"]
-            if isinstance(amount, bool) or not isinstance(
-                amount, (str, int, float)
-            ):
-                return True
-            amount_text = str(amount)
-            if len(amount_text) > 128:
-                return True
-            try:
-                decimal_amount = Decimal(amount_text)
-            except (InvalidOperation, ValueError):
-                return True
-            if not decimal_amount.is_finite() or decimal_amount <= 0:
-                return True
-    return False
-
-
 def _parse_failure_result(
     *,
     outcome: _ChallengeParserOutcome,
@@ -1612,36 +1394,17 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
             will_execute_payment=False
         )
 
-    parsed = None
-    parser_outcome = _ChallengeParserOutcome.NOT_APPLICABLE
-    if res.status_code in (402, 401, 403):
-        try:
-            parsed = parse_challenge_from_response(httpx_res)
-            if getattr(parsed, "_inspect_semantically_valid", None) is not True:
-                raise PaymentChallengeError("Malformed payment challenge.")
-            parser_outcome = _ChallengeParserOutcome.PARSED
-        except NoValidPaymentChallengeError:
-            parser_outcome = _ChallengeParserOutcome.NO_VALID_CHALLENGE
-        except PaymentChallengeError:
-            parser_outcome = _ChallengeParserOutcome.PARSE_FAILURE
-        except Exception:
-            parser_outcome = _ChallengeParserOutcome.UNEXPECTED_ERROR
-
-        if (
-            parser_outcome is _ChallengeParserOutcome.PARSED
-            and parsed is None
-        ):
-            parser_outcome = _ChallengeParserOutcome.UNEXPECTED_ERROR
-
-        if parser_outcome in {
-            _ChallengeParserOutcome.PARSE_FAILURE,
-            _ChallengeParserOutcome.UNEXPECTED_ERROR,
-        }:
-            return _parse_failure_result(
-                outcome=parser_outcome,
-                public_url=public_url,
-                status_code=res.status_code,
-            )
+    interpretation = _inspect_challenge_from_response(httpx_res)
+    parser_outcome, parsed, required_commerce_protocol = interpretation
+    if parser_outcome in {
+        _ChallengeParserOutcome.PARSE_FAILURE,
+        _ChallengeParserOutcome.UNEXPECTED_ERROR,
+    }:
+        return _parse_failure_result(
+            outcome=parser_outcome,
+            public_url=public_url,
+            status_code=res.status_code,
+        )
 
     settlement_opts = []
     selected_opt = None
@@ -1664,8 +1427,8 @@ def inspect_url(url: str, method: str = "GET", timeout: int = 10) -> InspectResu
         )
 
     if (
-        parser_outcome is _ChallengeParserOutcome.NO_VALID_CHALLENGE
-        and _has_payment_or_settlement_marker(httpx_res, commerce_info)
+        required_commerce_protocol is not None
+        and (commerce_info or {}).get("commerce_protocol") != required_commerce_protocol
     ):
         return _parse_failure_result(
             outcome=_ChallengeParserOutcome.PARSE_FAILURE,
@@ -3166,7 +2929,6 @@ def main():
                     print(f"✅ Slot Registered for {res.domain}")
                     print(f"  Request ID    : {res.request_id}")
                     print(f"  Requester Paid: {res.requester_paid}")
-                    print(f"  Result Handle : {res.result_handle}")
                     print(f"  Read Model    : {res.public_read_model_url}")
             except Exception as e:
                 print(f"❌ Failed: {e}")
@@ -3310,8 +3072,9 @@ def main():
 
                     if args.json:
                         import json
-                        exclude_fields = {"result_handle", "request_hash"} if not getattr(args, "include_proof", False) else None
-                        safe_dump = res.model_dump(exclude=exclude_fields)
+                        safe_dump = res.model_dump()
+                        if getattr(args, "include_proof", False):
+                            safe_dump.update(result_handle=res.result_handle, request_hash=res.request_hash)
                         print(json.dumps(safe_dump, indent=2))
                     else:
                         print("✅ Domain-Control Verified Observation Track Lite purchased.\n")

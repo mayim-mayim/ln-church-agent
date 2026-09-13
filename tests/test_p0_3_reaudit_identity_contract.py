@@ -6,6 +6,7 @@ public identity and failure contracts without opening a socket.
 
 import base64
 import json
+import httpx
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,13 +14,13 @@ from unittest.mock import patch
 import pytest
 
 from ln_church_agent import cli as cli_module
+from ln_church_agent import challenges as challenges_module
 from ln_church_agent import inspect_transport as transport
 from ln_church_agent.cli import inspect_url
 from ln_church_agent.exceptions import PaymentChallengeError
 from ln_church_agent.integrations import mcp_inspect
 
 
-PUBLIC_ADDRESS = "8.8.8.8"
 AUTHORITY_MARKER = "b01-reflected-query-marker"
 RAW_PARSE_MARKER = "DUMMY_UNEXPECTED_PARSER_DETAIL_P0_3"
 RAW_SEMANTIC_MARKER = "DUMMY_SEMANTIC_INVALID_DETAIL_P0_3"
@@ -35,47 +36,11 @@ _FORBIDDEN_INSPECT_SIDE_EFFECTS = (
 )
 
 
-class _FakeResponse:
-    def __init__(self, status_code, *, headers=None, content=b""):
-        self.status_code = status_code
-        self.headers = dict(headers or {})
-        self._content = content
-        self.url = "https://public.example/"
-        self.closed = False
-
-    @property
-    def content(self):
-        return self._content
-
-    def close(self):
-        self.closed = True
-
-
-def _install_public_resolver(monkeypatch):
-    calls = []
-
-    def resolve(host, port):
-        calls.append((host, port))
-        return (PUBLIC_ADDRESS,)
-
-    monkeypatch.setattr(transport, "_resolve_addresses", resolve)
-    return calls
-
-
-def _install_get_exchange(monkeypatch, outcomes):
-    calls = []
-    queue = list(outcomes)
-
-    def exchange(target, address, method, timeout, body=None):
-        calls.append((target, address, method, timeout, body))
-        if not queue:
-            raise AssertionError("unexpected Inspect transport call")
-        response = queue.pop(0)
-        response.url = target.url
-        return response
-
-    monkeypatch.setattr(transport, "_exchange_once", exchange)
-    return calls
+from _inspect_fixture import (
+    _FakeResponse,
+    _public_resolver as _install_public_resolver,
+    _fake_exchange as _install_get_exchange,
+)
 
 
 def _run_cli_and_mcp(
@@ -104,8 +69,8 @@ def _run_cli_and_mcp(
         if parser_exceptions is not None:
             stack.enter_context(
                 patch.object(
-                    cli_module,
-                    "parse_challenge_from_response",
+                    challenges_module,
+                    "_parse_challenge_from_response",
                     side_effect=parser_exceptions,
                 )
             )
@@ -128,21 +93,17 @@ def _assert_parser_contract(
     expected_ok,
     expected_action,
 ):
-    assert cli_result.ok is expected_ok
-    assert cli_result.error_stage == "parse"
-    assert cli_result.failure_class == failure_class
-    assert cli_result.failure_reason == failure_class
-    assert cli_result.diagnostic_class == diagnostic_class
-    assert cli_result.recommended_action == expected_action
-    assert cli_result.will_execute_payment is False
-
-    assert mcp_result["ok"] is expected_ok
-    assert mcp_result["error_stage"] == "parse"
-    assert mcp_result["failure_class"] == failure_class
-    assert mcp_result["failure_reason"] == failure_class
-    assert mcp_result["diagnostic_class"] == diagnostic_class
-    assert mcp_result["recommended_action"] == expected_action
-    assert mcp_result["will_execute_payment"] is False
+    expected = {
+        "ok": expected_ok,
+        "error_stage": "parse",
+        "failure_class": failure_class,
+        "failure_reason": failure_class,
+        "diagnostic_class": diagnostic_class,
+        "recommended_action": expected_action,
+        "will_execute_payment": False,
+    }
+    for result in (cli_result.model_dump(), mcp_result):
+        assert {name: result[name] for name in expected} == expected
     assert mcp_result["safety"]["payment_performed"] is False
 
 
@@ -161,16 +122,13 @@ def _assert_semantic_parse_failure(
         expected_ok=True,
         expected_action="reject_invalid",
     )
-    assert cli_result.surfaces_detected == []
-    assert cli_result.rails_detected == []
-    assert cli_result.settlement_rails_detected == []
-    assert cli_result.settlement_options == []
-    assert cli_result.selected_settlement_option is None
-    assert mcp_result["surfaces_detected"] == []
-    assert mcp_result["rails_detected"] == []
-    assert mcp_result["settlement_rails_detected"] == []
-    assert mcp_result["settlement_options"] == []
-    assert mcp_result["selected_settlement_option"] is None
+    for result in (cli_result.model_dump(), mcp_result):
+        for field in (
+            "surfaces_detected", "rails_detected", "settlement_rails_detected",
+            "settlement_options",
+        ):
+            assert result[field] == []
+        assert result["selected_settlement_option"] is None
 
     payload = mcp_inspect.build_mcp_observation_payload(mcp_result)
     assert mcp_inspect._validate_observation_payload(payload) is None
@@ -193,6 +151,17 @@ def _assert_semantic_parse_failure(
     )
     assert raw_marker not in serialized
     assert raw_marker not in caplog.text
+
+
+def _requirement(scheme="exact", **fields):
+    return {"scheme": scheme, "network": "eip155:8453", **fields}
+
+
+def _complete_requirement(scheme="exact", **fields):
+    return _requirement(
+        scheme, asset="USDC", amount="1",
+        payTo="0x1111111111111111111111111111111111111111", **fields,
+    )
 
 
 @pytest.mark.parametrize("terminal_status", [200, 500])
@@ -332,10 +301,7 @@ def test_real_malformed_ap2_body_is_typed_semantic_parse_failure(
     assert RAW_PARSE_MARKER not in caplog.text
     assert mcp_result["surfaces_detected"] == []
 
-
-@pytest.mark.parametrize(
-    "body",
-    [
+_INVALID_BODY_DECLARATIONS = [
         {"accepts": []},
         {"protocol": "ap2", "intent": "payment_mandate", "accepts": []},
         {"protocol": "acp", "intent": "cart", "accepts": []},
@@ -360,98 +326,52 @@ def test_real_malformed_ap2_body_is_typed_semantic_parse_failure(
         {"accepts": [{"scheme": "exact", "network": ""}]},
         {"accepts": [{"scheme": "exact", "network": "not-a-network"}]},
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "amount": RAW_SEMANTIC_MARKER,
-            }]
+            "accepts": [_requirement(amount=RAW_SEMANTIC_MARKER)]
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "decimals": -1,
-            }]
+            "accepts": [_requirement(decimals=-1)]
         },
         {
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-            }]
+            "accepts": [_requirement("x402")]
         },
         {
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "decimals": "6",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }]
+            "accepts": [_complete_requirement("x402", decimals='6')]
         },
         {
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "symbol": "JPYC",
-                "amount": "1",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }]
+            "accepts": [_complete_requirement("x402", symbol='JPYC')]
         },
         {
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "maxAmountRequired": "2",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }]
+            "accepts": [_complete_requirement("x402", maxAmountRequired='2')]
         },
         {
             "accepts": [
-                {
-                    "scheme": "x402",
-                    "network": "eip155:8453",
-                    "asset": "USDC",
-                    "amount": "1",
-                    "payTo": "0x1111111111111111111111111111111111111111",
-                },
-                {"scheme": "x402", "network": "eip155:8453"},
+                _complete_requirement("x402"),
+                _requirement("x402"),
             ]
         },
         {
             "accepts": [
-                {"scheme": "exact", "network": "eip155:8453"},
+                _requirement(),
                 {},
             ]
         },
         {
             "accepts": [
-                {"scheme": "exact", "network": "eip155:8453"},
-                {"scheme": "x402", "network": "eip155:8453"},
+                _requirement(),
+                _requirement("x402"),
             ]
         },
         {
             "accepts": [
-                {"scheme": "x402", "network": "eip155:8453"},
-                {"scheme": "exact", "network": "eip155:8453"},
+                _requirement("x402"),
+                _requirement(),
             ]
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "parameters": [],
-            }]
+            "accepts": [_requirement(parameters=[])]
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "extra": RAW_SEMANTIC_MARKER,
-            }]
+            "accepts": [_requirement(extra=RAW_SEMANTIC_MARKER)]
         },
         {"challenge": {}},
         {"challenge": []},
@@ -477,27 +397,20 @@ def test_real_malformed_ap2_body_is_typed_semantic_parse_failure(
         },
         {"challenge": {"scheme": "x402", "amount": 0, "asset": "USDC"}},
         {
-            "challenge": {
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "amount": "1e-324",
-                "asset": "USDC",
-                "parameters": {
-                    "payTo": "0x1111111111111111111111111111111111111111"
-                },
-            }
+            "challenge": _requirement(
+                             "x402",
+                             amount='1e-324',
+                             asset='USDC',
+                             parameters={'payTo': '0x1111111111111111111111111111111111111111'},
+                         )
         },
         {
-            "challenge": {
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "amount": 1,
-                "asset": "USDC",
-                "parameters": {
-                    "network": "eip155:1",
-                    "payTo": "0x1111111111111111111111111111111111111111",
-                },
-            }
+            "challenge": _requirement(
+                             "x402",
+                             amount=1,
+                             asset='USDC',
+                             parameters={'network': 'eip155:1', 'payTo': '0x1111111111111111111111111111111111111111'},
+                         )
         },
         {
             "challenge": {
@@ -524,144 +437,100 @@ def test_real_malformed_ap2_body_is_typed_semantic_parse_failure(
             },
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "resource": [],
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "network": {},
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "decimals": {},
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "chainId": {},
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "x402Version": 999,
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "scheme": "L402",
         },
         {
             "network": "eip155:1",
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }],
+            "accepts": [_complete_requirement("x402")],
         },
         {
             "chainId": 1,
             "chain_id": 8453,
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
         },
         {
             "chainId": 1,
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
         },
         {
             "asset": "JPYC",
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "asset": "USDC",
-            }],
+            "accepts": [_requirement(asset='USDC')],
         },
         {
             "amount": 2,
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "amount": "1",
-            }],
+            "accepts": [_requirement(amount='1')],
         },
         {
             "payTo": "0x2222222222222222222222222222222222222222",
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }],
+            "accepts": [_requirement(payTo='0x1111111111111111111111111111111111111111')],
         },
         {
             "contract": "0x2222222222222222222222222222222222222222",
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }],
+            "accepts": [_complete_requirement("x402")],
         },
         {
             "decimals": 18,
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "decimals": 6,
-            }],
+            "accepts": [_requirement(decimals=6)],
         },
         {
             "parameters": {"network": "eip155:1"},
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "parameters": {"network": "eip155:1"},
-            }],
+            "accepts": [_requirement(parameters={'network': 'eip155:1'})],
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "payTo": "0x1111111111111111111111111111111111111111",
-                "extra": {
-                    "payTo": "0x2222222222222222222222222222222222222222"
-                },
-            }],
+            "accepts": [_requirement(
+                            payTo='0x1111111111111111111111111111111111111111',
+                            extra={'payTo': '0x2222222222222222222222222222222222222222'},
+                        )],
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "challenge": {},
         },
         {
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
             "settlement": {},
         },
         {
             "scheme": "x402",
             "accepts": [
-                {"scheme": "exact", "network": "eip155:8453"},
-                {
-                    "scheme": "x402",
-                    "network": "eip155:8453",
-                    "asset": "USDC",
-                    "amount": "1",
-                    "payTo": "0x1111111111111111111111111111111111111111",
-                },
+                _requirement(),
+                _complete_requirement("x402"),
             ],
         },
         {
             "scheme": {},
-            "accepts": [{"scheme": "exact", "network": "eip155:8453"}],
+            "accepts": [_requirement()],
         },
         {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "token": "0x1111111111111111111111111111111111111111",
-                "mint": "0x2222222222222222222222222222222222222222",
-            }],
+            "accepts": [_requirement(
+                            asset='USDC',
+                            token='0x1111111111111111111111111111111111111111',
+                            mint='0x2222222222222222222222222222222222222222',
+                        )],
         },
         {
             "schema_version": "ln_church.paid_surface_challenge.v1",
@@ -700,26 +569,38 @@ def test_real_malformed_ap2_body_is_typed_semantic_parse_failure(
         {"resource": {}},
         {"x402Version": 2},
         {"paymentRequirements": []},
-    ],
-)
-def test_semantic_invalid_body_markers_fail_closed_before_success(
-    monkeypatch,
-    caplog,
-    body,
+    ]
+
+
+@pytest.mark.parametrize("body", _INVALID_BODY_DECLARATIONS)
+def test_invalid_raw_body_declarations_have_semantic_failure(body):
+    response = httpx.Response(
+        402, json={**body, "debug": RAW_SEMANTIC_MARKER},
+        request=httpx.Request("GET", "https://public.example/"),
+    )
+    result = challenges_module._inspect_challenge_from_response(response)
+    assert result.outcome.value == "parse_failure"
+    assert result.challenge is None
+    assert RAW_SEMANTIC_MARKER not in repr(result)
+
+
+@pytest.mark.parametrize("body", [
+    {"accepts": []},
+    {"protocol": "acp", "intent": "cart", "accepted_payments": [{}]},
+    {"accepts": [_complete_requirement("x402", symbol="JPYC")]},
+    {"challenge": {"scheme": "bogus", "amount": 1, "asset": "USDC"}},
+    {"schema_version": "ln_church.paid_surface_challenge.v1", "accepted_payments": []},
+])
+def test_raw_semantic_failures_reach_cli_mcp_and_observation(
+    monkeypatch, caplog, body,
 ):
     caplog.set_level("DEBUG")
-    body = {**body, "debug": RAW_SEMANTIC_MARKER}
     cli_result, mcp_result = _run_cli_and_mcp(
         monkeypatch,
-        json.dumps(body).encode("utf-8"),
+        json.dumps({**body, "debug": RAW_SEMANTIC_MARKER}).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-
-    _assert_semantic_parse_failure(
-        cli_result,
-        mcp_result,
-        caplog=caplog,
-    )
+    _assert_semantic_parse_failure(cli_result, mcp_result, caplog=caplog)
 
 
 def _encode_payment_header(payload):
@@ -1100,52 +981,44 @@ def test_inspect_rejects_unmarked_or_nonboolean_parser_validity(
             "asset": "USDC",
             "destination": "0x1111111111111111111111111111111111111111",
         }),
+        _encode_payment_header(_requirement(
+                                   "x402",
+                                   amount=1,
+                                   asset='USDC',
+                                   destination='0x1111111111111111111111111111111111111111',
+                                   payTo='0x2222222222222222222222222222222222222222',
+                               )),
+        _encode_payment_header(_requirement(
+                                   "x402",
+                                   chainId=1,
+                                   amount=1,
+                                   asset='USDC',
+                                   destination='0x1111111111111111111111111111111111111111',
+                               )),
+        _encode_payment_header(_requirement(
+                                   "x402",
+                                   amount=1,
+                                   asset='USDC',
+                                   destination='0x1111111111111111111111111111111111111111',
+                                   contract='0x1111111111111111111111111111111111111111',
+                                   token_address='0x2222222222222222222222222222222222222222',
+                               )),
+        _encode_payment_header(_requirement(
+                                   "x402",
+                                   amount=1,
+                                   asset='USDC',
+                                   destination='0x1111111111111111111111111111111111111111',
+                                   decimals={},
+                               )),
+        _encode_payment_header(_requirement(
+                                   "x402",
+                                   amount=1,
+                                   asset='USDC',
+                                   destination='0x1111111111111111111111111111111111111111',
+                                   parameters={'network': 'eip155:1'},
+                               )),
         _encode_payment_header({
-            "scheme": "x402",
-            "network": "eip155:8453",
-            "amount": 1,
-            "asset": "USDC",
-            "destination": "0x1111111111111111111111111111111111111111",
-            "payTo": "0x2222222222222222222222222222222222222222",
-        }),
-        _encode_payment_header({
-            "scheme": "x402",
-            "network": "eip155:8453",
-            "chainId": 1,
-            "amount": 1,
-            "asset": "USDC",
-            "destination": "0x1111111111111111111111111111111111111111",
-        }),
-        _encode_payment_header({
-            "scheme": "x402",
-            "network": "eip155:8453",
-            "amount": 1,
-            "asset": "USDC",
-            "destination": "0x1111111111111111111111111111111111111111",
-            "contract": "0x1111111111111111111111111111111111111111",
-            "token_address": "0x2222222222222222222222222222222222222222",
-        }),
-        _encode_payment_header({
-            "scheme": "x402",
-            "network": "eip155:8453",
-            "amount": 1,
-            "asset": "USDC",
-            "destination": "0x1111111111111111111111111111111111111111",
-            "decimals": {},
-        }),
-        _encode_payment_header({
-            "scheme": "x402",
-            "network": "eip155:8453",
-            "amount": 1,
-            "asset": "USDC",
-            "destination": "0x1111111111111111111111111111111111111111",
-            "parameters": {"network": "eip155:1"},
-        }),
-        _encode_payment_header({
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-            }]
+            "accepts": [_requirement()]
         }) + "!!!!",
         base64.urlsafe_b64encode(
             (
@@ -1210,10 +1083,7 @@ def test_valid_header_cannot_mask_malformed_body_settlement_marker(
     caplog.set_level("DEBUG")
     body = {**body, "debug": RAW_SEMANTIC_MARKER}
     payment_header = _encode_payment_header({
-        "accepts": [{
-            "scheme": "exact",
-            "network": "eip155:8453",
-        }]
+        "accepts": [_requirement()]
     })
     cli_result, mcp_result = _run_cli_and_mcp(
         monkeypatch,
@@ -1247,13 +1117,7 @@ def test_conflicting_valid_header_and_body_contracts_fail_closed(
         "debug": RAW_SEMANTIC_MARKER,
     }
     payment_header = _encode_payment_header({
-        "accepts": [{
-            "scheme": "exact",
-            "network": "eip155:8453",
-            "asset": "USDC",
-            "amount": "1",
-            "payTo": "0x1111111111111111111111111111111111111111",
-        }]
+        "accepts": [_complete_requirement()]
     })
     cli_result, mcp_result = _run_cli_and_mcp(
         monkeypatch,
@@ -1329,10 +1193,7 @@ def test_conflicting_valid_header_and_body_contracts_fail_closed(
         {"WWW-Authenticate": f'x402 foo="{RAW_SEMANTIC_MARKER}"'},
         {
             "PAYMENT-REQUIRED": _encode_payment_header({
-                "accepts": [{
-                    "scheme": "exact",
-                    "network": "eip155:8453",
-                }]
+                "accepts": [_requirement()]
             }),
             "X-PAYMENT-REQUIRED": f'foo="{RAW_SEMANTIC_MARKER}"',
         },
@@ -1389,10 +1250,7 @@ def test_all_payment_header_aliases_require_one_supported_contract(
                 'Basic realm="public", L402 invoice="bad"'
             ),
             "PAYMENT-REQUIRED": _encode_payment_header({
-                "accepts": [{
-                    "scheme": "exact",
-                    "network": "eip155:8453",
-                }]
+                "accepts": [_requirement()]
             }),
         },
     ],
@@ -1488,13 +1346,7 @@ def test_valid_payment_contracts_remain_recognized(
         )
     elif case in {"accepts", "body_accepts"}:
         payment_payload = {
-            "accepts": [{
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }]
+            "accepts": [_complete_requirement()]
         }
         if case == "body_accepts":
             headers["Content-Type"] = "application/json"
@@ -1505,14 +1357,7 @@ def test_valid_payment_contracts_remain_recognized(
             )
     else:
         headers["PAYMENT-REQUIRED"] = _encode_payment_header({
-            "accepts": [{
-                "scheme": "x402",
-                "network": "eip155:8453",
-                "asset": "USDC",
-                "amount": "1",
-                "decimals": 6,
-                "payTo": "0x1111111111111111111111111111111111111111",
-            }]
+            "accepts": [_complete_requirement("x402", decimals=6)]
         })
 
     cli_result, mcp_result = _run_cli_and_mcp(
@@ -1549,13 +1394,7 @@ def test_valid_commerce_and_x402_coexistence_remains_observe_only(
 ):
     body = {"protocol": protocol, "intent": intent}
     payment_header = _encode_payment_header({
-        "accepts": [{
-            "scheme": "exact",
-            "network": "eip155:8453",
-            "asset": "USDC",
-            "amount": "1",
-            "payTo": "0x1111111111111111111111111111111111111111",
-        }]
+        "accepts": [_complete_requirement()]
     })
     cli_result, mcp_result = _run_cli_and_mcp(
         monkeypatch,

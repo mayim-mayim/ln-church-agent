@@ -1,5 +1,7 @@
 # ln-church-agent
 
+Version **1.18.2** simplifies the existing runtime and documents purchase-result recovery. See the [v1.18.2 release notes](docs/release_notes/v1.18.2.md) for the changes and verification boundaries.
+
 
 **The Value of "Not a Verdict"**
 LN Church read models do not decide for the agent. They preserve **observed memory**: what was seen, what was paid, what failed, what receipt shape appeared, what protocol role was observed, and what verification cost was reported. This is not a recommendation or verdict; it is a **reusable observation record** that helps the local runtime avoid re-verifying everything. Final payment authority remains local.
@@ -19,7 +21,7 @@ In v1.9.0+, the inspect layer explicitly classifies emerging agent-commerce surf
 
 ## Supported environments
 
-| Scope | Python | SDK v1.17.1 status |
+| Scope | Python | SDK support status |
 | :--- | :--- | :--- |
 | Linux | 3.11.x | Tier 1 — release-blocking |
 | Native Windows | 3.11.x | Tier 2 — best-effort limited support |
@@ -187,6 +189,8 @@ The Observation file may omit `submission_id`; the initial guided invocation gen
 
 Python callers use `AgentTaskClient.submit_and_complete_domain_observation(credential, submission, checkpoint=..., checkpoint_sink=...)`; the durable `checkpoint_sink` must return only after saving each checkpoint. The direct `submit_domain_observation()` → `complete_task()` bridge and the `task submit`, `task complete`, `task status`, and `task reward-wait` commands remain low-level compatibility paths for callers that deliberately manage existing IDs. They are not the standard workflow.
 
+For fresh or `REGISTER_PENDING` guided calls, a missing sink fails with `TaskCheckpointPersistenceError` before Register. A sink's normal return confirms caller-owned durable storage; a failed save stops the next network phase. Resuming a valid, previously saved `REGISTERED` checkpoint skips Register and does not require a new sink or a repeated save of that phase.
+
 Task detail is discovery/taskboard metadata, not a Claim-specific reward receipt. Its advertised reward and all Offer aggregates are Hondo-provided read-time snapshots; remaining capacity does not guarantee that a later Claim will succeed. The successful Claim response is authoritative for that Execution's immutable Definition and reward snapshots. Claim-specific status uses the existing Task, Submission, and Observation IDs and must match those Claim-time snapshots; the SDK neither substitutes TaskGet values nor infers claimability or recomputes the Offer.
 
 Completion `accepted=true` with `status=SUBMITTED` means only that the Submission and CompletionReport were durably accepted; it does not mean Evaluation accepted the work, Settlement started, or Reward was paid. Indeterminate Evaluation remains `SUBMITTED`/`pending`, preserves the active reservation, and does not consume reward entitlement or become a rejection merely because finite retry is exhausted.
@@ -229,7 +233,7 @@ The canonical fixture ships at `ln_church_agent/contracts/v18-scheduled-http-get
 
 Linux release evidence covers the deterministic suite, fixture parity, v1 regression, secret scan, journal crash matrix, and an exact fixture-driven 42-row network matrix: every one of the 21 required vectors runs through `ControlledHTTPSConnector.fetch` for both SDK-owned Manifest and target scopes with resolver/connect/send/read counts. It also covers package identity. Native macOS and native Windows remain separate qualification lanes for their filesystem locking and durability, DNS, socket-peer, and TLS behavior; mocks do not qualify a native platform. Native Windows qualification tests closed-handle-before-replace behavior and does not require PowerShell 5.1. WSL2 is Linux evidence when the SDK runtime is Linux.
 
-This Public SDK release promotes the independently audited exact candidate paired with Hondō commit `833dca3b804f5b82ca0607c524d9c354f2d62378`. It does not itself deploy Hondō or claim Evaluation acceptance, reward approval, or payout.
+The v1.18.0 Public SDK release promoted the independently audited exact candidate paired with Hondō commit `833dca3b804f5b82ca0607c524d9c354f2d62378`. This is the historical source pairing for that feature release; the v1.18.2 changes are described in its release notes. SDK publication does not itself deploy Hondō or claim Evaluation acceptance, reward approval, or payout.
 
 ### Explicit MCP Routes and Telemetry Boundaries
 
@@ -460,6 +464,20 @@ status = status_client.get_domain_observation_request(res.request_id)
 read_model = status_client.get_domain_observation_read_model("example.com")
 
 ```
+
+### Purchase results and recovery
+
+The Monzen and Bazaar Surface Comparison Facts purchases, Domain Observation Slot, and Verified Domain Track expose received result headers through `ExecutionResult.paid_result_metadata`. This returns a copy containing only the received `result_handle`, `request_hash`, and `result_expires_at`. Domain registration responses also expose these as explicit attributes. Result expiry is separate from the Slot or Track's product expiry; missing metadata is not inferred from the business body.
+
+Keep this metadata private. Normal representations, default serialization and public response headers omit proof values; explicit `.response` access retains the original business body. The optional Track proof file can contain `result_expires_at`; existing files without it remain valid.
+
+```python
+# Use the existing request entry point with the original purchase's saved handle.
+recovered = client.execute_detailed("GET", f"/api/bazaar/paid-results/{saved_handle}")
+original_body = recovered.response
+```
+
+Recovery GETs never purchase or follow purchase navigation, including on an unexpected 402. Non-success responses raise `PaymentExecutionError` with the actual `status_code`. Known `PAID_RESULT_PERSISTENCE_UNCONFIRMED`, `STATE_UPDATE_FAILED`, and `BACKEND_RESPONSE_PARSE_FAILED` responses also retain `code`; they do not authorize a new purchase or erase known payment facts. A missing or expired result is not evidence of non-payment.
 
 ---
 
@@ -701,6 +719,8 @@ To minimize data ingestion and allocation overhead, autonomous agents SHOULD que
 1. **Goal Attempt Summary (Free):** Query overall volume counters and unassessed ratios to determine base-layer viability.
 2. **Goal Surface Candidates (Paid - 1 SAT):** Fetch up to 20 historically observed surfaces previously harnessed by the network for a specific objective.
 3. **Full Resonance Graph (Premium - 10 SATS):** Download the full multi-chain dataset only when deep analytical structural mapping is required.
+
+`get_goal_attempt_summary()` and its async counterpart use a non-purchasing GET. An unexpected 402 or other non-success response raises `PaymentExecutionError` with the actual HTTP status, without payment, budget restoration, probes, or automatic navigation. Explicit paid candidates retain their purchase flow.
 
 ### Code Example: Fetching Summary and Candidates
 
@@ -1021,3 +1041,4 @@ ln-church-agent observe-domain track domain kari.mayim-mayim.com
 
 ## License
 MIT
+
