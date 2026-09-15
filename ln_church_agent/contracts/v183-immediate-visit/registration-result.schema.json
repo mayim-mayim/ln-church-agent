@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/registration-result.schema.json",
+  "title": "immediate_http_visit.v1 registration-result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registration_intent_id",
+    "task_id",
+    "task_type",
+    "status",
+    "published_at",
+    "listing_ends_at",
+    "plan_id",
+    "registration_amount_atomic",
+    "repeat_policy",
+    "capacity_total",
+    "task_url",
+    "summary_url",
+    "results_url"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_offer_create_response.immediate_visit.v1"
+    },
+    "registration_intent_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "immediate_http_visit.v1"
+    },
+    "status": {
+      "const": "OPEN"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "listing_ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "plan_id": {
+      "enum": [
+        "C50",
+        "C500",
+        "C5000"
+      ]
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "repeat_policy": {
+      "enum": [
+        "allow",
+        "once_per_endpoint"
+      ]
+    },
+    "capacity_total": {
+      "enum": [
+        50,
+        500,
+        5000
+      ]
+    },
+    "task_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "summary_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "results_url": {
+      "type": "string",
+      "format": "uri"
+    }
+  }
+}

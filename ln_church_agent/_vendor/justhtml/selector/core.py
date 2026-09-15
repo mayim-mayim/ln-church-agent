@@ -1,0 +1,1536 @@
+# CSS Selector implementation for JustHTML
+# Supports a subset of CSS selectors for querying the DOM
+
+from __future__ import annotations
+
+import typing as _typing
+from ln_church_agent._vendor.justhtml._compat import dataclass
+
+from dataclasses import field
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any
+
+from ln_church_agent._vendor.justhtml.core.constants import HTML_SPACE_CHARACTERS
+
+if TYPE_CHECKING:
+    from ln_church_agent._vendor.justhtml.dom import NodeType, QueryMatch
+
+
+class SelectorError(ValueError):
+    """Raised when a CSS selector is invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class SelectorLimits:
+    """Central selector resource limits used during parsing and matching."""
+
+    max_match_depth: int = 100
+    max_length: int = 8192
+    max_list_items: int = 256
+    max_compound_simple_selectors: int = 512
+    max_complex_selector_parts: int = 512
+    max_parse_depth: int = 100
+    max_match_steps: int = 100_000_000
+    max_match_bytes: int = 100_000_000
+
+
+DEFAULT_SELECTOR_LIMITS = SelectorLimits()
+
+
+# Token types for the CSS selector lexer
+class TokenType:
+    TAG: str = "TAG"  # div, span, etc.
+    ID: str = "ID"  # #foo
+    CLASS: str = "CLASS"  # .bar
+    UNIVERSAL: str = "UNIVERSAL"  # *
+    ATTR_START: str = "ATTR_START"  # [
+    ATTR_END: str = "ATTR_END"  # ]
+    ATTR_OP: str = "ATTR_OP"  # =, ~=, |=, ^=, $=, *=
+    STRING: str = "STRING"  # "value" or 'value' or unquoted
+    COMBINATOR: str = "COMBINATOR"  # >, +, ~, or whitespace (descendant)
+    COMMA: str = "COMMA"  # ,
+    COLON: str = "COLON"  # :
+    PAREN_OPEN: str = "PAREN_OPEN"  # (
+    PAREN_CLOSE: str = "PAREN_CLOSE"  # )
+    EOF: str = "EOF"
+
+
+class Token:
+    __slots__ = ("type", "value")
+
+    type: str
+    value: str | None
+
+    def __init__(self, token_type: str, value: str | None = None) -> None:
+        self.type = token_type
+        self.value = value
+
+    def __repr__(self) -> str:
+        return f"Token({self.type}, {self.value!r})"
+
+
+class SelectorTokenizer:
+    """Tokenizes a CSS selector string into tokens."""
+
+    __slots__ = ("length", "pos", "selector")
+
+    selector: str
+    pos: int
+    length: int
+
+    def __init__(self, selector: str) -> None:
+        self.selector = selector
+        self.pos = 0
+        self.length = len(selector)
+
+    def _peek(self, offset: int = 0) -> str:
+        pos = self.pos + offset
+        if pos < self.length:
+            return self.selector[pos]
+        return ""
+
+    def _advance(self) -> str:
+        ch = self._peek()
+        self.pos += 1
+        return ch
+
+    def _skip_whitespace(self) -> None:
+        while self.pos < self.length and self.selector[self.pos] in HTML_SPACE_CHARACTERS:
+            self.pos += 1
+
+    def _is_name_start(self, ch: str) -> bool:
+        # CSS identifier start: letter, underscore, or non-ASCII
+        return ch.isalpha() or ch == "_" or ch == "-" or ord(ch) > 127
+
+    def _is_name_char(self, ch: str) -> bool:
+        # CSS identifier continuation: name-start or digit
+        return self._is_name_start(ch) or ch.isdigit()
+
+    def _read_name(self) -> str:
+        start = self.pos
+        while self.pos < self.length and self._is_name_char(self.selector[self.pos]):
+            self.pos += 1
+        return self.selector[start : self.pos]
+
+    def _read_string(self, quote: str) -> str:
+        # Skip opening quote
+        self.pos += 1
+        start = self.pos
+        parts: list[str] = []
+
+        while self.pos < self.length:
+            ch = self.selector[self.pos]
+            if ch == quote:
+                # Append any remaining text before the closing quote
+                if self.pos > start:
+                    parts.append(self.selector[start : self.pos])
+                self.pos += 1
+                return "".join(parts)
+            if ch == "\\":
+                # Append text before the backslash
+                if self.pos > start:
+                    parts.append(self.selector[start : self.pos])
+                self.pos += 1
+                if self.pos < self.length:
+                    # Append the escaped character
+                    parts.append(self.selector[self.pos])
+                    self.pos += 1
+                    start = self.pos
+                else:
+                    start = self.pos
+            else:
+                self.pos += 1
+
+        raise SelectorError(f"Unterminated string in selector: {self.selector!r}")
+
+    def _read_unquoted_attr_value(self) -> str:
+        # Read an unquoted attribute value (CSS identifier)
+        start = self.pos
+        while self.pos < self.length:
+            ch = self.selector[self.pos]
+            if ch in HTML_SPACE_CHARACTERS + "]":
+                break
+            self.pos += 1
+        return self.selector[start : self.pos]
+
+    def tokenize(self) -> list[Token]:
+        tokens: list[Token] = []
+        pending_whitespace = False
+
+        while self.pos < self.length:
+            ch = self.selector[self.pos]
+
+            # Skip whitespace but remember it for combinator detection
+            if ch in HTML_SPACE_CHARACTERS:
+                pending_whitespace = True
+                self._skip_whitespace()
+                continue
+
+            # Handle combinators: >, +, ~
+            if ch in ">+~":
+                pending_whitespace = False
+                self.pos += 1
+                self._skip_whitespace()
+                tokens.append(Token(TokenType.COMBINATOR, ch))
+                continue
+
+            # If we had whitespace and this isn't a combinator symbol or comma,
+            # it's a descendant combinator. Note: combinators and commas consume
+            # trailing whitespace, so pending_whitespace is always False after them.
+            if pending_whitespace and tokens and ch not in ",":
+                tokens.append(Token(TokenType.COMBINATOR, " "))
+            pending_whitespace = False
+
+            # Universal selector
+            if ch == "*":
+                self.pos += 1
+                tokens.append(Token(TokenType.UNIVERSAL))
+                continue
+
+            # ID selector
+            if ch == "#":
+                self.pos += 1
+                name = self._read_name()
+                if not name:
+                    raise SelectorError(f"Expected identifier after # at position {self.pos}")
+                tokens.append(Token(TokenType.ID, name))
+                continue
+
+            # Class selector
+            if ch == ".":
+                self.pos += 1
+                name = self._read_name()
+                if not name:
+                    raise SelectorError(f"Expected identifier after . at position {self.pos}")
+                tokens.append(Token(TokenType.CLASS, name))
+                continue
+
+            # Attribute selector
+            if ch == "[":
+                self.pos += 1
+                tokens.append(Token(TokenType.ATTR_START))
+                self._skip_whitespace()
+
+                # Read attribute name
+                attr_name = self._read_name()
+                if not attr_name:
+                    raise SelectorError(f"Expected attribute name at position {self.pos}")
+                tokens.append(Token(TokenType.TAG, attr_name))  # Reuse TAG for attr name
+                self._skip_whitespace()
+
+                # Check for operator
+                ch2 = self._peek()
+                if ch2 == "]":
+                    self.pos += 1
+                    tokens.append(Token(TokenType.ATTR_END))
+                    continue
+
+                # Read operator
+                if ch2 == "=":
+                    self.pos += 1
+                    tokens.append(Token(TokenType.ATTR_OP, "="))
+                elif ch2 in "~|^$*":
+                    op_char = ch2
+                    self.pos += 1
+                    if self._peek() != "=":
+                        raise SelectorError(f"Expected = after {op_char} at position {self.pos}")
+                    self.pos += 1
+                    tokens.append(Token(TokenType.ATTR_OP, op_char + "="))
+                else:
+                    raise SelectorError(f"Unexpected character in attribute selector: {ch2!r}")
+
+                self._skip_whitespace()
+
+                # Read value
+                ch3 = self._peek()
+                if ch3 == '"' or ch3 == "'":
+                    value = self._read_string(ch3)
+                else:
+                    value = self._read_unquoted_attr_value()
+                tokens.append(Token(TokenType.STRING, value))
+
+                self._skip_whitespace()
+                if self._peek() != "]":
+                    raise SelectorError(f"Expected ] at position {self.pos}")
+                self.pos += 1
+                tokens.append(Token(TokenType.ATTR_END))
+                continue
+
+            # Comma (selector grouping)
+            if ch == ",":
+                self.pos += 1
+                self._skip_whitespace()
+                tokens.append(Token(TokenType.COMMA))
+                continue
+
+            # Pseudo-class
+            if ch == ":":
+                self.pos += 1
+                tokens.append(Token(TokenType.COLON))
+                # Read pseudo-class name
+                name = self._read_name()
+                if not name:
+                    raise SelectorError(f"Expected pseudo-class name after : at position {self.pos}")
+                tokens.append(Token(TokenType.TAG, name))
+
+                # Check for functional pseudo-class
+                if self._peek() == "(":
+                    self.pos += 1
+                    tokens.append(Token(TokenType.PAREN_OPEN))
+                    self._skip_whitespace()
+
+                    # Special handling for :not() - can contain a selector
+                    # For :nth-child() - read the expression
+                    paren_depth = 1
+                    arg_start = self.pos
+                    while self.pos < self.length and paren_depth > 0:
+                        c = self.selector[self.pos]
+                        if c == "(":
+                            paren_depth += 1
+                        elif c == ")":
+                            paren_depth -= 1
+                        if paren_depth > 0:
+                            self.pos += 1
+
+                    arg = self.selector[arg_start : self.pos].strip()
+                    if arg:
+                        tokens.append(Token(TokenType.STRING, arg))
+
+                    if self._peek() != ")":
+                        raise SelectorError(f"Expected ) at position {self.pos}")
+                    self.pos += 1
+                    tokens.append(Token(TokenType.PAREN_CLOSE))
+                continue
+
+            # Tag name
+            if self._is_name_start(ch):
+                name = self._read_name()
+                tokens.append(Token(TokenType.TAG, name.lower()))  # Tags are case-insensitive
+                continue
+
+            raise SelectorError(f"Unexpected character {ch!r} at position {self.pos}")
+
+        tokens.append(Token(TokenType.EOF))
+        return tokens
+
+
+# AST Node types for parsed selectors
+
+
+class SimpleSelector:
+    """A single simple selector (tag, id, class, attribute, or pseudo-class)."""
+
+    __slots__ = ("arg", "name", "operator", "parsed_arg", "type", "value")
+
+    TYPE_TAG: str = "tag"
+    TYPE_ID: str = "id"
+    TYPE_CLASS: str = "class"
+    TYPE_UNIVERSAL: str = "universal"
+    TYPE_ATTR: str = "attr"
+    TYPE_PSEUDO: str = "pseudo"
+
+    type: str
+    name: str | None
+    operator: str | None
+    value: str | None
+    arg: str | None
+    parsed_arg: Any | None
+
+    def __init__(
+        self,
+        selector_type: str,
+        name: str | None = None,
+        operator: str | None = None,
+        value: str | None = None,
+        arg: str | None = None,
+        parsed_arg: Any | None = None,
+    ) -> None:
+        self.type = selector_type
+        self.name = name
+        self.operator = operator
+        self.value = value
+        self.arg = arg  # For :not() and :nth-child()
+        self.parsed_arg = parsed_arg  # Parsed selector for :not()
+
+    def __repr__(self) -> str:
+        parts = [f"SimpleSelector({self.type!r}"]
+        if self.name:
+            parts.append(f", name={self.name!r}")
+        if self.operator:
+            parts.append(f", op={self.operator!r}")
+        if self.value is not None:
+            parts.append(f", value={self.value!r}")
+        if self.arg is not None:
+            parts.append(f", arg={self.arg!r}")
+        if self.parsed_arg is not None:
+            parts.append(f", parsed_arg={self.parsed_arg!r}")
+        parts.append(")")
+        return "".join(parts)
+
+
+class CompoundSelector:
+    """A sequence of simple selectors (e.g., div.foo#bar)."""
+
+    __slots__ = ("selectors",)
+
+    selectors: list[SimpleSelector]
+
+    def __init__(self, selectors: list[SimpleSelector] | None = None) -> None:
+        self.selectors = selectors or []
+
+    def __repr__(self) -> str:
+        return f"CompoundSelector({self.selectors!r})"
+
+
+class ComplexSelector:
+    """A chain of compound selectors with combinators."""
+
+    __slots__ = ("parts",)
+
+    parts: list[tuple[str | None, CompoundSelector]]
+
+    def __init__(self) -> None:
+        # List of (combinator, compound_selector) tuples
+        # First item has combinator=None
+        self.parts = []
+
+    def __repr__(self) -> str:
+        return f"ComplexSelector({self.parts!r})"
+
+
+class SelectorList:
+    """A comma-separated list of complex selectors."""
+
+    __slots__ = ("selectors",)
+
+    selectors: list[ComplexSelector]
+
+    def __init__(self, selectors: list[ComplexSelector] | None = None) -> None:
+        self.selectors = selectors or []
+
+    def __repr__(self) -> str:
+        return f"SelectorList({self.selectors!r})"
+
+
+def _simple_selector_signature(selector: SimpleSelector) -> tuple[Any, ...]:
+    parsed_arg_sig = _selector_signature(selector.parsed_arg) if selector.parsed_arg is not None else None
+    return (selector.type, selector.name, selector.operator, selector.value, selector.arg, parsed_arg_sig)
+
+
+def _compound_selector_signature(selector: CompoundSelector) -> tuple[Any, ...]:
+    return tuple(_simple_selector_signature(simple) for simple in selector.selectors)
+
+
+def _complex_selector_signature(selector: ComplexSelector) -> tuple[Any, ...]:
+    return tuple((combinator, _compound_selector_signature(compound)) for combinator, compound in selector.parts)
+
+
+def _selector_signature(selector: Any) -> tuple[Any, ...] | None:
+    if isinstance(selector, SelectorList):
+        return tuple(_complex_selector_signature(sel) for sel in selector.selectors)
+    if isinstance(selector, ComplexSelector):
+        return _complex_selector_signature(selector)
+    return None
+
+
+# Type alias for parsed selectors
+ParsedSelector = _typing.Union[ComplexSelector, SelectorList]
+
+
+class SelectorParser:
+    """Parses a list of tokens into a selector AST."""
+
+    __slots__ = ("limits", "parse_depth", "pos", "tokens")
+
+    limits: SelectorLimits
+    tokens: list[Token]
+    pos: int
+    parse_depth: int
+
+    def __init__(
+        self,
+        tokens: list[Token],
+        *,
+        limits: SelectorLimits = DEFAULT_SELECTOR_LIMITS,
+        parse_depth: int = 0,
+    ) -> None:
+        self.limits = limits
+        self.tokens = tokens
+        self.pos = 0
+        self.parse_depth = parse_depth
+
+    def _peek(self) -> Token:
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return Token(TokenType.EOF)
+
+    def _advance(self) -> Token:
+        token = self._peek()
+        self.pos += 1
+        return token
+
+    def _expect(self, token_type: str) -> Token:
+        token = self._peek()
+        if token.type != token_type:
+            raise SelectorError(f"Expected {token_type}, got {token.type}")
+        return self._advance()
+
+    def parse(self) -> ParsedSelector:
+        """Parse a complete selector (possibly comma-separated list)."""
+        selectors: list[ComplexSelector] = []
+        seen_signatures: set[tuple[Any, ...]] = set()
+        # parse_selector() validates non-empty input, so first selector always exists
+        first = self._parse_complex_selector()
+        if first is None:  # pragma: no cover
+            raise SelectorError("Empty selector")
+        first_sig = _complex_selector_signature(first)
+        seen_signatures.add(first_sig)
+        selectors.append(first)
+
+        while self._peek().type == TokenType.COMMA:
+            self._advance()  # consume comma
+            selector = self._parse_complex_selector()
+            if selector:
+                selector_sig = _complex_selector_signature(selector)
+                if selector_sig in seen_signatures:
+                    continue
+                if len(seen_signatures) >= self.limits.max_list_items:
+                    raise SelectorError("Selector list has too many entries")
+                seen_signatures.add(selector_sig)
+                selectors.append(selector)
+
+        if self._peek().type != TokenType.EOF:
+            raise SelectorError(f"Unexpected token: {self._peek()}")
+
+        if len(selectors) == 1:
+            return selectors[0]
+        return SelectorList(selectors)
+
+    def _parse_complex_selector(self) -> ComplexSelector | None:
+        """Parse a complex selector (compound selectors with combinators)."""
+        complex_sel = ComplexSelector()
+
+        # First compound selector (no combinator)
+        compound = self._parse_compound_selector()
+        if not compound:
+            return None
+        complex_sel.parts.append((None, compound))
+
+        # Parse combinator + compound selector pairs
+        while self._peek().type == TokenType.COMBINATOR:
+            combinator = self._advance().value
+            compound = self._parse_compound_selector()
+            if not compound:
+                raise SelectorError("Expected selector after combinator")
+            if len(complex_sel.parts) >= self.limits.max_complex_selector_parts:
+                raise SelectorError("Complex selector has too many parts")
+            complex_sel.parts.append((combinator, compound))
+
+        return complex_sel
+
+    def _parse_compound_selector(self) -> CompoundSelector | None:
+        """Parse a compound selector (sequence of simple selectors)."""
+        simple_selectors: list[SimpleSelector] = []
+        seen_signatures: set[tuple[Any, ...]] = set()
+
+        while True:
+            token = self._peek()
+            simple: SimpleSelector | None = None
+
+            if token.type == TokenType.TAG:
+                self._advance()
+                simple = SimpleSelector(SimpleSelector.TYPE_TAG, name=token.value)
+
+            elif token.type == TokenType.UNIVERSAL:
+                self._advance()
+                simple = SimpleSelector(SimpleSelector.TYPE_UNIVERSAL)
+
+            elif token.type == TokenType.ID:
+                self._advance()
+                simple = SimpleSelector(SimpleSelector.TYPE_ID, name=token.value)
+
+            elif token.type == TokenType.CLASS:
+                self._advance()
+                simple = SimpleSelector(SimpleSelector.TYPE_CLASS, name=token.value)
+
+            elif token.type == TokenType.ATTR_START:
+                simple = self._parse_attribute_selector()
+
+            elif token.type == TokenType.COLON:
+                simple = self._parse_pseudo_selector()
+
+            else:
+                break
+
+            simple_sig = _simple_selector_signature(simple)
+            if simple_sig not in seen_signatures:
+                if len(seen_signatures) >= self.limits.max_compound_simple_selectors:
+                    raise SelectorError("Compound selector has too many simple selectors")
+                seen_signatures.add(simple_sig)
+                simple_selectors.append(simple)
+
+        if not simple_selectors:
+            return None
+        return CompoundSelector(simple_selectors)
+
+    def _parse_attribute_selector(self) -> SimpleSelector:
+        """Parse an attribute selector [attr], [attr=value], etc."""
+        self._expect(TokenType.ATTR_START)
+
+        attr_name = self._expect(TokenType.TAG).value
+        attr_name = attr_name.lower() if attr_name else attr_name
+
+        token = self._peek()
+        if token.type == TokenType.ATTR_END:
+            self._advance()
+            return SimpleSelector(SimpleSelector.TYPE_ATTR, name=attr_name)
+
+        operator = self._expect(TokenType.ATTR_OP).value
+        value = self._expect(TokenType.STRING).value
+        self._expect(TokenType.ATTR_END)
+
+        return SimpleSelector(SimpleSelector.TYPE_ATTR, name=attr_name, operator=operator, value=value)
+
+    def _parse_pseudo_selector(self) -> SimpleSelector:
+        """Parse a pseudo-class selector like :first-child or :not(selector)."""
+        self._expect(TokenType.COLON)
+        name = self._expect(TokenType.TAG).value
+        name = name.lower() if name else name
+
+        # Functional pseudo-class
+        if self._peek().type == TokenType.PAREN_OPEN:
+            self._advance()
+            arg: str | None = None
+            if self._peek().type == TokenType.STRING:
+                arg = self._advance().value
+            self._expect(TokenType.PAREN_CLOSE)
+            parsed_arg = (
+                _parse_selector(arg, limits=self.limits, parse_depth=self.parse_depth + 1)
+                if name == "not" and arg
+                else None
+            )
+            return SimpleSelector(SimpleSelector.TYPE_PSEUDO, name=name, arg=arg, parsed_arg=parsed_arg)
+
+        return SimpleSelector(SimpleSelector.TYPE_PSEUDO, name=name)
+
+
+@dataclass(slots=True)
+class NodeAttributeData:
+    """Cached selector-relevant attribute data for one node."""
+
+    attrs_lower: dict[str, str]
+    class_tokens: frozenset[str] | None = None
+    attr_tokens: dict[str, frozenset[str]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ParentSelectorData:
+    """Cached selector-relevant child and sibling data for one parent."""
+
+    element_children: list[Any]
+    element_child_names: frozenset[str]
+    element_index: dict[int, int]
+    first_by_type: dict[str, Any]
+    is_empty: bool
+    last_by_type: dict[str, Any]
+    previous_sibling: dict[int, Any | None]
+    type_index: dict[int, int]
+
+
+@dataclass(slots=True)
+class SelectorQueryContext:
+    """Per-query selector state shared by matcher helpers."""
+
+    limits: SelectorLimits = DEFAULT_SELECTOR_LIMITS
+    ancestor_match_cache: dict[tuple[int, int], dict[int, Any | None]] = field(default_factory=dict)
+    node_attr_cache: dict[int, NodeAttributeData] = field(default_factory=dict)
+    parent_data_cache: dict[int, ParentSelectorData] = field(default_factory=dict)
+    nth_expression_cache: dict[str | None, tuple[int, int] | None] = field(default_factory=dict)
+    previous_match_cache: dict[tuple[int, int, int], dict[int, Any | None]] = field(default_factory=dict)
+    text_content_cache: dict[int, str] = field(default_factory=dict)
+    _remaining_match_steps: int = field(init=False)
+    _remaining_match_bytes: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._remaining_match_steps = self.limits.max_match_steps
+        self._remaining_match_bytes = self.limits.max_match_bytes
+
+    def tick(self, steps: int = 1) -> None:
+        """Consume match budget for selector evaluation work."""
+        if steps <= 0:
+            return
+        self._remaining_match_steps -= steps
+        if self._remaining_match_steps < 0:
+            raise SelectorError("Selector match budget exceeded")
+
+    def tick_bytes(self, bytes_count: int) -> None:
+        """Consume match budget for selector string materialization work."""
+        if bytes_count <= 0:
+            return
+        self._remaining_match_bytes -= bytes_count
+        if self._remaining_match_bytes < 0:
+            raise SelectorError("Selector byte budget exceeded")
+
+
+class SelectorMatcher:
+    """Matches selectors against DOM nodes."""
+
+    __slots__ = ("_context",)
+
+    def __init__(
+        self,
+        *,
+        context: SelectorQueryContext | None = None,
+        limits: SelectorLimits = DEFAULT_SELECTOR_LIMITS,
+    ) -> None:
+        self._context = context or SelectorQueryContext(limits=limits)
+
+    def _unquote_pseudo_arg(self, arg: str) -> str:
+        arg = arg.strip()
+        if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ('"', "'"):
+            quote = arg[0]
+            # Minimal unescaping for common cases like :contains("click me")
+            return arg[1:-1].replace("\\" + quote, quote).replace("\\\\", "\\")
+        return arg
+
+    def matches(self, node: Any, selector: ParsedSelector | CompoundSelector | SimpleSelector) -> bool:
+        """Check if a node matches a parsed selector."""
+        return self._matches(node, selector, depth=0)
+
+    def _matches(self, node: Any, selector: ParsedSelector | CompoundSelector | SimpleSelector, *, depth: int) -> bool:
+        self._context.tick()
+        if depth > self._context.limits.max_match_depth:
+            raise SelectorError("Selector nesting is too deep")
+
+        if isinstance(selector, SelectorList):
+            return any(self._matches(node, sel, depth=depth) for sel in selector.selectors)
+        if isinstance(selector, ComplexSelector):
+            return self._matches_complex(node, selector, depth=depth)
+        if isinstance(selector, CompoundSelector):
+            return self._matches_compound(node, selector, depth=depth)
+        if isinstance(selector, SimpleSelector):
+            return self._matches_simple(node, selector, depth=depth)
+        return False
+
+    def _matches_complex(self, node: Any, selector: ComplexSelector, *, depth: int = 0) -> bool:
+        """Match a complex selector (with combinators)."""
+        # Work backwards from the rightmost compound selector
+        parts = selector.parts
+        if not parts:
+            return False
+
+        # Start with the rightmost part
+        combinator, compound = parts[-1]
+        if not self._matches_compound(node, compound, depth=depth):
+            return False
+
+        # Work backwards through the chain
+        current = node
+        for i in range(len(parts) - 2, -1, -1):
+            combinator, compound = parts[i + 1]
+            prev_compound = parts[i][1]
+
+            if combinator == " ":  # Descendant
+                ancestor = self._closest_matching_ancestor(current, prev_compound, depth=depth)
+                if ancestor is None:
+                    return False
+                current = ancestor
+
+            elif combinator == ">":  # Child
+                parent = current.parent
+                if not parent or not self._matches_compound(parent, prev_compound, depth=depth):
+                    return False
+                current = parent
+
+            elif combinator == "+":  # Adjacent sibling
+                sibling = self._previous_element_sibling(current)
+                if not sibling or not self._matches_compound(sibling, prev_compound, depth=depth):
+                    return False
+                current = sibling
+
+            else:  # combinator == "~" - General sibling
+                sibling = self._previous_matching_sibling(current, prev_compound, depth=depth)
+                if sibling is None:
+                    return False
+                current = sibling
+
+        return True
+
+    def _matches_compound(self, node: Any, compound: CompoundSelector, *, depth: int = 0) -> bool:
+        """Match a compound selector (all simple selectors must match)."""
+        return all(self._matches_simple(node, simple, depth=depth) for simple in compound.selectors)
+
+    def _matches_simple(self, node: Any, selector: SimpleSelector, *, depth: int = 0) -> bool:
+        """Match a simple selector against a node."""
+        self._context.tick()
+        # Non-element nodes only match explicit pseudo-classes (e.g. :comment)
+        if not hasattr(node, "name"):
+            return False
+        if node.name.startswith("#"):
+            if selector.type == SimpleSelector.TYPE_PSEUDO:
+                return self._matches_pseudo(node, selector, depth=depth)
+            return False
+
+        sel_type = selector.type
+
+        if sel_type == SimpleSelector.TYPE_UNIVERSAL:
+            return True
+
+        if sel_type == SimpleSelector.TYPE_TAG:
+            # HTML tag names are case-insensitive
+            selector_name = selector.name or ""
+            node_name = node.name
+            return bool(node_name == selector_name or node_name.lower() == selector_name)
+
+        if sel_type == SimpleSelector.TYPE_ID:
+            node_id = node.attrs.get("id", "") if node.attrs else ""
+            return node_id == selector.name
+
+        if sel_type == SimpleSelector.TYPE_CLASS:
+            return selector.name in self._class_tokens(node)
+
+        if sel_type == SimpleSelector.TYPE_ATTR:
+            return self._matches_attribute(node, selector)
+
+        if sel_type == SimpleSelector.TYPE_PSEUDO:
+            return self._matches_pseudo(node, selector, depth=depth)
+
+        return False
+
+    def _class_tokens(self, node: Any) -> frozenset[str]:
+        data = self._node_attribute_data(node)
+        if data is None:
+            return frozenset()
+        if data.class_tokens is None:
+            class_attr = data.attrs_lower.get("class")
+            data.class_tokens = self._split_attribute_tokens(class_attr or "")
+            if class_attr:
+                data.attr_tokens["class"] = data.class_tokens
+        return data.class_tokens
+
+    def _matches_attribute(self, node: Any, selector: SimpleSelector) -> bool:
+        """Match an attribute selector."""
+        attr_name = selector.name or ""  # Attribute names are normalized during parsing.
+        attr_value = self._attribute_value(node, attr_name)
+
+        if attr_value is None:
+            return False
+
+        # Presence check only
+        if selector.operator is None:
+            return True
+
+        value = selector.value or ""
+        op = selector.operator
+
+        if op == "=":
+            self._context.tick_bytes(len(attr_value) + len(value))
+            return attr_value == value
+
+        if op == "~=":
+            # Space-separated word match
+            return value in self._attribute_tokens(node, attr_name, attr_value)
+
+        if op == "|=":
+            # Hyphen-separated prefix match (e.g., lang="en" matches lang|="en-US")
+            self._context.tick_bytes(len(attr_value) + len(value))
+            return attr_value == value or attr_value.startswith(value + "-")
+
+        if op == "^=":
+            # Starts with
+            self._context.tick_bytes(len(attr_value) + len(value))
+            return attr_value.startswith(value) if value else False
+
+        if op == "$=":
+            # Ends with
+            self._context.tick_bytes(len(attr_value) + len(value))
+            return attr_value.endswith(value) if value else False
+
+        if op == "*=":
+            # Contains
+            self._context.tick_bytes(len(attr_value) + len(value))
+            return value in attr_value if value else False
+
+        return False
+
+    def _lowercase_attrs(self, node: Any) -> dict[str, str]:
+        data = self._node_attribute_data(node)
+        return data.attrs_lower if data else {}
+
+    def _node_attribute_data(self, node: Any) -> NodeAttributeData | None:
+        attrs = getattr(node, "attrs", None)
+        if not attrs:
+            return None
+
+        node_key = id(node)
+        cached = self._context.node_attr_cache.get(node_key)
+        if cached is None:
+            attrs_lower: dict[str, str] = {}
+            for name, value in attrs.items():
+                name_str = str(name).lower()
+                value_str = "" if value is None else str(value)
+                self._context.tick_bytes(len(name_str) + len(value_str))
+                attrs_lower[name_str] = value_str
+            cached = NodeAttributeData(attrs_lower=attrs_lower)
+            self._context.node_attr_cache[node_key] = cached
+        return cached
+
+    def _attribute_value(self, node: Any, attr_name: str) -> str | None:
+        return self._lowercase_attrs(node).get(attr_name)
+
+    def _attribute_tokens(self, node: Any, attr_name: str, attr_value: str) -> frozenset[str]:
+        if not attr_value:
+            return frozenset()
+
+        data = self._node_attribute_data(node)
+        if data is None:
+            return frozenset()
+
+        cached = data.attr_tokens.get(attr_name)
+        if cached is None:
+            cached = self._split_attribute_tokens(attr_value)
+            data.attr_tokens[attr_name] = cached
+            if attr_name == "class":
+                data.class_tokens = cached
+        return cached
+
+    def _split_attribute_tokens(self, attr_value: str) -> frozenset[str]:
+        self._context.tick_bytes(len(attr_value))
+        return frozenset(attr_value.split())
+
+    def _matches_pseudo(self, node: Any, selector: SimpleSelector, *, depth: int = 0) -> bool:
+        """Match a pseudo-class selector."""
+        name = selector.name or ""
+
+        if name == "first-child":
+            return self._is_first_child(node)
+
+        if name == "last-child":
+            return self._is_last_child(node)
+
+        if name == "nth-child":
+            return self._matches_nth_child(node, selector.arg)
+
+        if name == "not":
+            if not selector.arg:
+                return True
+            inner = selector.parsed_arg or parse_selector(selector.arg)
+            return not self._matches(node, inner, depth=depth + 1)
+
+        if name == "only-child":
+            return self._is_first_child(node) and self._is_last_child(node)
+
+        if name == "empty":
+            return self._is_empty(node)
+
+        if name == "root":
+            # Root is the html element (or document root's first element child)
+            parent = node.parent
+            if parent and hasattr(parent, "name"):
+                return parent.name in ("#document", "#document-fragment")
+            return False
+
+        if name == "contains":
+            if selector.arg is None:
+                raise SelectorError(":contains() requires a string argument")
+            needle = self._unquote_pseudo_arg(selector.arg)
+            self._context.tick_bytes(len(needle))
+            if needle == "":
+                return True
+            # Non-standard (jQuery-style) pseudo-class: match elements whose descendant
+            # text contains the substring. We use `to_text()` to approximate textContent.
+            return needle in self._text_content(node)
+
+        if name == "comment":
+            return getattr(node, "name", None) == "#comment"
+
+        if name == "first-of-type":
+            return self._is_first_of_type(node)
+
+        if name == "last-of-type":
+            return self._is_last_of_type(node)
+
+        if name == "nth-of-type":
+            return self._matches_nth_of_type(node, selector.arg)
+
+        if name == "only-of-type":
+            return self._is_first_of_type(node) and self._is_last_of_type(node)
+
+        # Unknown pseudo-class - don't match
+        raise SelectorError(f"Unsupported pseudo-class: :{name}")
+
+    def _get_element_children(self, parent: Any) -> list[Any]:
+        """Get only element children (exclude text, comments, etc.)."""
+        if not parent or not parent.has_child_nodes():
+            return []
+
+        return self._parent_data(parent).element_children
+
+    def _element_index_map(self, parent: Any) -> dict[int, int]:
+        return self._parent_data(parent).element_index
+
+    def _type_position_data(self, parent: Any) -> tuple[dict[str, Any], dict[str, Any], dict[int, int]]:
+        data = self._parent_data(parent)
+        return data.first_by_type, data.last_by_type, data.type_index
+
+    def _parent_data(self, parent: Any) -> ParentSelectorData:
+        parent_key = id(parent)
+        cached = self._context.parent_data_cache.get(parent_key)
+        if cached is not None:
+            return cached
+
+        element_children: list[Any] = []
+        element_child_names: set[str] = set()
+        element_index: dict[int, int] = {}
+        first_by_type: dict[str, Any] = {}
+        last_by_type: dict[str, Any] = {}
+        previous_sibling: dict[int, Any | None] = {}
+        type_index: dict[int, int] = {}
+        type_counts: dict[str, int] = {}
+        previous: Any | None = None
+        is_empty = True
+
+        for child in parent.children:
+            self._context.tick()
+            if not hasattr(child, "name"):
+                continue
+            previous_sibling[id(child)] = previous
+            if child.name.startswith("#"):
+                if child.name == "#text" and child.data and child.data.strip():
+                    is_empty = False
+                continue
+
+            is_empty = False
+            element_children.append(child)
+            child_name = child.name.lower()
+            element_child_names.add(child_name)
+            element_index[id(child)] = len(element_children)
+            type_count = type_counts.get(child_name, 0) + 1
+            type_counts[child_name] = type_count
+            type_index[id(child)] = type_count
+            first_by_type.setdefault(child_name, child)
+            last_by_type[child_name] = child
+            previous = child
+
+        cached = ParentSelectorData(
+            element_children=element_children,
+            element_child_names=frozenset(element_child_names),
+            element_index=element_index,
+            first_by_type=first_by_type,
+            is_empty=is_empty,
+            last_by_type=last_by_type,
+            previous_sibling=previous_sibling,
+            type_index=type_index,
+        )
+        self._context.parent_data_cache[parent_key] = cached
+        return cached
+
+    def _get_previous_sibling(self, node: Any) -> Any | None:
+        """Get the previous element sibling. Returns None if node is first or not found."""
+        self._context.tick()
+        parent = node.parent
+        if not parent:
+            return None
+
+        prev: Any | None = None
+        for child in parent.children:
+            self._context.tick()
+            if child is node:
+                return prev
+            if not child.name.startswith("#"):
+                prev = child
+        return None  # node not in parent.children (detached)
+
+    def _previous_element_sibling(self, node: Any) -> Any | None:
+        parent = node.parent
+        if not parent:
+            return None
+
+        return self._parent_data(parent).previous_sibling.get(id(node))
+
+    def _previous_matching_sibling(self, node: Any, compound: CompoundSelector, *, depth: int) -> Any | None:
+        parent = node.parent
+        if not parent:
+            return None
+
+        required_tag = self._compound_tag_name(compound)
+        if required_tag is not None and required_tag not in self._element_child_names(parent):
+            return None
+
+        cache_key = (id(parent), id(compound), depth)
+        cached = self._context.previous_match_cache.get(cache_key)
+        if cached is None:
+            cached = {}
+            last_match: Any | None = None
+            for child in parent.children:
+                self._context.tick()
+                cached[id(child)] = last_match
+                if not child.name.startswith("#") and self._matches_compound(child, compound, depth=depth):
+                    last_match = child
+            self._context.previous_match_cache[cache_key] = cached
+
+        return cached.get(id(node))
+
+    def _compound_tag_name(self, compound: CompoundSelector) -> str | None:
+        for simple in compound.selectors:
+            if simple.type == SimpleSelector.TYPE_TAG and simple.name:
+                return simple.name
+        return None
+
+    def _element_child_names(self, parent: Any) -> frozenset[str]:
+        if not parent or not parent.has_child_nodes():
+            return frozenset()
+
+        return self._parent_data(parent).element_child_names
+
+    def _closest_matching_ancestor(self, node: Any, compound: CompoundSelector, *, depth: int) -> Any | None:
+        cache_key = (id(compound), depth)
+        cached = self._context.ancestor_match_cache.get(cache_key)
+        if cached is None:
+            cached = {}
+            self._context.ancestor_match_cache[cache_key] = cached
+
+        node_key = id(node)
+        if node_key in cached:
+            return cached[node_key]
+
+        path: list[Any] = []
+        visited: set[int] = {id(node)}
+        ancestor = node.parent
+        found: Any | None = None
+        while ancestor:
+            self._context.tick()
+            ancestor_key = id(ancestor)
+            if ancestor_key in visited:
+                break
+            visited.add(ancestor_key)
+            if ancestor_key in cached:
+                found = cached[ancestor_key]
+                break
+            if self._matches_compound(ancestor, compound, depth=depth):
+                found = ancestor
+                break
+            path.append(ancestor)
+            ancestor = ancestor.parent
+
+        cached[node_key] = found
+        for path_node in path:
+            cached[id(path_node)] = found
+        return found
+
+    def _text_content(self, node: Any) -> str:
+        self._context.tick()
+        node_key = id(node)
+        cached = self._context.text_content_cache.get(node_key)
+        if cached is not None:
+            return cached
+
+        stack: list[tuple[Any, bool]] = [(node, False)]
+        visiting: set[int] = set()
+        while stack:
+            self._context.tick()
+            current, visited = stack.pop()
+            current_key = id(current)
+            if current_key in self._context.text_content_cache:
+                continue
+
+            if visited:
+                visiting.discard(current_key)
+                name = current.name
+                if name == "#text":
+                    data = current.data
+                    if data:
+                        self._context.tick_bytes(len(data))
+                        data = data.strip()
+                    self._context.text_content_cache[current_key] = data or ""
+                    continue
+
+                parts: list[str] = []
+                total_text_length = 0
+                children = getattr(current, "children", None)
+                if children:
+                    for child in children:
+                        text = self._context.text_content_cache.get(id(child), "")
+                        if text:
+                            total_text_length += len(text)
+                            parts.append(text)
+
+                template_content = getattr(current, "template_content", None)
+                if template_content is not None:
+                    text = self._context.text_content_cache.get(id(template_content), "")
+                    if text:
+                        total_text_length += len(text)
+                        parts.append(text)
+
+                self._context.tick_bytes(total_text_length)
+                self._context.text_content_cache[current_key] = " ".join(parts)
+                continue
+
+            if current_key in visiting:
+                self._context.text_content_cache[current_key] = ""
+                continue
+            visiting.add(current_key)
+            stack.append((current, True))
+
+            template_content = getattr(current, "template_content", None)
+            if template_content is not None:
+                stack.append((template_content, False))
+
+            children = getattr(current, "children", None)
+            if children:
+                stack.extend((child, False) for child in reversed(children))
+
+        return self._context.text_content_cache.get(node_key, "")
+
+    def _is_first_child(self, node: Any) -> bool:
+        """Check if node is the first element child of its parent."""
+        parent = node.parent
+        if not parent:
+            return False
+        elements = self._get_element_children(parent)
+        return bool(elements) and elements[0] is node
+
+    def _is_last_child(self, node: Any) -> bool:
+        """Check if node is the last element child of its parent."""
+        parent = node.parent
+        if not parent:
+            return False
+        elements = self._get_element_children(parent)
+        return bool(elements) and elements[-1] is node
+
+    def _is_empty(self, node: Any) -> bool:
+        if not node.has_child_nodes():
+            return True
+        return self._parent_data(node).is_empty
+
+    def _is_first_of_type(self, node: Any) -> bool:
+        """Check if node is the first sibling of its type."""
+        parent = node.parent
+        if not parent:
+            return False
+        node_name = node.name.lower()
+        first_by_type, _, _ = self._type_position_data(parent)
+        return first_by_type.get(node_name) is node
+
+    def _is_last_of_type(self, node: Any) -> bool:
+        """Check if node is the last sibling of its type."""
+        parent = node.parent
+        if not parent:
+            return False
+        node_name = node.name.lower()
+        _, last_by_type, _ = self._type_position_data(parent)
+        return last_by_type.get(node_name) is node
+
+    def _parse_nth_expression(self, expr: str | None) -> tuple[int, int] | None:
+        """Parse an nth-child expression like '2n+1', 'odd', 'even', '3'."""
+        if expr in self._context.nth_expression_cache:
+            return self._context.nth_expression_cache[expr]
+
+        parsed = self._parse_nth_expression_uncached(expr)
+        self._context.nth_expression_cache[expr] = parsed
+        return parsed
+
+    def _parse_nth_expression_uncached(self, expr: str | None) -> tuple[int, int] | None:
+        if not expr:
+            return None
+
+        expr = expr.strip().lower()
+
+        if expr == "odd":
+            return (2, 1)  # 2n+1
+        if expr == "even":
+            return (2, 0)  # 2n
+
+        # Parse An+B syntax
+        # Handle formats: n, 2n, 2n+1, -n+2, 3, etc.
+        a = 0
+        b = 0
+
+        # Remove all spaces
+        expr = expr.replace(" ", "")
+
+        if "n" in expr:
+            parts = expr.split("n")
+            a_part = parts[0]
+            b_part = parts[1] if len(parts) > 1 else ""
+
+            if a_part == "" or a_part == "+":
+                a = 1
+            elif a_part == "-":
+                a = -1
+            else:
+                try:
+                    a = int(a_part)
+                except ValueError:
+                    return None
+
+            if b_part:
+                try:
+                    b = int(b_part)
+                except ValueError:
+                    return None
+        else:
+            # Just a number
+            try:
+                b = int(expr)
+            except ValueError:
+                return None
+
+        return (a, b)
+
+    def _matches_nth(self, index: int, a: int, b: int) -> bool:
+        """Check if 1-based index matches An+B formula."""
+        if a == 0:
+            return index == b
+        # Solve: index = a*n + b for non-negative integer n
+        # n = (index - b) / a
+        diff = index - b
+        if a > 0:
+            return diff >= 0 and diff % a == 0
+        # a < 0: need diff <= 0 and diff divisible by abs(a)
+        return diff <= 0 and diff % a == 0
+
+    def _matches_nth_child(self, node: Any, arg: str | None) -> bool:
+        """Match :nth-child(An+B)."""
+        parent = node.parent
+        if not parent:
+            return False
+
+        parsed = self._parse_nth_expression(arg)
+        if parsed is None:
+            return False
+        a, b = parsed
+
+        index = self._element_index_map(parent).get(id(node))
+        return False if index is None else self._matches_nth(index, a, b)
+
+    def _matches_nth_of_type(self, node: Any, arg: str | None) -> bool:
+        """Match :nth-of-type(An+B)."""
+        parent = node.parent
+        if not parent:
+            return False
+
+        parsed = self._parse_nth_expression(arg)
+        if parsed is None:
+            return False
+        a, b = parsed
+
+        _, _, type_index_by_node = self._type_position_data(parent)
+        type_index = type_index_by_node.get(id(node))
+        return False if type_index is None else self._matches_nth(type_index, a, b)
+
+
+def parse_selector(
+    selector_string: str,
+    *,
+    limits: SelectorLimits = DEFAULT_SELECTOR_LIMITS,
+) -> ParsedSelector:
+    """Parse a CSS selector string into an AST.
+
+    Note: parsing is cached internally via an LRU cache (see
+    `_parse_selector_cached`) to keep repeated default-limit selector use cheap.
+    """
+    selector = selector_string.strip() if selector_string else ""
+    if not selector:
+        raise SelectorError("Empty selector")
+    if len(selector) > limits.max_length:
+        raise SelectorError("Selector is too long")
+
+    if limits == DEFAULT_SELECTOR_LIMITS:
+        return _parse_selector_cached(selector)
+    return _parse_selector(selector, limits=limits, parse_depth=0)
+
+
+@lru_cache(maxsize=512)
+def _parse_selector_cached(selector_string: str) -> ParsedSelector:
+    return _parse_selector(selector_string, limits=DEFAULT_SELECTOR_LIMITS, parse_depth=0)
+
+
+def _parse_selector(
+    selector_string: str,
+    *,
+    limits: SelectorLimits = DEFAULT_SELECTOR_LIMITS,
+    parse_depth: int,
+) -> ParsedSelector:
+    if parse_depth > limits.max_parse_depth:
+        raise SelectorError("Selector nesting is too deep")
+    tokenizer = SelectorTokenizer(selector_string)
+    tokens = tokenizer.tokenize()
+    parser = SelectorParser(tokens, limits=limits, parse_depth=parse_depth)
+    return parser.parse()
+
+
+def _is_simple_tag_selector(selector: str) -> bool:
+    if not selector:
+        return False
+    ch0 = selector[0]
+    if not (ch0.isalpha() or ch0 == "_" or ch0 == "-" or ord(ch0) > 127):
+        return False
+    for ch in selector[1:]:
+        if ch.isalnum() or ch == "_" or ch == "-" or ord(ch) > 127:
+            continue
+        return False
+    return True
+
+
+def _selector_allows_non_elements(selector: ParsedSelector | CompoundSelector | SimpleSelector) -> bool:
+    if isinstance(selector, SelectorList):
+        return any(_selector_allows_non_elements(sel) for sel in selector.selectors)
+    if isinstance(selector, ComplexSelector):
+        return any(_selector_allows_non_elements(compound) for _, compound in selector.parts)
+    if isinstance(selector, CompoundSelector):
+        return any(_selector_allows_non_elements(simple) for simple in selector.selectors)
+    if isinstance(selector, SimpleSelector):
+        if selector.type != SimpleSelector.TYPE_PSEUDO:
+            return False
+        return selector.name == "comment"
+    return False
+
+
+def _query_descendants_tag(
+    node: Any,
+    tag_lower: str,
+    results: list[QueryMatch],
+    context: SelectorQueryContext | None = None,
+) -> None:
+    context = context or SelectorQueryContext()
+    results_append = results.append
+    visited: set[int] = {id(node)}
+
+    stack: list[Any] = []
+
+    root_children = node.children
+    if root_children:
+        stack.extend(reversed(root_children))
+
+    if node.name == "template" and node.namespace == "html":
+        template_content = getattr(node, "template_content", None)
+        if template_content:
+            stack.append(template_content)
+
+    while stack:
+        context.tick()
+        current = stack.pop()
+        current_key = id(current)
+        if current_key in visited:
+            continue
+        visited.add(current_key)
+
+        name = current.name
+        if not name.startswith("#"):
+            if name == tag_lower or name.lower() == tag_lower:
+                results_append(current)
+
+        children = current.children
+        if children:
+            stack.extend(reversed(children))
+
+        if name == "template" and current.namespace == "html":
+            template_content = current.template_content
+            if template_content:
+                stack.append(template_content)
+
+
+def query(root: NodeType, selector_string: str) -> list[QueryMatch]:
+    """
+    Query the DOM tree starting from root, returning all matching nodes.
+
+    Searches descendants of root, not including root itself (matching browser
+    behavior for querySelectorAll).
+
+    Args:
+        root: The root node to search from
+        selector_string: A CSS selector string
+
+    Returns:
+        A list of matching nodes
+
+    Performance notes:
+    - Simple tag-only selectors like "div" use a fast descendant-scan path.
+    - Other selectors are parsed via an internal LRU cache (up to 512 distinct
+      selector strings) to reduce repeated parse overhead.
+    """
+    selector_string = selector_string.strip()
+    if not selector_string:
+        raise SelectorError("Empty selector")
+    if len(selector_string) > DEFAULT_SELECTOR_LIMITS.max_length:
+        raise SelectorError("Selector is too long")
+
+    results: list[QueryMatch] = []
+    context = SelectorQueryContext()
+
+    if _is_simple_tag_selector(selector_string):
+        _query_descendants_tag(root, selector_string.lower(), results, context)
+        return results
+
+    selector = parse_selector(selector_string)
+    allow_non_elements = _selector_allows_non_elements(selector)
+    _query_descendants(root, selector, results, context=context, allow_non_elements=allow_non_elements)
+    return results
+
+
+def _query_descendants(
+    node: NodeType,
+    selector: ParsedSelector,
+    results: list[QueryMatch],
+    *,
+    context: SelectorQueryContext | None = None,
+    allow_non_elements: bool = False,
+) -> None:
+    """Search for matching nodes in descendants."""
+    context = context or SelectorQueryContext()
+    matcher_matches = SelectorMatcher(context=context).matches
+    results_append = results.append
+    visited: set[int] = {id(node)}
+
+    # querySelectorAll searches descendants of root, not including root itself.
+    stack: list[Any] = []
+
+    root_children = node.children
+    if root_children:
+        stack.extend(reversed(root_children))
+
+    if node.name == "template" and node.namespace == "html":
+        template_content = getattr(node, "template_content", None)
+        if template_content:
+            stack.append(template_content)
+
+    while stack:
+        context.tick()
+        current = stack.pop()
+        current_key = id(current)
+        if current_key in visited:
+            continue
+        visited.add(current_key)
+
+        name = current.name
+        if allow_non_elements:
+            if matcher_matches(current, selector):
+                results_append(current)
+        else:
+            if not name.startswith("#") and matcher_matches(current, selector):
+                results_append(current)
+
+        children = current.children
+        if children:
+            stack.extend(reversed(children))
+
+        if name == "template" and current.namespace == "html":
+            template_content = current.template_content
+            if template_content:
+                stack.append(template_content)
+
+
+def matches(node: NodeType, selector_string: str) -> bool:
+    """
+    Check if a node matches a CSS selector.
+
+    Args:
+        node: The node to check
+        selector_string: A CSS selector string
+
+    Returns:
+        True if the node matches, False otherwise
+    """
+    selector = parse_selector(selector_string)
+    return SelectorMatcher().matches(node, selector)

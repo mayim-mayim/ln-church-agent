@@ -1,0 +1,80 @@
+{
+  "profile_id": "immediate_visit_utf8.v1",
+  "task_type": "immediate_http_visit.v1",
+  "method": "GET",
+  "redirect_limit": 0,
+  "connect_timeout_ms": 3000,
+  "head_timeout_ms": 10000,
+  "total_timeout_ms": 12000,
+  "body_limit_bytes": 2097152,
+  "head_limit_bytes": 32768,
+  "json_max_depth": 64,
+  "request_headers": {
+    "Accept": "*/*",
+    "Accept-Encoding": "identity",
+    "User-Agent": "LNChurch-Visit/1.0 (+https://kari.mayim-mayim.com/agent-offer-register.html#instant-site-visits)"
+  },
+  "html": {
+    "parser": "HTML5 document",
+    "scripting_enabled": false,
+    "template_fragment_traversal": false,
+    "tags": [
+      "a",
+      "form",
+      "h1",
+      "h2",
+      "img",
+      "meta",
+      "p",
+      "script"
+    ],
+    "title_whitespace_codepoints": [
+      9,
+      10,
+      12,
+      13,
+      32
+    ]
+  },
+  "json": {
+    "root": "nonempty object",
+    "duplicate_keys": "last decoded member value type",
+    "top_level_types": [
+      "null",
+      "boolean",
+      "number",
+      "string",
+      "array",
+      "object"
+    ]
+  },
+  "structure_digest": "sha256-rfc8785-jcs-utf8-lowercase-hex",
+  "body_digest": "sha256-original-complete-body-bytes-lowercase-hex",
+  "agent_inconclusive_reasons": [
+    "url_disallowed",
+    "dns_failed",
+    "dns_disallowed",
+    "connection_failed",
+    "peer_mismatch",
+    "tls_failed",
+    "fetch_timeout",
+    "fetch_outcome_lost",
+    "headers_limit_exceeded",
+    "http_invalid",
+    "content_encoding_unsupported",
+    "body_limit_exceeded",
+    "body_incomplete",
+    "body_empty",
+    "partial_response",
+    "media_unsupported",
+    "media_invalid",
+    "charset_unsupported",
+    "utf8_invalid",
+    "html_structure_empty",
+    "json_invalid",
+    "json_depth_exceeded",
+    "json_root_unsupported",
+    "json_structure_unavailable"
+  ],
+  "specification_commit": "6390b7fc657ee516476afe8013b3d25881dff224"
+}

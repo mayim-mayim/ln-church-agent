@@ -1,0 +1,256 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "immediate_http_visit.v1",
+  "task_definition_version": "1.0.0",
+  "task_definition_digest": "25996fb28b531a8892ef39c9e98899d94a31bef2628ddeb437b0e8fd673b6e43",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "2b436966ddb5949e1e26155f61ff6817c982799a",
+    "basis_tree": "36ebc3cbd3299bc8a33d0de55e9ae75937298f4d",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "6390b7fc657ee516476afe8013b3d25881dff224",
+    "architecture_commit": "b7a25a4e90fc0fcdb335eba9e3e5636b1b7ae873",
+    "task_type": "immediate_http_visit.v1",
+    "task_definition_version": "1.0.0",
+    "profile_id": "immediate_visit_utf8.v1",
+    "fixture_blob": "29e3b65711d168f364470112beebc9ea43f9f6b4",
+    "fixture_sha256": "b6c94489e320711f9d809088dfb5e48e99744961e95b706e92509516c3a3352d",
+    "source_bundle_entries": [
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/README.md",
+        "mode": "100644",
+        "blob": "5084ff92e95c2cdc43e6561290564e6d24305aec",
+        "sha256": "36e7b690e752f034bcfc8cd3cf6014affda974460b58d05972a5665b8d4b029b"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/html5.mjs",
+        "mode": "100644",
+        "blob": "6c02f1520a9bc9e7a5dbac65446a0b04303bca40",
+        "sha256": "54c946dbbbc25e438abe09b53a3e6f14f05060133784a2ad228f41992c7a999d"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/json-shape.mjs",
+        "mode": "100644",
+        "blob": "e9f43b919f60dfd214db8b850c425ba533fa2c62",
+        "sha256": "7bef62766578e85dd321bf8ad9d5494554c43feffef0813376e8ba1825273d84"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package-lock.json",
+        "mode": "100644",
+        "blob": "8b2a94f3c4fe762fd8d84011d9a16feb0fd6b676",
+        "sha256": "3418967f8535af3e0f4eff5a4b0550697c5a5c4897dcfe0b1d53480c0edd5bed"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package.json",
+        "mode": "100644",
+        "blob": "2b5f77720bf68d8ddbfa65134d4884c302c70108",
+        "sha256": "81fb1b3abe628e5533ec5cce53a63af583946f746f3da849219bd5910c42b7fa"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-profile.mjs",
+        "mode": "100644",
+        "blob": "3eef3e4cb7b182934caa95d9f4e48bd7c9cc1008",
+        "sha256": "d9d78f383105c9f10bbec686ef544f24ae933b4a15213ac30088f4ab49febbf5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "19e683b4d9796c85bdbc31329261ce568b9532ba",
+        "sha256": "a905db33c3705df8a518f33b700d0ae7bed0fb97b33796b5f2c8d27829cd9ed2"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/abandon-request.schema.json",
+        "mode": "100644",
+        "blob": "d082f82058655356453d4de6ee86c88c5c257bd9",
+        "sha256": "104809f68243e04b87fd7d691bfcf2d87bedbdc1e9e3d4d34236549f896fb608"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/claim-request.schema.json",
+        "mode": "100644",
+        "blob": "ba875990a58ec48aedf744d515471b8b41684e02",
+        "sha256": "f4b5d56f19db04dd12c696e9b04a69e863293250b44e6c59cde57b936f3d4079"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/claim.schema.json",
+        "mode": "100644",
+        "blob": "fca3122c7fef403afe01184500800c421293c223",
+        "sha256": "cd9c30eb3bf7d4748d45ef019fdbfb34961e2cef0961d5b11a19a3c13d419015"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/definition.json",
+        "mode": "100644",
+        "blob": "ede4074ec9cd3c3a869a896e7f687a068390b993",
+        "sha256": "fafac5912323fef319da754a899a056dbd649424bf8f638dc8613bb88dc45105"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/error.schema.json",
+        "mode": "100644",
+        "blob": "3e9b4d57363da2038f363637be2da77fc4035b7b",
+        "sha256": "dc8636aafc81064822b0a2b6cb38062dc275cf11be9f90a1c81943ec6ca8834a"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/observation.schema.json",
+        "mode": "100644",
+        "blob": "14d1de34bd6e32f2452d2a75f85329bf6d8112b6",
+        "sha256": "25c3ca294b7416d385099dacf7ee9136d05f058a73450c407cb9de8987f674cb"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/page.schema.json",
+        "mode": "100644",
+        "blob": "65c2c0ded4406b2666244f84b9cc13f965fc8626",
+        "sha256": "0b1e335c4b062c257d2a1a87ed869269a3d73e4b3d2a8ad7edd34b65d2cd0be0"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/profile-fixtures.json",
+        "mode": "100644",
+        "blob": "29e3b65711d168f364470112beebc9ea43f9f6b4",
+        "sha256": "b6c94489e320711f9d809088dfb5e48e99744961e95b706e92509516c3a3352d"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/profile.json",
+        "mode": "100644",
+        "blob": "7efa7bd2010ae9ec468372326798ae01ad9a5ac6",
+        "sha256": "1dd2534e2b157c5fed79b5f8d39b7d9a810ff57e1c884ce774bf1976c31ad554"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/receipt.schema.json",
+        "mode": "100644",
+        "blob": "bbd11e87c02bed3ab8be67bb74f30454d1c45829",
+        "sha256": "2fbf5c3611f0e61803b04cc7b284eb964d59631c1bbb6021ae50ca8a5304446a"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/registration-result.schema.json",
+        "mode": "100644",
+        "blob": "0ea5f649bc044096a7ea505fce694bf6229a90b6",
+        "sha256": "8486d15cab40fdf66c18805e3fffb7d87dd34ab1b3bf05e35bfe0248f81178ca"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/registration.schema.json",
+        "mode": "100644",
+        "blob": "3321fa7f1ef821d6ac1ec3aa8bd319d55d588ef3",
+        "sha256": "df21ea50fd6e448911238e5425345ddc3272a7e0f825728f8df20b9844d95ad5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/requester-registration/SKILL.md",
+        "mode": "100644",
+        "blob": "9b392b9484b9387260a62692402bc1cd2417c971",
+        "sha256": "14f6cb925455a668312fbc977d6d275d5bc1e1e1cb5b19ada470c0acee876791"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/result.schema.json",
+        "mode": "100644",
+        "blob": "52bd0f9392bba1cec9b3ca64e3ac222da4a18363",
+        "sha256": "659ada2d50ae94a5ffa5c08e2cfa9fa5c6e84fd7519bff8cca4df53dcddb1783"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/submission.schema.json",
+        "mode": "100644",
+        "blob": "32d9367d4cfb517c59ae31c0b2a871230c0f2205",
+        "sha256": "b6ff73540d0c797a019d51f2cb72dc7ea1edb07ccf5ba037898226dfba23189a"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/summary.schema.json",
+        "mode": "100644",
+        "blob": "2c7e088833c4f04934f761ca75eef11ece7e9b1a",
+        "sha256": "9e547bcf6a5bc4378c1988651ddc8d92530fda8342daa9c8e9f44d35fb1a8175"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/task.schema.json",
+        "mode": "100644",
+        "blob": "2a77312d9eb470f632764404a618c0236ce61ccf",
+        "sha256": "15219172df3dd580dc3c9668ed17153b6af661e1681717ffcbbb42d301ce80e7"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/wire-fixtures.json",
+        "mode": "100644",
+        "blob": "c589a87dfd6e9b95d8494d483a17f8a84cd34c2f",
+        "sha256": "e743b939fe09eedeba27c97530dee94c92eb68de896314deb485cc292c93bc75"
+      }
+    ]
+  },
+  "components": {
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/SKILL.md": {
+      "media_type": "text/markdown; charset=utf-8",
+      "sha256": "a905db33c3705df8a518f33b700d0ae7bed0fb97b33796b5f2c8d27829cd9ed2"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/abandon-request.schema.json": {
+      "media_type": "application/json",
+      "sha256": "104809f68243e04b87fd7d691bfcf2d87bedbdc1e9e3d4d34236549f896fb608"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/claim-request.schema.json": {
+      "media_type": "application/json",
+      "sha256": "f4b5d56f19db04dd12c696e9b04a69e863293250b44e6c59cde57b936f3d4079"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/claim.schema.json": {
+      "media_type": "application/json",
+      "sha256": "cd9c30eb3bf7d4748d45ef019fdbfb34961e2cef0961d5b11a19a3c13d419015"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/definition.json": {
+      "media_type": "application/json",
+      "sha256": "fafac5912323fef319da754a899a056dbd649424bf8f638dc8613bb88dc45105"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/error.schema.json": {
+      "media_type": "application/json",
+      "sha256": "dc8636aafc81064822b0a2b6cb38062dc275cf11be9f90a1c81943ec6ca8834a"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/observation.schema.json": {
+      "media_type": "application/json",
+      "sha256": "25c3ca294b7416d385099dacf7ee9136d05f058a73450c407cb9de8987f674cb"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/page.schema.json": {
+      "media_type": "application/json",
+      "sha256": "0b1e335c4b062c257d2a1a87ed869269a3d73e4b3d2a8ad7edd34b65d2cd0be0"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/profile-fixtures.json": {
+      "media_type": "application/json",
+      "sha256": "b6c94489e320711f9d809088dfb5e48e99744961e95b706e92509516c3a3352d"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/profile.json": {
+      "media_type": "application/json",
+      "sha256": "1dd2534e2b157c5fed79b5f8d39b7d9a810ff57e1c884ce774bf1976c31ad554"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/receipt.schema.json": {
+      "media_type": "application/json",
+      "sha256": "2fbf5c3611f0e61803b04cc7b284eb964d59631c1bbb6021ae50ca8a5304446a"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/registration-result.schema.json": {
+      "media_type": "application/json",
+      "sha256": "8486d15cab40fdf66c18805e3fffb7d87dd34ab1b3bf05e35bfe0248f81178ca"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/registration.schema.json": {
+      "media_type": "application/json",
+      "sha256": "df21ea50fd6e448911238e5425345ddc3272a7e0f825728f8df20b9844d95ad5"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/requester-registration/SKILL.md": {
+      "media_type": "text/markdown; charset=utf-8",
+      "sha256": "14f6cb925455a668312fbc977d6d275d5bc1e1e1cb5b19ada470c0acee876791"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/result.schema.json": {
+      "media_type": "application/json",
+      "sha256": "659ada2d50ae94a5ffa5c08e2cfa9fa5c6e84fd7519bff8cca4df53dcddb1783"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/submission.schema.json": {
+      "media_type": "application/json",
+      "sha256": "b6ff73540d0c797a019d51f2cb72dc7ea1edb07ccf5ba037898226dfba23189a"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/summary.schema.json": {
+      "media_type": "application/json",
+      "sha256": "9e547bcf6a5bc4378c1988651ddc8d92530fda8342daa9c8e9f44d35fb1a8175"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/task.schema.json": {
+      "media_type": "application/json",
+      "sha256": "15219172df3dd580dc3c9668ed17153b6af661e1681717ffcbbb42d301ce80e7"
+    },
+    "frontend/agent-task-specs/immediate_http_visit.v1/1.0.0/wire-fixtures.json": {
+      "media_type": "application/json",
+      "sha256": "e743b939fe09eedeba27c97530dee94c92eb68de896314deb485cc292c93bc75"
+    }
+  },
+  "provenance": {
+    "status": "implementation_candidate_not_source_accepted",
+    "sdk_copy_source": "Development Control must supply the exact accepted Hondo candidate commit/tree; this manifest does not certify acceptance."
+  }
+}

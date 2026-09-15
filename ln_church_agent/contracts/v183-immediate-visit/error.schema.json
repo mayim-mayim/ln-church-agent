@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/error.schema.json",
+  "title": "immediate_http_visit.v1 error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "code",
+    "message",
+    "request_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_error.immediate_visit.v1"
+    },
+    "code": {
+      "enum": [
+        "invalid_request",
+        "unsupported_task_profile",
+        "task_not_found",
+        "listing_ended",
+        "capacity_unavailable",
+        "active_claim_exists",
+        "idempotency_conflict",
+        "report_conflict",
+        "claim_not_active",
+        "report_already_accepted",
+        "claim_expired",
+        "invalid_claim_token",
+        "temporarily_unavailable"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    }
+  }
+}

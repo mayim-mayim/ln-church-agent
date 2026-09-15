@@ -1,0 +1,353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/result.schema.json",
+  "title": "immediate_http_visit.v1 result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "execution_id",
+    "submission_id",
+    "endpoint_id",
+    "profile_id",
+    "report_sha256",
+    "received_at",
+    "evaluation_state",
+    "decision_at",
+    "approved_amount_atomic",
+    "bonus_approved",
+    "payment_state",
+    "transaction_hash",
+    "reason",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_submission_status.immediate_visit.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^exec_[a-f0-9]{32}$"
+    },
+    "submission_id": {
+      "type": "string",
+      "pattern": "^sub_[a-f0-9]{32}$"
+    },
+    "endpoint_id": {
+      "type": "string",
+      "pattern": "^ep_[a-f0-9]{64}$"
+    },
+    "profile_id": {
+      "const": "immediate_visit_utf8.v1"
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evaluation_state": {
+      "enum": [
+        "pending",
+        "repeat_drop",
+        "inconclusive",
+        "mismatch",
+        "base_approved",
+        "base_bonus_approved"
+      ]
+    },
+    "decision_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "approved_amount_atomic": {
+      "enum": [
+        "0",
+        "7500",
+        "15000"
+      ]
+    },
+    "bonus_approved": {
+      "type": "boolean"
+    },
+    "payment_state": {
+      "enum": [
+        "not_applicable",
+        "pending",
+        "ambiguous",
+        "paid_confirmed",
+        "failed"
+      ]
+    },
+    "transaction_hash": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "enum": [
+        null,
+        "url_disallowed",
+        "dns_failed",
+        "dns_disallowed",
+        "connection_failed",
+        "peer_mismatch",
+        "tls_failed",
+        "fetch_timeout",
+        "fetch_outcome_lost",
+        "headers_limit_exceeded",
+        "http_invalid",
+        "content_encoding_unsupported",
+        "body_limit_exceeded",
+        "body_incomplete",
+        "body_empty",
+        "partial_response",
+        "media_unsupported",
+        "media_invalid",
+        "charset_unsupported",
+        "utf8_invalid",
+        "html_structure_empty",
+        "json_invalid",
+        "json_depth_exceeded",
+        "json_root_unsupported",
+        "json_structure_unavailable",
+        "reference_start_deadline",
+        "reference_result_deadline",
+        "reference_outcome_lost",
+        "status",
+        "media_family",
+        "structure",
+        "repeat_drop"
+      ]
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "pending"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "0"
+          },
+          "bonus_approved": {
+            "const": false
+          },
+          "payment_state": {
+            "const": "not_applicable"
+          },
+          "decision_at": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "repeat_drop"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "0"
+          },
+          "bonus_approved": {
+            "const": false
+          },
+          "payment_state": {
+            "const": "not_applicable"
+          },
+          "decision_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "inconclusive"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "0"
+          },
+          "bonus_approved": {
+            "const": false
+          },
+          "payment_state": {
+            "const": "not_applicable"
+          },
+          "decision_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "mismatch"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "0"
+          },
+          "bonus_approved": {
+            "const": false
+          },
+          "payment_state": {
+            "const": "not_applicable"
+          },
+          "decision_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "base_approved"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "7500"
+          },
+          "bonus_approved": {
+            "const": false
+          },
+          "payment_state": {
+            "enum": [
+              "pending",
+              "ambiguous",
+              "paid_confirmed",
+              "failed"
+            ]
+          },
+          "decision_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evaluation_state": {
+            "const": "base_bonus_approved"
+          }
+        },
+        "required": [
+          "evaluation_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_amount_atomic": {
+            "const": "15000"
+          },
+          "bonus_approved": {
+            "const": true
+          },
+          "payment_state": {
+            "enum": [
+              "pending",
+              "ambiguous",
+              "paid_confirmed",
+              "failed"
+            ]
+          },
+          "decision_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "payment_state": {
+            "const": "paid_confirmed"
+          }
+        },
+        "required": [
+          "payment_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "transaction_hash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          }
+        }
+      }
+    }
+  ]
+}

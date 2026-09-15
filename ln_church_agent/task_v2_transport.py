@@ -42,7 +42,7 @@ from .task_v2_contract import (
 from .task_v2_models import ScheduledTaskErrorResponse
 
 
-TASK_V2_USER_AGENT = "ln-church-agent-task-v2/1.18.2"
+TASK_V2_USER_AGENT = "ln-church-agent-task-v2/1.18.3"
 TASK_V2_MAXIMUM_JSON_BYTES = 256 * 1024
 TASK_V2_MAXIMUM_RESPONSE_HEADER_BYTES = 32768
 _RETRYABLE_GET_STATUSES = frozenset({429, 500, 502, 503, 504})

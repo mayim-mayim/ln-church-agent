@@ -1,0 +1,609 @@
+{
+  "schema_version": "ln_church.immediate_visit_wire_fixtures.v1",
+  "specification_commit": "6390b7fc657ee516476afe8013b3d25881dff224",
+  "provenance": "Synthetic contract examples derived from fixed Wire W1-W7; this file is not runtime evidence.",
+  "fixtures": [
+    {
+      "id": "registration_C50",
+      "schema": "registration.schema.json",
+      "value": {
+        "task_type": "immediate_http_visit.v1",
+        "plan_id": "C50",
+        "repeat_policy": "allow",
+        "urls": [
+          "https://example.com/"
+        ]
+      },
+      "expected_economics": {
+        "registration_amount_atomic": "1000000",
+        "capacity_total": 50
+      }
+    },
+    {
+      "id": "registration_C500",
+      "schema": "registration.schema.json",
+      "value": {
+        "task_type": "immediate_http_visit.v1",
+        "plan_id": "C500",
+        "repeat_policy": "allow",
+        "urls": [
+          "https://example.com/"
+        ]
+      },
+      "expected_economics": {
+        "registration_amount_atomic": "10000000",
+        "capacity_total": 500
+      }
+    },
+    {
+      "id": "registration_C5000",
+      "schema": "registration.schema.json",
+      "value": {
+        "task_type": "immediate_http_visit.v1",
+        "plan_id": "C5000",
+        "repeat_policy": "allow",
+        "urls": [
+          "https://example.com/"
+        ]
+      },
+      "expected_economics": {
+        "registration_amount_atomic": "100000000",
+        "capacity_total": 5000
+      }
+    },
+    {
+      "id": "v117_omitted_plan",
+      "schema": null,
+      "value": {
+        "task_type": "payment_surface_discovery.v1"
+      },
+      "expected_economics": {
+        "plan_id": "C50",
+        "registration_amount_atomic": "1000000",
+        "capacity_total": 50,
+        "reward_amount_atomic": "10000"
+      },
+      "expected_success_fields": [
+        "schema_version",
+        "task_id",
+        "task_type",
+        "status",
+        "task_url"
+      ]
+    },
+    {
+      "id": "task_open",
+      "schema": "task.schema.json",
+      "value": {
+        "schema_version": "ln_church.agent_task.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "task_type": "immediate_http_visit.v1",
+        "status": "OPEN",
+        "published_at": "2026-09-14T00:00:00.000Z",
+        "listing_ends_at": "2026-09-16T00:00:00.000Z",
+        "plan_id": "C50",
+        "registration_amount_atomic": "1000000",
+        "repeat_policy": "allow",
+        "capacity_total": 50,
+        "capacity_reserved": 0,
+        "capacity_consumed": 0,
+        "capacity_available": 50,
+        "definition_version": "1.0.0",
+        "profile_id": "immediate_visit_utf8.v1",
+        "endpoints": [
+          {
+            "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+            "url": "https://example.com/"
+          }
+        ],
+        "reward": {
+          "network": "eip155:8453",
+          "asset": "USDC",
+          "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "base_amount_atomic": "7500",
+          "bonus_amount_atomic": "7500",
+          "maximum_amount_atomic": "15000"
+        },
+        "definition_url": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/SKILL.md",
+        "summary_url": "https://kari.mayim-mayim.com/api/agent/task-offers/task_11111111111111111111111111111111/summary",
+        "results_url": "https://kari.mayim-mayim.com/agent-taskboard.html?task_id=task_11111111111111111111111111111111&view=results"
+      }
+    },
+    {
+      "id": "new_filtered_page",
+      "schema": "page.schema.json",
+      "value": {
+        "schema_version": "ln_church.agent_task_page.immediate_visit.v1",
+        "tasks": [
+          {
+            "schema_version": "ln_church.agent_task.immediate_visit.v1",
+            "task_id": "task_11111111111111111111111111111111",
+            "task_type": "immediate_http_visit.v1",
+            "status": "OPEN",
+            "published_at": "2026-09-14T00:00:00.000Z",
+            "listing_ends_at": "2026-09-16T00:00:00.000Z",
+            "plan_id": "C50",
+            "registration_amount_atomic": "1000000",
+            "repeat_policy": "allow",
+            "capacity_total": 50,
+            "capacity_reserved": 0,
+            "capacity_consumed": 0,
+            "capacity_available": 50,
+            "definition_version": "1.0.0",
+            "profile_id": "immediate_visit_utf8.v1",
+            "endpoints": [
+              {
+                "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+                "url": "https://example.com/"
+              }
+            ],
+            "reward": {
+              "network": "eip155:8453",
+              "asset": "USDC",
+              "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+              "base_amount_atomic": "7500",
+              "bonus_amount_atomic": "7500",
+              "maximum_amount_atomic": "15000"
+            },
+            "definition_url": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/SKILL.md",
+            "summary_url": "https://kari.mayim-mayim.com/api/agent/task-offers/task_11111111111111111111111111111111/summary",
+            "results_url": "https://kari.mayim-mayim.com/agent-taskboard.html?task_id=task_11111111111111111111111111111111&view=results"
+          }
+        ],
+        "next_cursor": null
+      },
+      "request_query": {
+        "task_type": "immediate_http_visit.v1",
+        "task_schema_version": "ln_church.agent_task.immediate_visit.v1"
+      }
+    },
+    {
+      "id": "legacy_unfiltered_page",
+      "schema": null,
+      "value": {
+        "schema_version": "ln_church.agent_task_page.v1",
+        "tasks": [],
+        "next_cursor": null
+      },
+      "request_query": {},
+      "excluded_task_type": "immediate_http_visit.v1"
+    },
+    {
+      "id": "old_v2_filtered_page",
+      "schema": null,
+      "value": {
+        "schema_version": "ln_church.agent_task_page.v2",
+        "tasks": [],
+        "next_cursor": null
+      },
+      "request_query": {
+        "task_type": "scheduled_http_get_batch.v1",
+        "task_schema_version": "ln_church.agent_task.v2"
+      },
+      "excluded_task_type": "immediate_http_visit.v1"
+    },
+    {
+      "id": "mismatched_filter",
+      "schema": "error.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_error.immediate_visit.v1",
+        "code": "unsupported_task_profile",
+        "message": "Unsupported task profile.",
+        "request_id": "fixture-request"
+      },
+      "request_query": {
+        "task_type": "immediate_http_visit.v1",
+        "task_schema_version": "ln_church.agent_task.v2"
+      },
+      "http_status": 400
+    },
+    {
+      "id": "incomplete_filter",
+      "schema": "error.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_error.immediate_visit.v1",
+        "code": "unsupported_task_profile",
+        "message": "Unsupported task profile.",
+        "request_id": "fixture-request"
+      },
+      "request_query": {
+        "task_type": "immediate_http_visit.v1"
+      },
+      "http_status": 400
+    },
+    {
+      "id": "comparable_report",
+      "schema": "submission.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_completion.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "observation": {
+          "outcome": "comparable",
+          "status": 200,
+          "media_family": "json",
+          "body_bytes": 26,
+          "fetch_started_at": "2026-09-14T00:00:01.000Z",
+          "fetch_finished_at": "2026-09-14T00:00:01.100Z",
+          "structure_sha256": "46cbfebaf99e6099753552f61c4a151a4af463d345452fd9bb03db64d40f625a",
+          "body_sha256": "b32bc44b67d8eb904dcbf793e63729c9c2d11afdde24cb7c270541f618c25a80"
+        }
+      },
+      "idempotency_key": "sub_33333333333333333333333333333333"
+    },
+    {
+      "id": "inconclusive_report",
+      "schema": "submission.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_completion.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "observation": {
+          "outcome": "inconclusive",
+          "status": null,
+          "media_family": null,
+          "body_bytes": null,
+          "fetch_started_at": null,
+          "fetch_finished_at": null,
+          "reason": "dns_failed"
+        }
+      },
+      "idempotency_key": "sub_33333333333333333333333333333333"
+    },
+    {
+      "id": "first_receipt",
+      "schema": "receipt.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_completion_receipt.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "status_url": "https://kari.mayim-mayim.com/api/agent/tasks/task_11111111111111111111111111111111/submissions/sub_33333333333333333333333333333333/status",
+        "receipt_state": "accepted"
+      },
+      "http_status": 202
+    },
+    {
+      "id": "deadline_replay",
+      "schema": "receipt.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_completion_receipt.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "status_url": "https://kari.mayim-mayim.com/api/agent/tasks/task_11111111111111111111111111111111/submissions/sub_33333333333333333333333333333333/status",
+        "receipt_state": "accepted"
+      },
+      "http_status": 200,
+      "server_now": "2026-09-16T00:15:00.000Z",
+      "report_deadline": "2026-09-14T00:10:00.000Z",
+      "request_fixture_id": "comparable_report"
+    },
+    {
+      "id": "conflicting_replay",
+      "schema": "error.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_error.immediate_visit.v1",
+        "code": "report_conflict",
+        "message": "Report conflicts with the accepted receipt.",
+        "request_id": "fixture-request"
+      },
+      "http_status": 409,
+      "conflicting_change": {
+        "observation.fetch_finished_at": "2026-09-14T00:00:01.101Z"
+      }
+    },
+    {
+      "id": "decision_pending",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "pending",
+        "decision_at": null,
+        "approved_amount_atomic": "0",
+        "bonus_approved": false,
+        "payment_state": "not_applicable",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "decision_repeat_drop",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "repeat_drop",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "0",
+        "bonus_approved": false,
+        "payment_state": "not_applicable",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "decision_inconclusive",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "inconclusive",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "0",
+        "bonus_approved": false,
+        "payment_state": "not_applicable",
+        "transaction_hash": null,
+        "reason": "dns_failed",
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "decision_mismatch",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "mismatch",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "0",
+        "bonus_approved": false,
+        "payment_state": "not_applicable",
+        "transaction_hash": null,
+        "reason": "structure",
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "decision_base_approved",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "base_approved",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "7500",
+        "bonus_approved": false,
+        "payment_state": "pending",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "decision_base_bonus_approved",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "base_bonus_approved",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "15000",
+        "bonus_approved": true,
+        "payment_state": "pending",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "payment_ambiguous",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "base_bonus_approved",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "15000",
+        "bonus_approved": true,
+        "payment_state": "ambiguous",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "payment_failed",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "base_bonus_approved",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "15000",
+        "bonus_approved": true,
+        "payment_state": "failed",
+        "transaction_hash": null,
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "payment_paid_confirmed",
+      "schema": "result.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_submission_status.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "execution_id": "exec_22222222222222222222222222222222",
+        "submission_id": "sub_33333333333333333333333333333333",
+        "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+        "profile_id": "immediate_visit_utf8.v1",
+        "report_sha256": "90188c1a41f5cf6090d7c1deddbe1b1404c8a96620be0004deb1f0399bee4305",
+        "received_at": "2026-09-14T00:00:02.000Z",
+        "evaluation_state": "base_bonus_approved",
+        "decision_at": "2026-09-14T00:00:03.000Z",
+        "approved_amount_atomic": "15000",
+        "bonus_approved": true,
+        "payment_state": "paid_confirmed",
+        "transaction_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "reason": null,
+        "updated_at": "2026-09-14T00:00:03.000Z"
+      }
+    },
+    {
+      "id": "closed_before_final_paid",
+      "schema": "summary.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_offer_summary.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "task_type": "immediate_http_visit.v1",
+        "status": "CLOSED",
+        "published_at": "2026-09-14T00:00:00.000Z",
+        "listing_ends_at": "2026-09-16T00:00:00.000Z",
+        "plan_id": "C50",
+        "registration_amount_atomic": "1000000",
+        "repeat_policy": "allow",
+        "capacity_total": 50,
+        "capacity_reserved": 0,
+        "capacity_consumed": 50,
+        "capacity_available": 0,
+        "received_report_count": 56,
+        "base_approved_count": 50,
+        "bonus_approved_count": 10,
+        "mismatch_count": 2,
+        "inconclusive_count": 2,
+        "repeat_drop_count": 2,
+        "approved_amount_atomic": "450000",
+        "paid_confirmed_amount_atomic": "442500",
+        "updated_at": "2026-09-16T00:15:00.000Z",
+        "evaluation_pending_count": 0,
+        "payment_progress": {
+          "pending": 1,
+          "ambiguous": 0,
+          "paid_confirmed": 49,
+          "failed": 0
+        },
+        "endpoints": [
+          {
+            "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+            "url": "https://example.com/",
+            "received_report_count": 56,
+            "base_approved_count": 50,
+            "bonus_approved_count": 10,
+            "mismatch_count": 2,
+            "inconclusive_count": 2,
+            "repeat_drop_count": 2,
+            "approved_amount_atomic": "450000",
+            "paid_confirmed_amount_atomic": "442500",
+            "updated_at": "2026-09-16T00:15:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "id": "closed_later_paid",
+      "schema": "summary.schema.json",
+      "value": {
+        "schema_version": "ln_church.task_offer_summary.immediate_visit.v1",
+        "task_id": "task_11111111111111111111111111111111",
+        "task_type": "immediate_http_visit.v1",
+        "status": "CLOSED",
+        "published_at": "2026-09-14T00:00:00.000Z",
+        "listing_ends_at": "2026-09-16T00:00:00.000Z",
+        "plan_id": "C50",
+        "registration_amount_atomic": "1000000",
+        "repeat_policy": "allow",
+        "capacity_total": 50,
+        "capacity_reserved": 0,
+        "capacity_consumed": 50,
+        "capacity_available": 0,
+        "received_report_count": 56,
+        "base_approved_count": 50,
+        "bonus_approved_count": 10,
+        "mismatch_count": 2,
+        "inconclusive_count": 2,
+        "repeat_drop_count": 2,
+        "approved_amount_atomic": "450000",
+        "paid_confirmed_amount_atomic": "450000",
+        "updated_at": "2026-09-16T00:16:00.000Z",
+        "evaluation_pending_count": 0,
+        "payment_progress": {
+          "pending": 0,
+          "ambiguous": 0,
+          "paid_confirmed": 50,
+          "failed": 0
+        },
+        "endpoints": [
+          {
+            "endpoint_id": "ep_0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7",
+            "url": "https://example.com/",
+            "received_report_count": 56,
+            "base_approved_count": 50,
+            "bonus_approved_count": 10,
+            "mismatch_count": 2,
+            "inconclusive_count": 2,
+            "repeat_drop_count": 2,
+            "approved_amount_atomic": "450000",
+            "paid_confirmed_amount_atomic": "450000",
+            "updated_at": "2026-09-16T00:16:00.000Z"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1046 @@
+"""Transform runtime walker.
+
+This module applies compiled transform pipelines to the DOM tree. The compiled
+IR and public facade remain in ``transforms.py``.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
+
+from ln_church_agent._vendor.justhtml.core.constants import HTML_SPACE_CHARACTERS, VOID_ELEMENTS
+from ln_church_agent._vendor.justhtml.dom import Element, Node, Template, Text
+from ln_church_agent._vendor.justhtml.sanitizer import _sanitize_rawtext_element_contents, _strip_invisible_unicode
+from ln_church_agent._vendor.justhtml.selector import SelectorMatcher, SelectorQueryContext
+from ln_church_agent._vendor.justhtml.serializer import serialize_end_tag, serialize_start_tag
+
+from . import (
+    _ERROR_SINK,
+    _FOREIGN_ROOT_TAGS,
+    CompiledTransform,
+    _collapse_html_space_characters,
+    _CompiledCollapseWhitespaceTransform,
+    _CompiledDecideChain,
+    _CompiledDecideElementsChain,
+    _CompiledDecideTransform,
+    _CompiledDropCommentsTransform,
+    _CompiledDropDoctypeTransform,
+    _CompiledDropForeignNamespacesTransform,
+    _CompiledEditAttrsChain,
+    _CompiledEditAttrsTransform,
+    _CompiledEditDocumentTransform,
+    _CompiledHardenRawtextTransform,
+    _CompiledMergeAttrTokensTransform,
+    _CompiledPruneEmptyTransform,
+    _CompiledSelectorLimitsTransform,
+    _CompiledSelectorTransform,
+    _CompiledStageBoundary,
+    _CompiledStageHookTransform,
+    _CompiledStripInvisibleUnicodeTransform,
+    _selector_limits_from_compiled,
+)
+from .linkify import CompiledLinkifyTransform, apply_linkify_transform
+from .spec import DecideAction
+
+if TYPE_CHECKING:
+    from ln_church_agent._vendor.justhtml.core.types import ParseError
+
+# Transform kinds whose runtime handling only ever assigns `node.attrs`, never
+# adds/removes/reorders nodes in any `children` list. This is the exhaustive
+# set of `kind` values a walk-transform can have (see the isinstance check
+# feeding `pending_walk` below) minus every kind whose handling can call
+# `children.pop`/`children[...] =`/`del children[...]` or invoke an arbitrary
+# caller-supplied callback that could do so itself ("drop", "unwrap",
+# "escape", "empty", "edit", "decide", "decide_chain",
+# "decide_elements_chain", "drop_foreign_namespaces", "linkify",
+# "collapse_whitespace", "drop_comments", "drop_doctype"). Selector matching
+# for THIS set may safely share one `SelectorQueryContext` across every node
+# in a walk: sharing while an unsafe kind is present is not safe, because a
+# structural mutation elsewhere in the walk (including via an arbitrary
+# "edit"/"decide" callback the framework has no visibility into) can silently
+# invalidate cached sibling/ancestor data a later match relies on.
+_SELECTOR_CONTEXT_SHAREABLE_KINDS = frozenset(
+    {"setattrs", "edit_attrs", "edit_attrs_chain", "strip_invisible_unicode", "merge_attr_tokens"}
+)
+
+_NON_RENDERED_SIBLING_ELEMENTS = frozenset({"datalist", "link", "meta", "script", "style", "template"})
+
+
+def apply_compiled_transforms(
+    root: Node,
+    compiled: list[CompiledTransform] | tuple[CompiledTransform, ...],
+    *,
+    errors: list[ParseError] | None = None,
+) -> None:
+    if not compiled:
+        return
+
+    selector_limits = _selector_limits_from_compiled(compiled)
+    token = _ERROR_SINK.set(errors)
+    try:
+
+        def apply_walk_transforms(
+            root_node: Node,
+            walk_transforms: list[CompiledTransform] | tuple[CompiledTransform, ...],
+        ) -> None:
+            if not walk_transforms:
+                return
+
+            # A tag-only Drop is common in sanitization pipelines. Processing
+            # each matching sibling with list.pop(index) shifts every remaining
+            # sibling, which makes attacker-controlled flat input quadratic.
+            # With one such transform, compact each child list in place instead.
+            if (
+                len(walk_transforms) == 1
+                and isinstance(walk_transforms[0], _CompiledDecideTransform)
+                and walk_transforms[0].bulk_drop_tags is not None
+            ):
+                drop_transform = walk_transforms[0]
+                pending: list[Node] = [root_node]
+                while pending:
+                    parent = pending.pop()
+                    children = parent.children
+                    if not children:
+                        continue
+                    kept: list[Node] = []
+                    for child in children:
+                        if drop_transform.callback(child) is DecideAction.DROP:
+                            child.parent = None
+                            continue
+                        kept.append(child)
+                    parent.children = kept
+                    for child in reversed(kept):
+                        if type(child) is Template and child.template_content is not None:
+                            pending.append(child.template_content)
+                        if child.children:
+                            pending.append(child)
+                return
+
+            can_share_selector_context = all(t.kind in _SELECTOR_CONTEXT_SHAREABLE_KINDS for t in walk_transforms)
+            escape_comments = any(
+                t.kind == "decide_elements_chain"
+                and any("escape" in (callback.__defaults__ or ()) for callback in t.callbacks)
+                for t in walk_transforms
+            )
+
+            def _raw_tag_text(node: Node, *, start_tag: bool) -> str | None:
+                if not isinstance(node, Element):
+                    return None
+                if start_tag:
+                    start = node._start_tag_start
+                    end = node._start_tag_end
+                else:
+                    start = node._end_tag_start
+                    end = node._end_tag_end
+                if start is None or end is None:
+                    return None
+                src = node._source_html
+                if src is None:
+                    cur: Node | None = node
+                    while cur is not None and src is None:
+                        cur = cur.parent
+                        if cur is None:
+                            break
+                        src = cur._source_html
+                    if src is not None:
+                        node._source_html = src
+                if src is None:
+                    return None
+                return src[start:end]
+
+            def _reconstruct_start_tag(node: Node) -> str | None:
+                if node.name.startswith("#") or node.name == "!doctype":
+                    return None
+                name = str(node.name)
+                tag = serialize_start_tag(name, node.attrs, namespace=node.namespace)
+                if isinstance(node, Element) and node._self_closing:
+                    tag = f"{tag[:-1]}/>"
+                return tag
+
+            def _reconstruct_end_tag(node: Node) -> str | None:
+                if isinstance(node, Element):
+                    if node._self_closing:
+                        return None
+
+                    if node._end_tag_present is False and not (
+                        node._start_tag_start is None and node.name in {"body", "html"}
+                    ):
+                        return None
+
+                name = str(node.name)
+                if name.startswith("#") or name == "!doctype":
+                    return None
+
+                if name.lower() in VOID_ELEMENTS:
+                    return None
+
+                return serialize_end_tag(name)
+
+            linkify_skip_tags: frozenset[str] = frozenset().union(
+                *(t.skip_tags for t in walk_transforms if isinstance(t, CompiledLinkifyTransform))
+            )
+            whitespace_skip_tags: frozenset[str] = frozenset().union(
+                *(t.skip_tags for t in walk_transforms if isinstance(t, _CompiledCollapseWhitespaceTransform))
+            )
+
+            created_start_index: dict[int, int] = {}
+            document_comment_insert_count: dict[int, int] = {}
+
+            def _mark_start(n: object, start_index: int) -> None:
+                if start_index <= 0:
+                    return
+                key = id(n)
+                prev = created_start_index.get(key)
+                if prev is None or start_index > prev:  # pragma: no branch
+                    created_start_index[key] = start_index
+
+            def _escape_node(
+                node: Node,
+                *,
+                parent: Node,
+                child_index: int,
+                mark_new_start_index: int,
+            ) -> None:
+                raw_start = _raw_tag_text(node, start_tag=True)
+                if raw_start is None:
+                    raw_start = _reconstruct_start_tag(node)
+                raw_end = _raw_tag_text(node, start_tag=False)
+                if raw_end is None:
+                    raw_end = _reconstruct_end_tag(node)
+
+                replacement: list[Any] = []
+
+                if raw_start:
+                    start_node = Text(raw_start)
+                    _mark_start(start_node, mark_new_start_index)
+                    start_node.parent = parent
+                    replacement.append(start_node)
+
+                moved: list[Any] = []
+                if node.name != "#text" and node.children:
+                    moved = node.children
+                    node.children = []
+                if type(node) is Template and node.template_content is not None:
+                    tc = node.template_content
+                    if tc.children:
+                        if moved:
+                            moved.extend(tc.children)
+                        else:
+                            moved = tc.children
+                        tc.children = []
+
+                if moved:
+                    for child in moved:
+                        _mark_start(child, mark_new_start_index)
+                        child.parent = parent
+                    replacement.extend(moved)
+
+                if raw_end:
+                    end_node = Text(raw_end)
+                    _mark_start(end_node, mark_new_start_index)
+                    end_node.parent = parent
+                    replacement.append(end_node)
+
+                children = parent.children
+                if children is None:  # pragma: no cover
+                    raise ValueError(f"Node {parent.name} cannot have children")  # pragma: no cover
+                if replacement:
+                    children[child_index : child_index + 1] = replacement
+                else:
+                    children.pop(child_index)
+                node.parent = None
+
+            def _empty_node(node: Node, name: str) -> None:
+                if name != "#text" and node.children:
+                    for child in node.children:
+                        child.parent = None
+                    node.children = []
+                if type(node) is Template and node.template_content is not None:
+                    tc = node.template_content
+                    for child in tc.children or ():
+                        child.parent = None
+                    tc.children = []
+
+            def _detach_children_for_hoist(node: Node, name: str) -> list[Any]:
+                moved: list[Any] = []
+                if name != "#text" and node.children:
+                    moved = node.children
+                    node.children = []
+                if type(node) is Template and node.template_content is not None:
+                    tc = node.template_content
+                    if tc.children:
+                        if moved:
+                            moved.extend(tc.children)
+                        else:
+                            moved = tc.children
+                        tc.children = []
+                return moved
+
+            def _apply_decide_action(
+                action: Any,
+                node: Node,
+                *,
+                name: str,
+                parent: Node,
+                children: list[Node],
+                child_index: int,
+                transform_index: int,
+            ) -> bool:
+                if action is DecideAction.EMPTY:
+                    _empty_node(node, name)
+                    return False
+
+                if action is DecideAction.UNWRAP:
+                    moved_nodes = _detach_children_for_hoist(node, name)
+                    if moved_nodes:
+                        for child in moved_nodes:
+                            _mark_start(child, transform_index)
+                            child.parent = parent
+                        children[child_index : child_index + 1] = moved_nodes
+                    else:
+                        children.pop(child_index)
+                    node.parent = None
+                    return True
+
+                if action is DecideAction.ESCAPE:
+                    _escape_node(node, parent=parent, child_index=child_index, mark_new_start_index=transform_index)
+                    return True
+
+                children.pop(child_index)
+                node.parent = None
+                return True
+
+            def _nearest_rendered_sibling(
+                children: list[Node],
+                start: int,
+                step: int,
+            ) -> Node | None:
+                sibling_index = start + step
+                while 0 <= sibling_index < len(children):
+                    sibling = children[sibling_index]
+                    sibling_name = sibling.name.lower()
+                    if sibling.name.startswith("#"):
+                        if sibling.name != "#text" or not sibling.data:
+                            sibling_index += step
+                            continue
+                        return sibling
+                    sibling_attrs = sibling.attrs or {}
+                    if (
+                        "hidden" in sibling_attrs
+                        or sibling_name in _NON_RENDERED_SIBLING_ELEMENTS
+                        or (sibling_name == "dialog" and "open" not in sibling_attrs)
+                        or (sibling_name == "input" and (sibling_attrs.get("type") or "").lower() == "hidden")
+                    ):
+                        sibling_index += step
+                        continue
+                    return sibling
+                return None
+
+            def _trim_block_edge_text(
+                text_data: str,
+                *,
+                parent: Node,
+                children: list[Node],
+                child_index: int,
+                block_tags: frozenset[str],
+            ) -> str:
+                parent_name = parent.name
+                if parent_name.startswith("#") or parent_name == "!doctype":
+                    return text_data
+                if parent_name.lower() not in block_tags:
+                    return text_data
+
+                def _is_block_sibling(sib: Node) -> bool:
+                    name = sib.name
+                    if name.startswith("#"):
+                        return False
+                    lowered = name.lower()
+                    return lowered == "br" or lowered in block_tags
+
+                previous_sibling = _nearest_rendered_sibling(children, child_index, -1)
+                if previous_sibling is None or _is_block_sibling(previous_sibling):
+                    text_data = text_data.lstrip(" \t\n\f\r")
+                next_sibling = _nearest_rendered_sibling(children, child_index, 1)
+                if next_sibling is None or _is_block_sibling(next_sibling):
+                    text_data = text_data.rstrip(" \t\n\f\r")
+                return text_data
+
+            def apply_to_children(
+                parent: Node,
+                *,
+                skip_linkify: bool,
+                skip_whitespace: bool,
+                foreign_context: bool,
+            ) -> None:
+                wt_len = len(walk_transforms)
+                stack: list[tuple[Node, int, bool, bool, bool]] = [
+                    (parent, 0, skip_linkify, skip_whitespace, foreign_context)
+                ]
+
+                # Only set when this walk's transforms are all in
+                # _SELECTOR_CONTEXT_SHAREABLE_KINDS (see its definition), so
+                # nothing here can invalidate cached sibling/ancestor data
+                # out from under a later match. None here means "don't share";
+                # SelectorMatcher(context=None, ...) creates its own context,
+                # matching the pre-existing per-node behavior exactly.
+                shared_selector_context = (
+                    SelectorQueryContext(limits=selector_limits) if can_share_selector_context else None
+                )
+
+                while stack:
+                    parent, i, skip_linkify, skip_whitespace, foreign_context = stack[-1]
+                    children = parent.children
+                    if not children or i >= len(children):
+                        stack.pop()
+                        continue
+
+                    node = children[i]
+                    name = node.name
+                    is_special = name[0] == "#"
+                    is_doctype = name == "!doctype"
+                    is_text = name == "#text"
+                    is_comment = name in {"#comment", "#processing-instruction"}
+                    if foreign_context:
+                        node_foreign_context = True
+                    else:
+                        ns = node.namespace
+                        if ns not in (None, "html"):
+                            node_foreign_context = True
+                        elif is_special or is_doctype:
+                            node_foreign_context = False
+                        else:
+                            lowered = name if name.islower() else name.lower()
+                            node_foreign_context = lowered in _FOREIGN_ROOT_TAGS
+
+                    changed = False
+                    matcher: SelectorMatcher | None = None
+                    if created_start_index:
+                        start_at = created_start_index.get(id(node), 0)
+                    else:
+                        start_at = 0
+                    for idx in range(start_at, wt_len):
+                        t: Any = walk_transforms[idx]
+                        k: str = t.kind
+
+                        if k == "drop_foreign_namespaces":
+                            if is_special or is_doctype:
+                                continue
+                            if not node_foreign_context:
+                                continue
+                            if t.callback is not None:
+                                t.callback(node)
+                            if t.report is not None:
+                                tag = str(name).lower()
+                                t.report(f"Unsafe tag '{tag}' (foreign namespace)", node=node)
+                            pending_foreign = [node]
+                            drop_trailing_siblings = False
+                            while pending_foreign:
+                                foreign_node = pending_foreign.pop()
+                                if (
+                                    foreign_node.namespace not in (None, "html")
+                                    and foreign_node.name in {"script", "style"}
+                                    and not foreign_node._end_tag_present
+                                ):
+                                    drop_trailing_siblings = True
+                                    break
+                                foreign_children = foreign_node.children
+                                if foreign_children:
+                                    pending_foreign.extend(
+                                        child for child in foreign_children if isinstance(child, Node)
+                                    )
+                            if drop_trailing_siblings:
+                                for dropped in children[i:]:
+                                    dropped.parent = None
+                                del children[i:]
+                            else:
+                                children.pop(i)
+                                node.parent = None
+                            changed = True
+                            break
+
+                        if k == "decide_elements_chain":
+                            if is_special or is_doctype:
+                                continue
+
+                            action = DecideAction.KEEP
+                            for chain_cb in t.callbacks:
+                                action = chain_cb(node)
+                                if action is not DecideAction.KEEP:
+                                    break
+
+                            if action is DecideAction.KEEP:
+                                continue
+
+                            changed = _apply_decide_action(
+                                action,
+                                node,
+                                name=name,
+                                parent=parent,
+                                children=children,
+                                child_index=i,
+                                transform_index=idx,
+                            )
+                            if changed:
+                                break
+                            continue
+
+                        if k == "edit_attrs_chain":
+                            if is_special or is_doctype:
+                                continue
+                            if not t.all_nodes:
+                                sel = t.selector
+                                if matcher is None:
+                                    matcher = SelectorMatcher(context=shared_selector_context, limits=selector_limits)
+                                if not matcher.matches(node, sel):
+                                    continue
+                            for chain_func in t.funcs:
+                                chain_out = chain_func(node)
+                                if chain_out is not None:
+                                    node.attrs = chain_out
+                            continue
+
+                        if k == "merge_attr_tokens":
+                            if not is_special and not is_doctype:
+                                if str(name).lower() == t.tag:
+                                    attrs = node.attrs
+                                    matched_keys: list[str] = []
+                                    existing: list[str] = []
+                                    for attr_key, attr_value in attrs.items():
+                                        lower_key = attr_key if attr_key.islower() else attr_key.lower()
+                                        if lower_key != t.attr:
+                                            continue
+                                        matched_keys.append(attr_key)
+                                        if isinstance(attr_value, str) and attr_value:
+                                            for tok in attr_value.split():
+                                                tt = tok.strip().lower()
+                                                if tt and tt not in existing:
+                                                    existing.append(tt)
+
+                                    changed_rel = False
+                                    for tok in t.tokens:
+                                        if tok not in existing:
+                                            existing.append(tok)
+                                            changed_rel = True
+                                    normalized = " ".join(existing)
+                                    existing_raw = attrs.get(t.attr)
+                                    has_mixed_case_duplicates = bool(
+                                        matched_keys and (len(matched_keys) != 1 or matched_keys[0] != t.attr)
+                                    )
+                                    if changed_rel or has_mixed_case_duplicates or existing_raw != normalized:
+                                        for attr_key in matched_keys:
+                                            if attr_key != t.attr:
+                                                attrs.pop(attr_key, None)
+                                        attrs[t.attr] = normalized
+                                        if t.callback is not None:
+                                            t.callback(node)
+                                        if t.report is not None:
+                                            t.report(
+                                                f"Merged tokens into attribute '{t.attr}' on <{t.tag}>",
+                                                node=node,
+                                            )
+                            continue
+
+                        if k == "drop_comments":
+                            if is_comment:
+                                if escape_comments:
+                                    escaped = Text(f"<!--{node.data or ''}-->")
+                                    _mark_start(escaped, idx + 1)
+                                    if parent.name == "#document":
+                                        body = next(
+                                            (
+                                                child
+                                                for html_node in children
+                                                if isinstance(html_node, Element) and html_node.name == "html"
+                                                for child in (html_node.children or ())
+                                                if isinstance(child, Element) and child.name == "body"
+                                            ),
+                                            None,
+                                        )
+                                    else:
+                                        body = None
+                                    if body is not None and body.children is not None:
+                                        insert_at = document_comment_insert_count.get(id(body), 0)
+                                        body.children.insert(insert_at, escaped)
+                                        document_comment_insert_count[id(body)] = insert_at + 1
+                                        escaped.parent = body
+                                        children.pop(i)
+                                    else:
+                                        escaped.parent = parent
+                                        children[i] = escaped
+                                    node.parent = None
+                                    changed = True
+                                    break
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    t.report("Dropped comment", node=node)
+                                children.pop(i)
+                                node.parent = None
+                                changed = True
+                                break
+                            continue
+
+                        if k == "drop_doctype":
+                            if is_doctype:
+                                if t.callback is not None:
+                                    t.callback(node)  # pragma: no cover
+                                if t.report is not None:
+                                    t.report("Dropped doctype", node=node)  # pragma: no cover
+                                children.pop(i)
+                                node.parent = None
+                                changed = True
+                                break
+                            continue
+
+                        if k == "collapse_whitespace":
+                            if is_text and not skip_whitespace:
+                                text_data = str(node.data or "")
+                                if text_data:
+                                    collapsed = _collapse_html_space_characters(text_data)
+                                    previous_sibling = _nearest_rendered_sibling(children, i, -1)
+                                    if (
+                                        collapsed.startswith(" ")
+                                        and previous_sibling is not None
+                                        and previous_sibling.name == "#text"
+                                    ):
+                                        previous_data = str(previous_sibling.data or "")
+                                        if previous_data and previous_data[-1] in HTML_SPACE_CHARACTERS:
+                                            collapsed = collapsed[1:]
+                                    normalized = collapsed
+                                    if t.trim_blocks:
+                                        normalized = _trim_block_edge_text(
+                                            normalized,
+                                            parent=parent,
+                                            children=children,
+                                            child_index=i,
+                                            block_tags=t.block_tags,
+                                        )
+                                    if normalized != text_data:
+                                        if t.callback is not None:
+                                            t.callback(node)
+                                        if t.report is not None:
+                                            t.report("Collapsed whitespace in text node", node=node)
+                                        if normalized:
+                                            node.data = normalized
+                                        else:
+                                            children.pop(i)
+                                            node.parent = None
+                                            changed = True
+                                            break
+                            continue
+
+                        if k == "strip_invisible_unicode":
+                            if is_text:
+                                text_data = str(node.data or "")
+                                if text_data and not text_data.isascii():
+                                    stripped_text = _strip_invisible_unicode(text_data)
+                                    if stripped_text != text_data:  # pragma: no branch
+                                        if t.callback is not None:
+                                            t.callback(node)
+                                        t.report("Stripped invisible Unicode from text node", node=node)
+                                        node.data = stripped_text
+                                continue
+
+                            if is_special or is_doctype:
+                                continue
+
+                            attrs = node.attrs
+                            if not attrs:
+                                continue
+
+                            changed_keys: list[str] | None = None
+                            for attr_name, raw_value in attrs.items():
+                                if raw_value is None:
+                                    continue
+                                value = raw_value if type(raw_value) is str else str(raw_value)
+                                if value.isascii():
+                                    continue
+                                stripped_value = _strip_invisible_unicode(value)
+                                if stripped_value == value:
+                                    continue
+                                attrs[attr_name] = stripped_value
+                                if changed_keys is None:
+                                    changed_keys = []
+                                changed_keys.append(attr_name)
+
+                            if changed_keys is not None:
+                                if t.callback is not None:
+                                    t.callback(node)
+                                attrs_list = ", ".join(changed_keys)
+                                t.report(
+                                    f"Stripped invisible Unicode from attribute(s): {attrs_list}",
+                                    node=node,
+                                )
+                            continue
+
+                        if k == "linkify":
+                            if is_text and not skip_linkify:
+                                changed = apply_linkify_transform(
+                                    parent=parent,
+                                    node=node,
+                                    children=children,
+                                    child_index=i,
+                                    transform_index=idx,
+                                    transform=t,
+                                    mark_start=_mark_start,
+                                )
+                                if changed:
+                                    break
+                            continue
+
+                        if k == "decide":
+                            if t.all_nodes:
+                                action = t.callback(node)
+                            else:
+                                if is_special or is_doctype:
+                                    continue
+                                sel = t.selector
+                                if matcher is None:
+                                    matcher = SelectorMatcher(limits=selector_limits)
+                                if not matcher.matches(node, sel):
+                                    continue
+                                action = t.callback(node)
+
+                            if action is DecideAction.KEEP:
+                                continue
+
+                            changed = _apply_decide_action(
+                                action,
+                                node,
+                                name=name,
+                                parent=parent,
+                                children=children,
+                                child_index=i,
+                                transform_index=idx,
+                            )
+                            if changed:
+                                break
+                            continue
+
+                        if k == "decide_chain":
+                            if t.all_nodes:
+                                action = DecideAction.KEEP
+                                for chain_cb in t.callbacks:
+                                    action = chain_cb(node)
+                                    if action is not DecideAction.KEEP:
+                                        break
+                            else:
+                                if is_special or is_doctype:
+                                    continue
+                                sel = t.selector
+                                if matcher is None:
+                                    matcher = SelectorMatcher(limits=selector_limits)
+                                if not matcher.matches(node, sel):
+                                    continue
+                                action = DecideAction.KEEP
+                                for chain_cb in t.callbacks:
+                                    action = chain_cb(node)
+                                    if action is not DecideAction.KEEP:
+                                        break
+
+                            if action is DecideAction.KEEP:
+                                continue
+
+                            changed = _apply_decide_action(
+                                action,
+                                node,
+                                name=name,
+                                parent=parent,
+                                children=children,
+                                child_index=i,
+                                transform_index=idx,
+                            )
+                            if changed:
+                                break
+                            continue
+
+                        if k == "edit_attrs":
+                            if is_special or is_doctype:
+                                continue
+                            if not t.all_nodes:
+                                sel = t.selector
+                                if matcher is None:
+                                    matcher = SelectorMatcher(context=shared_selector_context, limits=selector_limits)
+                                if not matcher.matches(node, sel):
+                                    continue
+                            new_attrs = t.func(node)
+                            if new_attrs is not None:
+                                node.attrs = new_attrs
+                            continue
+
+                        if is_special or is_doctype:
+                            continue
+
+                        if matcher is None:
+                            matcher = SelectorMatcher(limits=selector_limits)
+                        if not matcher.matches(node, t.selector):
+                            continue
+
+                        if t.kind == "setattrs":
+                            patch = t.payload
+                            attrs = node.attrs
+                            changed_any = False
+                            for k, v in patch.items():
+                                key = str(k)
+                                new_val = None if v is None else str(v)
+                                if attrs.get(key) != new_val:
+                                    attrs[key] = new_val
+                                    changed_any = True
+                            if changed_any:
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    tag = str(node.name).lower()
+                                    t.report(
+                                        f"Set attributes on <{tag}> (matched selector '{t.selector_str}')", node=node
+                                    )
+                            continue
+
+                        if t.kind == "edit":
+                            cb = t.payload
+                            cb(node)
+                            continue
+
+                        if t.kind == "empty":
+                            had_children = bool(node.children)
+                            if node.children:
+                                for child in node.children:
+                                    child.parent = None
+                                node.children = []
+                            if type(node) is Template and node.template_content is not None:
+                                tc = node.template_content
+                                had_children = had_children or bool(tc.children)
+                                for child in tc.children or ():
+                                    child.parent = None
+                                tc.children = []
+                            if had_children:
+                                if t.callback is not None:
+                                    t.callback(node)
+                                if t.report is not None:
+                                    tag = str(node.name).lower()
+                                    t.report(f"Emptied <{tag}> (matched selector '{t.selector_str}')", node=node)
+                            continue
+
+                        if t.kind == "drop":
+                            if t.callback is not None:
+                                t.callback(node)
+                            if t.report is not None:
+                                tag = str(node.name).lower()
+                                t.report(f"Dropped <{tag}> (matched selector '{t.selector_str}')", node=node)
+                            children.pop(i)
+                            node.parent = None
+                            changed = True
+                            break
+
+                        if t.kind == "escape":
+                            if t.callback is not None:
+                                t.callback(node)
+                            if t.report is not None:
+                                tag = str(node.name).lower()
+                                t.report(f"Escaped <{tag}> (matched selector '{t.selector_str}')", node=node)
+
+                            _escape_node(node, parent=parent, child_index=i, mark_new_start_index=idx)
+                            changed = True
+                            break
+
+                        if t.callback is not None:
+                            t.callback(node)
+                        if t.report is not None:
+                            tag = str(node.name).lower()
+                            t.report(f"Unwrapped <{tag}> (matched selector '{t.selector_str}')", node=node)
+
+                        moved_nodes_unwrap: list[Any] = []
+                        if node.children:
+                            moved_nodes_unwrap = node.children
+                            node.children = []
+
+                        if type(node) is Template and node.template_content is not None:
+                            tc = node.template_content
+                            if tc.children:
+                                if moved_nodes_unwrap:
+                                    moved_nodes_unwrap.extend(tc.children)
+                                else:
+                                    moved_nodes_unwrap = tc.children
+                                tc.children = []
+
+                        if moved_nodes_unwrap:
+                            for child in moved_nodes_unwrap:
+                                _mark_start(child, idx + 1)
+                                child.parent = parent
+                            children[i : i + 1] = moved_nodes_unwrap
+                        else:
+                            children.pop(i)
+                        node.parent = None
+                        changed = True
+                        break
+
+                    if changed:
+                        continue
+
+                    stack[-1] = (parent, i + 1, skip_linkify, skip_whitespace, foreign_context)
+
+                    if is_special:
+                        if not is_text and not is_comment and node.children:
+                            stack.append((node, 0, skip_linkify, skip_whitespace, node_foreign_context))
+                        continue
+
+                    if linkify_skip_tags or whitespace_skip_tags:
+                        tag = node.name.lower()
+                        child_skip = skip_linkify or (tag in linkify_skip_tags)
+                        child_skip_ws = skip_whitespace or (tag in whitespace_skip_tags)
+                    else:
+                        child_skip = skip_linkify
+                        child_skip_ws = skip_whitespace
+
+                    if type(node) is Template and node.template_content is not None and node.template_content.children:
+                        stack.append((node.template_content, 0, child_skip, child_skip_ws, node_foreign_context))
+                    if node.children:
+                        stack.append((node, 0, child_skip, child_skip_ws, node_foreign_context))
+
+            if type(root_node) is not Text:
+                apply_to_children(root_node, skip_linkify=False, skip_whitespace=False, foreign_context=False)
+
+                if type(root_node) is Template and root_node.template_content is not None:
+                    apply_to_children(
+                        root_node.template_content,
+                        skip_linkify=False,
+                        skip_whitespace=False,
+                        foreign_context=False,
+                    )
+
+        def apply_prune_transforms(root_node: Node, prune_transforms: list[_CompiledPruneEmptyTransform]) -> None:
+            def _is_effectively_empty_element(n: Node, *, strip_whitespace: bool) -> bool:
+                if n.namespace == "html" and n.name.lower() in VOID_ELEMENTS:
+                    return False
+
+                def _has_content(children: list[Node] | None) -> bool:
+                    if not children:
+                        return False
+                    for ch in children:
+                        nm = ch.name
+                        if nm == "#text":
+                            data = ch.data or ""
+                            if strip_whitespace:
+                                if str(data).strip():
+                                    return True
+                            else:
+                                if str(data) != "":
+                                    return True
+                            continue
+                        if nm.startswith("#"):
+                            continue
+                        return True
+                    return False
+
+                if _has_content(n.children):
+                    return False
+
+                if type(n) is Template and n.template_content is not None:
+                    if _has_content(n.template_content.children):
+                        return False
+
+                return True
+
+            stack: list[tuple[Node, bool]] = [(root_node, False)]
+            while stack:
+                node, visited = stack.pop()
+                if not visited:
+                    stack.append((node, True))
+
+                    children = node.children or ()
+                    stack.extend((child, False) for child in reversed(children) if isinstance(child, Node))
+
+                    if type(node) is Template and node.template_content is not None:
+                        stack.append((node.template_content, False))
+                    continue
+
+                if node.parent is None:
+                    continue
+                if node.name.startswith("#"):
+                    continue
+
+                matcher = SelectorMatcher(limits=selector_limits)
+                for pt in prune_transforms:
+                    if matcher.matches(node, pt.selector):
+                        if _is_effectively_empty_element(node, strip_whitespace=pt.strip_whitespace):
+                            if pt.callback is not None:
+                                pt.callback(node)
+                            if pt.report is not None:
+                                tag = str(node.name).lower()
+                                pt.report(
+                                    f"Pruned empty <{tag}> (matched selector '{pt.selector_str}')",
+                                    node=node,
+                                )
+                            node.parent.remove_child(node)
+                            break
+
+        pending_walk: list[CompiledTransform] = []
+
+        i = 0
+        while i < len(compiled):
+            t = compiled[i]
+            if isinstance(
+                t,
+                (
+                    _CompiledSelectorTransform,
+                    _CompiledDecideTransform,
+                    _CompiledDecideChain,
+                    _CompiledDecideElementsChain,
+                    _CompiledDropForeignNamespacesTransform,
+                    _CompiledEditAttrsTransform,
+                    _CompiledEditAttrsChain,
+                    _CompiledStripInvisibleUnicodeTransform,
+                    CompiledLinkifyTransform,
+                    _CompiledCollapseWhitespaceTransform,
+                    _CompiledDropCommentsTransform,
+                    _CompiledDropDoctypeTransform,
+                    _CompiledMergeAttrTokensTransform,
+                ),
+            ):
+                pending_walk.append(t)
+                i += 1
+                continue
+
+            apply_walk_transforms(root, pending_walk)
+            pending_walk = []
+
+            if isinstance(t, _CompiledStageBoundary):
+                i += 1
+                continue
+
+            if isinstance(t, _CompiledSelectorLimitsTransform):
+                i += 1
+                continue
+
+            if isinstance(t, _CompiledStageHookTransform):
+                if t.callback is not None:
+                    t.callback(root)
+                if t.report is not None:
+                    t.report(f"Stage {t.index + 1}", node=root)
+                i += 1
+                continue
+
+            if isinstance(t, _CompiledEditDocumentTransform):
+                t.callback(root)
+                i += 1
+                continue
+
+            if isinstance(t, _CompiledPruneEmptyTransform):
+                prune_batch: list[_CompiledPruneEmptyTransform] = [t]
+                i += 1
+                while i < len(compiled) and isinstance(compiled[i], _CompiledPruneEmptyTransform):
+                    prune_batch.append(cast("_CompiledPruneEmptyTransform", compiled[i]))
+                    i += 1
+                apply_prune_transforms(root, prune_batch)
+                continue
+
+            if isinstance(t, _CompiledHardenRawtextTransform):
+                _sanitize_rawtext_element_contents(root, policy=t.policy, errors=errors)
+                i += 1
+                continue
+
+            raise TypeError(f"Unsupported compiled transform: {type(t).__name__}")
+
+        apply_walk_transforms(root, pending_walk)
+    finally:
+        _ERROR_SINK.reset(token)

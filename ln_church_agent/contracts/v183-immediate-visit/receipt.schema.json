@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/receipt.schema.json",
+  "title": "immediate_http_visit.v1 receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "execution_id",
+    "submission_id",
+    "endpoint_id",
+    "profile_id",
+    "received_at",
+    "report_sha256",
+    "status_url",
+    "receipt_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_completion_receipt.immediate_visit.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^exec_[a-f0-9]{32}$"
+    },
+    "submission_id": {
+      "type": "string",
+      "pattern": "^sub_[a-f0-9]{32}$"
+    },
+    "endpoint_id": {
+      "type": "string",
+      "pattern": "^ep_[a-f0-9]{64}$"
+    },
+    "profile_id": {
+      "const": "immediate_visit_utf8.v1"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "status_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "receipt_state": {
+      "const": "accepted"
+    }
+  }
+}

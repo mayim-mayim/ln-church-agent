@@ -21,7 +21,7 @@ import socket
 import ssl
 import threading
 import time
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple, Union
 from urllib.parse import urlsplit
 
 import idna
@@ -31,6 +31,11 @@ HEADER_LIMIT_BYTES = 32 * 1024
 MANIFEST_BODY_LIMIT_BYTES = 32 * 1024
 TARGET_USER_AGENT = "LN-Church-Scheduled-GET/1.0"
 MANIFEST_USER_AGENT = "LN-Church-Scheduled-Manifest/1.0"
+IMMEDIATE_VISIT_BODY_LIMIT_BYTES = 2097152
+IMMEDIATE_VISIT_USER_AGENT = (
+    "LNChurch-Visit/1.0 "
+    "(+https://kari.mayim-mayim.com/agent-offer-register.html#instant-site-visits)"
+)
 
 
 class FetchScope(str, Enum):
@@ -38,6 +43,7 @@ class FetchScope(str, Enum):
 
     MANIFEST_RELEASE = "OFFICIAL_SDK_MANIFEST_RELEASE"
     TARGET = "OFFICIAL_SDK_TARGET"
+    IMMEDIATE_VISIT = "OFFICIAL_SDK_IMMEDIATE_VISIT"
 
 
 class NetworkFetchError(Exception):
@@ -61,6 +67,63 @@ class NetworkFetchError(Exception):
             code = "protocol_error"
         super().__init__(code)
         self.code = code
+
+
+class ImmediateVisitFetchError(Exception):
+    """Finite profile reason and observed metadata, never network payloads."""
+
+    _REASONS = frozenset({
+        "url_disallowed", "dns_failed", "dns_disallowed", "connection_failed",
+        "peer_mismatch", "tls_failed", "fetch_timeout", "headers_limit_exceeded",
+        "http_invalid", "content_encoding_unsupported", "body_limit_exceeded",
+        "body_incomplete", "body_empty", "partial_response",
+    })
+
+    def __init__(self, reason: str, *, status_code: Optional[int] = None,
+                 body_bytes: Optional[int] = None) -> None:
+        reason = reason if reason in self._REASONS else "http_invalid"
+        super().__init__(reason)
+        self.reason = reason
+        self.status_code = status_code if type(status_code) is int and 200 <= status_code <= 599 else None
+        self.body_bytes = body_bytes if type(body_bytes) is int and body_bytes >= 0 else None
+
+
+class ImmediateVisitFetchResponse:
+    """Ephemeral, immutable, nonserializable bounded profile input.
+
+    Only profile-relevant headers are retained, with their multiplicity intact.
+    Raw headers and body are available to the extractor through explicit
+    properties and never through repr, a dataclass projection or a pickle.
+    """
+
+    __slots__ = ("__status", "__headers", "__body")
+
+    def __init__(self, status_code: int, headers: Sequence[Tuple[str, str]],
+                 body: bytes) -> None:
+        object.__setattr__(self, "_ImmediateVisitFetchResponse__status", status_code)
+        object.__setattr__(self, "_ImmediateVisitFetchResponse__headers", tuple(headers))
+        object.__setattr__(self, "_ImmediateVisitFetchResponse__body", body)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("Immediate visit response is immutable.")
+
+    @property
+    def status_code(self) -> int:
+        return self.__status
+
+    @property
+    def headers(self) -> Tuple[Tuple[str, str], ...]:
+        return self.__headers
+
+    @property
+    def body(self) -> bytes:
+        return self.__body
+
+    def __repr__(self) -> str:
+        return "ImmediateVisitFetchResponse(status_code=%d, payload=<redacted>)" % self.__status
+
+    def __reduce_ex__(self, _protocol: int) -> Any:
+        raise TypeError("Immediate visit response is not serializable.")
 
 
 @dataclass(frozen=True)
@@ -722,6 +785,176 @@ def _read_manifest_body(reader: _BufferedSocket, headers: Mapping[str, str]) -> 
     return reader.read_to_eof(MANIFEST_BODY_LIMIT_BYTES)
 
 
+class _ImmediateVisitReader(_BufferedSocket):
+    """The new scope also checks completion against the absolute deadline."""
+
+    def _recv(self, maximum: int, *, head: bool = False) -> bytes:
+        value = super()._recv(maximum, head=head)
+        _remaining(self.head_deadline if head else self.deadline, self.monotonic)
+        return value
+
+
+def _parse_immediate_visit_head(raw: bytes) -> Tuple[int, Tuple[Tuple[str, str], ...]]:
+    # Unlike the old body-zero projection this retains header multiplicity
+    # until Content-Type and Content-Encoding policy has been checked.
+    lines = raw[:-4].split(b"\r\n")
+    match = re.fullmatch(rb"HTTP/1\.[01] ([0-9]{3})(?: [\t\x20-\x7e\x80-\xff]*)?", lines[0])
+    if not raw.endswith(b"\r\n\r\n") or match is None:
+        raise NetworkFetchError("protocol_error")
+    status = int(match.group(1))
+    if not 100 <= status <= 599:
+        raise NetworkFetchError("protocol_error")
+    headers = []
+    for line in lines[1:]:
+        if b":" not in line:
+            raise NetworkFetchError("protocol_error")
+        name, value = line.split(b":", 1)
+        if not _HEADER_NAME_RE.fullmatch(name) or any(
+            item < 32 and item != 9 or item == 127 for item in value
+        ):
+            raise NetworkFetchError("protocol_error")
+        name_text = name.decode("ascii").lower()
+        if name_text in {
+            "content-type", "content-encoding", "content-length",
+            "transfer-encoding", "content-range",
+        }:
+            headers.append((name_text, value.strip(b" \t").decode("latin-1")))
+    return status, tuple(headers)
+
+
+def _visit_chunk_size(reader: _ImmediateVisitReader, available: int) -> int:
+    """Read chunk syntax incrementally without a new chunk-line size limit."""
+
+    token_bytes = b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    size = 0
+    digits = 0
+    char = reader.read_exact(1)
+    while char[0] in b"0123456789abcdefABCDEF":
+        digits += 1
+        size = size * 16 + int(char, 16)
+        if size > available:
+            raise NetworkFetchError("response_too_large")
+        char = reader.read_exact(1)
+    if not digits:
+        raise NetworkFetchError("protocol_error")
+    while True:
+        while char in (b" ", b"\t"):
+            char = reader.read_exact(1)
+        if char == b"\r":
+            if reader.read_exact(1) != b"\n":
+                raise NetworkFetchError("protocol_error")
+            return size
+        if char != b";":
+            raise NetworkFetchError("protocol_error")
+        char = reader.read_exact(1)
+        while char in (b" ", b"\t"):
+            char = reader.read_exact(1)
+        found = False
+        while char and char[0] in token_bytes:
+            found = True
+            char = reader.read_exact(1)
+        if not found:
+            raise NetworkFetchError("protocol_error")
+        while char in (b" ", b"\t"):
+            char = reader.read_exact(1)
+        if char != b"=":
+            continue
+        char = reader.read_exact(1)
+        while char in (b" ", b"\t"):
+            char = reader.read_exact(1)
+        if char == b'"':
+            while True:
+                char = reader.read_exact(1)
+                if char == b'"':
+                    char = reader.read_exact(1)
+                    break
+                if char == b"\\":
+                    char = reader.read_exact(1)
+                if char[0] < 32 and char != b"\t" or char == b"\x7f":
+                    raise NetworkFetchError("protocol_error")
+        else:
+            found = False
+            while char and char[0] in token_bytes:
+                found = True
+                char = reader.read_exact(1)
+            if not found:
+                raise NetworkFetchError("protocol_error")
+
+
+def _visit_trailers(reader: _ImmediateVisitReader) -> None:
+    # Trailer values are consumed and discarded incrementally. Fields which
+    # could redefine framing or the profile must be in the original head.
+    forbidden = {
+        b"content-length", b"transfer-encoding", b"content-type",
+        b"content-encoding", b"content-range", b"trailer",
+    }
+    while True:
+        char = reader.read_exact(1)
+        if char == b"\r":
+            if reader.read_exact(1) != b"\n":
+                raise NetworkFetchError("protocol_error")
+            return
+        name = bytearray()
+        while char != b":":
+            if not _HEADER_NAME_RE.fullmatch(char):
+                raise NetworkFetchError("protocol_error")
+            if len(name) < 18:
+                name.extend(char.lower())
+            char = reader.read_exact(1)
+        if not name or bytes(name) in forbidden:
+            raise NetworkFetchError("protocol_error")
+        while True:
+            char = reader.read_exact(1)
+            if char == b"\r":
+                if reader.read_exact(1) != b"\n":
+                    raise NetworkFetchError("protocol_error")
+                break
+            if char[0] < 32 and char != b"\t" or char == b"\x7f":
+                raise NetworkFetchError("protocol_error")
+
+
+def _visit_framing(headers: Sequence[Tuple[str, str]]) -> Tuple[Optional[int], bool]:
+    lengths = [part.strip(" \t") for name, value in headers if name == "content-length"
+               for part in value.split(",")]
+    transfers = [part.strip(" \t").lower() for name, value in headers if name == "transfer-encoding"
+                 for part in value.split(",")]
+    if transfers and (lengths or transfers != ["chunked"]):
+        raise NetworkFetchError("protocol_error")
+    if any(not re.fullmatch(r"[0-9]+", item) for item in lengths):
+        raise NetworkFetchError("protocol_error")
+    # Compare decimal strings without an unbounded-int conversion and allow
+    # equivalent repeated Content-Length values under HTTP framing rules.
+    normalized = {item.lstrip("0") or "0" for item in lengths}
+    if len(normalized) > 1:
+        raise NetworkFetchError("protocol_error")
+    if normalized:
+        text = next(iter(normalized))
+        maximum = str(IMMEDIATE_VISIT_BODY_LIMIT_BYTES)
+        if len(text) > len(maximum) or len(text) == len(maximum) and text > maximum:
+            raise NetworkFetchError("response_too_large")
+        return int(text), False
+    return None, bool(transfers)
+
+
+def _read_immediate_visit_body(reader: _ImmediateVisitReader, length: Optional[int],
+                               chunked: bool, status: int) -> bytes:
+    if status in {204, 205}:
+        return b""
+    if chunked:
+        result = bytearray()
+        while True:
+            size = _visit_chunk_size(reader, IMMEDIATE_VISIT_BODY_LIMIT_BYTES - len(result))
+            if not size:
+                _visit_trailers(reader)
+                return bytes(result)
+            result.extend(reader.read_exact(size))
+            if reader.read_exact(2) != b"\r\n":
+                raise NetworkFetchError("protocol_error")
+    if length is not None:
+        return reader.read_exact(length)
+    return reader.read_to_eof(IMMEDIATE_VISIT_BODY_LIMIT_BYTES)
+
+
 class ControlledHTTPSConnector:
     """Raw-socket connector with dependency injection for deterministic tests."""
 
@@ -744,7 +977,11 @@ class ControlledHTTPSConnector:
         *,
         scope: FetchScope,
         timeouts: Optional[FetchTimeouts] = None,
-    ) -> FetchResponse:
+    ) -> Union[FetchResponse, ImmediateVisitFetchResponse]:
+        if scope is FetchScope.IMMEDIATE_VISIT:
+            if timeouts is not None and timeouts != TARGET_TIMEOUTS:
+                raise ValueError("Immediate visit fetch budgets are fixed.")
+            return self.fetch_immediate_visit(raw_url)
         if not isinstance(scope, FetchScope):
             raise NetworkFetchError("policy_rejected")
         parsed = _canonical_https_url(
@@ -876,6 +1113,141 @@ class ControlledHTTPSConnector:
     def fetch_target(self, raw_url: str) -> FetchResponse:
         return self.fetch(raw_url, scope=FetchScope.TARGET)
 
+    def fetch_immediate_visit(self, raw_url: str) -> ImmediateVisitFetchResponse:
+        """One new-profile GET with fixed budgets and no ambient HTTP state."""
+
+        from .immediate_visit_contract import validate_endpoint_url
+
+        status: Optional[int] = None
+        phase = "url"
+        raw_socket = None
+        tls_socket = None
+        try:
+            try:
+                validate_endpoint_url(raw_url)
+            except Exception:
+                raise ImmediateVisitFetchError("url_disallowed") from None
+            parsed = urlsplit(raw_url)
+            host = parsed.hostname
+            # Domain policy remains layered with the complete DNS answer
+            # policy. A terminal DNS dot does not bypass local-name checks.
+            policy_host = host.rstrip(".")
+            if policy_host in _FORBIDDEN_HOSTS or policy_host.endswith(_FORBIDDEN_HOST_SUFFIXES):
+                raise ImmediateVisitFetchError("url_disallowed")
+            # Slice the original wire URL to retain a deliberately empty '?'.
+            request_target = raw_url[len("https://") + len(parsed.netloc):]
+            start = self._monotonic()
+            deadline = start + TARGET_TIMEOUTS.total_seconds
+            connect_deadline = min(deadline, start + TARGET_TIMEOUTS.connect_seconds)
+            phase = "dns"
+            addresses = _resolve_public_addresses(
+                host, resolver=self._resolver,
+                timeout=_remaining(connect_deadline, self._monotonic),
+            )
+            _remaining(connect_deadline, self._monotonic)
+            pinned = addresses[0]
+            family, endpoint = _sockaddr(pinned)
+            phase = "connection"
+            raw_socket = self._socket_factory(family, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+            _set_timeout(raw_socket, 3.0, connect_deadline, self._monotonic)
+            raw_socket.connect(endpoint)
+            _remaining(connect_deadline, self._monotonic)
+            if not _same_peer(pinned, raw_socket.getpeername()):
+                raise ImmediateVisitFetchError("peer_mismatch")
+            phase = "tls"
+            context = self._ssl_context_factory()
+            if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
+                raise ImmediateVisitFetchError("tls_failed")
+            _set_timeout(raw_socket, 3.0, connect_deadline, self._monotonic)
+            tls_socket = context.wrap_socket(
+                raw_socket, server_hostname=host, suppress_ragged_eofs=False,
+            )
+            raw_socket = None
+            _remaining(connect_deadline, self._monotonic)
+            if not _same_peer(pinned, tls_socket.getpeername()):
+                raise ImmediateVisitFetchError("peer_mismatch")
+            phase = "connection"
+            request = (
+                "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                "Accept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
+            ) % (request_target, host, IMMEDIATE_VISIT_USER_AGENT)
+            _set_timeout(tls_socket, 12.0, deadline, self._monotonic)
+            tls_socket.sendall(request.encode("ascii"))
+            _remaining(deadline, self._monotonic)
+            phase = "head"
+            reader = _ImmediateVisitReader(
+                tls_socket, deadline=deadline,
+                head_deadline=self._monotonic() + 10.0,
+                monotonic=self._monotonic,
+            )
+            head_bytes = 0
+            while True:
+                raw_head = reader.read_head(HEADER_LIMIT_BYTES - head_bytes)
+                head_bytes += len(raw_head)
+                found_status, headers = _parse_immediate_visit_head(raw_head)
+                if found_status == 101:
+                    raise ImmediateVisitFetchError("http_invalid")
+                if found_status >= 200:
+                    status = found_status
+                    break
+            encoding_tokens = [part.strip(" \t").lower()
+                               for name, value in headers if name == "content-encoding"
+                               for part in value.split(",")]
+            if any(token != "identity" for token in encoding_tokens):
+                raise ImmediateVisitFetchError("content_encoding_unsupported", status_code=status)
+            if status in {206, 304} or any(name == "content-range" for name, _ in headers):
+                raise ImmediateVisitFetchError("partial_response", status_code=status)
+            phase = "framing"
+            length, chunked = _visit_framing(headers)
+            phase = "body"
+            body = _read_immediate_visit_body(reader, length, chunked, status)
+            _remaining(deadline, self._monotonic)
+            if not body:
+                raise ImmediateVisitFetchError("body_empty", status_code=status, body_bytes=0)
+            return ImmediateVisitFetchResponse(status, headers, body)
+        except ImmediateVisitFetchError as error:
+            failure = ImmediateVisitFetchError(
+                error.reason, status_code=error.status_code if error.status_code is not None else status,
+                body_bytes=error.body_bytes,
+            )
+        except NetworkFetchError as error:
+            if error.code == "timeout":
+                reason = "fetch_timeout"
+            elif phase == "dns":
+                reason = "dns_disallowed" if error.code == "policy_rejected" else "dns_failed"
+            elif error.code == "response_too_large":
+                reason = "headers_limit_exceeded" if phase == "head" else "body_limit_exceeded"
+            elif error.code == "connection_error":
+                reason = "body_incomplete" if phase == "body" else "connection_failed"
+            elif phase == "body":
+                reason = "body_incomplete"
+            else:
+                reason = "http_invalid"
+            failure = ImmediateVisitFetchError(reason, status_code=status)
+        except socket.timeout:
+            failure = ImmediateVisitFetchError("fetch_timeout", status_code=status)
+        except ssl.SSLError:
+            reason = "tls_failed" if phase == "tls" else (
+                "body_incomplete" if phase == "body" else "connection_failed"
+            )
+            failure = ImmediateVisitFetchError(reason, status_code=status)
+        except OSError:
+            reason = "body_incomplete" if phase == "body" else "connection_failed"
+            failure = ImmediateVisitFetchError(reason, status_code=status)
+        except Exception:
+            failure = ImmediateVisitFetchError("http_invalid", status_code=status)
+        finally:
+            for stream in (tls_socket, raw_socket):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+        # Raising inside a handler (even ``from None``) retains its original
+        # error in __context__. Detach the finite public error after handlers
+        # and socket cleanup have completed.
+        raise failure from None
+
 
 def fetch_manifest_once(
     raw_url: str, *, connector: Optional[ControlledHTTPSConnector] = None
@@ -889,12 +1261,22 @@ def fetch_target_once(
     return (connector or ControlledHTTPSConnector()).fetch_target(raw_url)
 
 
+def fetch_immediate_visit_once(
+    raw_url: str, *, connector: Optional[ControlledHTTPSConnector] = None
+) -> ImmediateVisitFetchResponse:
+    return (connector or ControlledHTTPSConnector()).fetch_immediate_visit(raw_url)
+
+
 __all__ = [
     "CanonicalHTTPSURL",
     "ControlledHTTPSConnector",
     "FetchResponse",
     "FetchScope",
     "FetchTimeouts",
+    "ImmediateVisitFetchError",
+    "ImmediateVisitFetchResponse",
+    "IMMEDIATE_VISIT_BODY_LIMIT_BYTES",
+    "IMMEDIATE_VISIT_USER_AGENT",
     "HEADER_LIMIT_BYTES",
     "IANA_IPV6_SNAPSHOT_PROVENANCE",
     "MANIFEST_BODY_LIMIT_BYTES",
@@ -904,4 +1286,5 @@ __all__ = [
     "TARGET_USER_AGENT",
     "fetch_manifest_once",
     "fetch_target_once",
+    "fetch_immediate_visit_once",
 ]

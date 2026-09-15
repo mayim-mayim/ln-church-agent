@@ -9,9 +9,18 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.2",
+    version="1.18.3",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
-    package_data={"ln_church_agent": ["contracts/*.json"]},
+    package_data={
+        "ln_church_agent": [
+            "contracts/*.json",
+            "contracts/v183-immediate-visit/*",
+            "contracts/v183-immediate-visit/requester-registration/SKILL.md",
+        ],
+        "ln_church_agent._vendor.justhtml": [
+            "LICENSE", "UPSTREAM.md", "compatibility.patch", "py.typed",
+        ],
+    },
     install_requires=[
         "requests>=2.31.0",
         "pydantic>=2.0.0",

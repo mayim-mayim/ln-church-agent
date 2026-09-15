@@ -1,0 +1,36 @@
+"""URL sanitization facade and compatibility exports."""
+
+from __future__ import annotations
+
+from . import policy as _url_policy
+from . import runtime as _url_runtime
+from . import spec as _url_spec
+
+DisallowedTagHandling = _url_policy.DisallowedTagHandling
+UnsafeHandling = _url_policy.UnsafeHandling
+UnsafeHtmlError = _url_policy.UnsafeHtmlError
+UrlFilter = _url_policy.UrlFilter
+UrlHandling = _url_policy.UrlHandling
+UrlPolicy = _url_policy.UrlPolicy
+UrlProxy = _url_policy.UrlProxy
+UrlRule = _url_policy.UrlRule
+_url_policy_signature = _url_policy._url_policy_signature
+_url_rule_signature = _url_policy._url_rule_signature
+_URL_BEARING_PARAM_NAMES = _url_spec._URL_BEARING_PARAM_NAMES
+_URL_LIKE_ATTRS = _url_spec._URL_LIKE_ATTRS
+_URL_SINK_ATTRS = _url_spec._URL_SINK_ATTRS
+_url_sink_kind_for_attr = _url_spec._url_sink_kind_for_attr
+_effective_allow_relative = _url_runtime._effective_allow_relative
+_effective_proxy = _url_runtime._effective_proxy
+_effective_url_handling = _url_runtime._effective_url_handling
+_is_legacy_ipv4_number = _url_runtime._is_legacy_ipv4_number
+_is_noncanonical_numeric_ipv4_host = _url_runtime._is_noncanonical_numeric_ipv4_host
+_prepare_standalone_url_value_for_checking = _url_runtime._prepare_standalone_url_value_for_checking
+_raw_authority_host = _url_runtime._raw_authority_host
+_sanitize_comma_or_space_separated_url_list = _url_runtime._sanitize_comma_or_space_separated_url_list
+_sanitize_space_separated_url_list = _url_runtime._sanitize_space_separated_url_list
+_sanitize_srcset_value = _url_runtime._sanitize_srcset_value
+_sanitize_url_sink_value = _url_runtime._sanitize_url_sink_value
+_sanitize_url_value_with_rule = _url_runtime._sanitize_url_value_with_rule
+_strip_invisible_unicode = _url_runtime._strip_invisible_unicode
+_validate_proxy_url = _url_runtime._validate_proxy_url

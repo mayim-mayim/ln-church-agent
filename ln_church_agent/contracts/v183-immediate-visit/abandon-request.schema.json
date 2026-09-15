@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/abandon-request.schema.json",
+  "title": "immediate_http_visit.v1 abandon-request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task_abandon_request.immediate_visit.v1"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^exec_[a-f0-9]{32}$"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "repository": "mayim-mayim/LN_Church_Development-Charter",
+  "commit": "6390b7fc657ee516476afe8013b3d25881dff224",
+  "path": "handoffs/implementation-specifications/v1.18.3/profile-fixtures.json",
+  "blob": "27ddb094ab55f8d4ce43513b9a5944d1294907f0",
+  "mode": "100644",
+  "sha256": "ee89b8f6c5969359b38245cd72d0f6b535228244b5e9e408ba0932cd5d0b93be",
+  "purpose": "Fixed audited synthetic expectations for provisional SDK self-check; not an accepted Hondo contract copy."
+}
