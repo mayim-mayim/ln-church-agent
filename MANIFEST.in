@@ -4,3 +4,9 @@ include server.json
 recursive-include docs *.md
 recursive-include examples *.py
 recursive-include tests *.py
+recursive-include tests/fixtures/v183-immediate-visit *.json
+recursive-include ln_church_agent/contracts/v183-immediate-visit *
+include ln_church_agent/_vendor/justhtml/LICENSE
+include ln_church_agent/_vendor/justhtml/UPSTREAM.md
+include ln_church_agent/_vendor/justhtml/compatibility.patch
+include ln_church_agent/_vendor/justhtml/py.typed

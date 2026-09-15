@@ -2,15 +2,18 @@
 
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
-## [1.18.2] - 2026-09-11 (Source Simplification)
-* **Runtime simplification**: Consolidates internal payment, parsing, redaction, model-validation, and private-file handling while retaining the existing public interfaces and payment-authority boundaries.
-* **Purchase-result recovery**: Retains the received result handle, request hash, and result expiry as private metadata. Recovery GETs never initiate a purchase, including on an unexpected HTTP 402; missing or expired results do not prove non-payment.
-* **Guided Task checkpoints**: Documents caller-owned durable checkpoint storage and the existing `REGISTERED` resume boundary. Non-purchasing goal-summary reads preserve their HTTP failure status without entering payment or navigation flows.
-* **Tests and package identity**: Removes obsolete historical-identity and compatibility scaffolding, retains current behavior checks, and synchronizes package and SDK identities to `1.18.2`. The accepted package definition includes the explicit `eth-hash[pycryptodome]>=0.3.1` dependency.
-* **Verification boundary**: Reuses the accepted source and targeted correction evidence. Native Windows evidence covers one isolated journal create/replace/load and guard-contention condition; it is not full native-platform qualification.
-* **Details**: [v1.18.2 release notes](docs/release_notes/v1.18.2.md)
+## [1.18.3] - 2026-09-14 (Private Source Work — Immediate HTTP Visit)
 
-## [1.18.0] - 2026-08-31 (Scheduled HTTP GET Batch SDK)
+* Adds the typed `AgentImmediateVisitClient`, `ImmediateVisitExecutor`, `FrozenImmediateVisitReport`, and private `ImmediateVisitJournal` for explicit `immediate_http_visit.v1` work.
+* Selects one immutable endpoint after Claim, performs one bounded GET, automatically derives the fixed UTF-8 HTML/JSON fingerprints, and records comparable or reasoned inconclusive results without buying target HTTP 402 responses.
+* Preserves GET start and Report identity across crashes. Recovery uses authenticated status and the same canonical Report; Completion allows at most three POSTs and explicit polling defaults to five requests one second apart.
+* Separates the 48-hour listing, 10-minute first-Report deadline, accepted-Report recovery, server-controlled re-entry, evaluation, and payment. Base reward is 0.0075 USDC with a possible 0.0075 USDC exact-match bonus.
+* Documents v1.17 C50/C500/C5000 capacities of 50/500/5,000 for 1/10/100 USDC while retaining its 0.01 USDC reward and existing contracts.
+* Packages the isolated JustHTML vendor, license and compatibility provenance, and immediate-visit resources without changing Python `>=3.8.1`, extras, entry points, or inspect-only MCP authority.
+* Provides English API examples, official Worker/Requester Guide destinations, and free Task Board result links. Private source work does not establish source acceptance, live publication, deployment, or payout.
+* Details: [v1.18.3 notes](docs/release_notes/v1.18.3.md).
+
+## [1.18.0] - 2026-08-15 (Private Source Candidate — Scheduled HTTP GET Batch SDK)
 * **Generic v2 Task profile**: Adds strict v2 Task detection, one-attempt Claim, readiness, abandonment, compound Completion, and Submission-status recovery for `scheduled_http_get_batch.v1`, while preserving released v1 models, flat errors, routes, and retry semantics. An indeterminate Claim becomes `CLAIM_OUTCOME_UNKNOWN` and is never replayed.
 * **Controlled Manifest transport**: Reuses the exact signed Manifest URL, resolves fresh A/AAAA answers per attempt, and validates IPv6 fail-closed against a pinned, runtime-network-free IANA allocation and special-purpose snapshot. It rejects a whole answer set containing any forbidden address before socket creation, pins the numeric peer, verifies connected-peer equality, and preserves canonical-host TLS SNI, certificate, and `Host` handling. Redirects, ambient proxies, cookies, authorization, `netrc`, request bodies, caller headers, and automatic decoding are prohibited.
 * **Finite fetch policy**: Allows at most three Manifest attempts within five seconds, limits response headers and the successful body to 32 KiB, reads zero non-200 body bytes, and applies encoding or network-policy rejection before an otherwise retryable status. Signed query values are redacted and never forwarded.
@@ -18,11 +21,11 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Crash-safe local journal**: Binds a versioned, checksummed journal irreversibly at genesis to the Task ID, full Task Definition tuple, one-way local Claim handle, and derived Execution ID, then binds the Manifest digest durably at T. Same-directory atomic replacement, flush, lock, native-Windows close-before-replace, and supported directory durability fail closed on missing, legacy-unbound, definition-mismatched, corrupt, or ambiguous state without storing the Claim token or signed URL.
 * **Exact Completion recovery**: Freezes canonical report bytes and serializes Completion recovery under a stable sibling cross-process operation guard. Recovery is status-first even with zero prior dispatch attempts; only a fresh Completion may reserve attempt one, and only one absent-status decision before close may permit attempt two with the same Submission ID and bytes. It recovers an existing on-time receipt after close and treats `COMPOUND_COMPLETION_ACKED` as the terminal dispatch boundary. A later authoritative bound `terminal=true` status is atomically retained as `TERMINAL_STATUS`; nonterminal or mismatched status evidence cannot advance the journal.
 * **Integration boundary**: Adds a public-safe CLI/example and public exports without adding Task mutation to the keyless inspect-only MCP. Claim creates the required definition-bound journal before making its credential usable; run/resume never recreates a missing journal. Signed URL state is private, slotted, non-serializable, and redacted. The canonical contract fixture is packaged byte-for-byte in wheels and sdists. No dependency is added.
-* **Qualification boundary**: Linux release evidence includes the fixture-driven exact 42-row production-connector network matrix. Native macOS and native Windows filesystem, locking, atomic-replace, DNS, socket, and TLS qualification remain separate required lanes. Mocked platform branches do not qualify a native platform, and native Windows qualification does not require PowerShell 5.1.
-* **Release status**: This Public release promotes the independently audited exact SDK candidate paired with Hondō commit `833dca3b804f5b82ca0607c524d9c354f2d62378`. Hondō deployment, PyPI publication, and MCP Registry publication remain separate release actions.
-* **Details**: [v1.18.0 release notes](docs/release_notes/v1.18.0.md)
+* **Qualification boundary**: Linux candidate evidence includes the fixture-driven exact 42-row production-connector network matrix. Native macOS and native Windows filesystem, locking, atomic-replace, DNS, socket, and TLS qualification remain separate required lanes. Mocked platform branches do not qualify a native platform, and native Windows qualification does not require PowerShell 5.1.
+* **Candidate status**: This Private source candidate is pending independent audit and does not claim release readiness, Public promotion, publication, deployment, server acceptance, Evaluation acceptance, reward approval, or payout.
+* **Details**: [v1.18.0 candidate notes](docs/release_notes/v1.18.0.md)
 
-## [1.17.1] - 2026-08-13 (Reward Destination Education and Agent-Earning Documentation)
+## [1.17.1] - 2026-08-11 (Private Integrated Candidate — Reward Destination Education and Agent-Earning Documentation)
 * **Reward destination education**: Documents that Public Agent Task execution and observation require no wallet credential, while a reward-bearing Claim requires a non-zero EVM `reward_address` for USDC on Base (`eip155:8453`). The address is fixed in the immutable Claim snapshot, cannot be changed later, and is not control-verified by Hondo.
 * **Secret and destination boundary**: The Task CLI and documentation never request, store, or send a wallet secret, private key, seed phrase, signer credential, or wallet-control proof. Lightning, LNURL, and BOLT11 remain unsupported as Task reward destinations.
 * **Agent-earning front**: Adds the exact first-job/first-reward messages and the canonical `Discover → Read Definition → Claim → Execute → Register Observations → Complete → Check Evaluation → Check Reward` lifecycle, while keeping execution with the Host Agent and preserving the SDK's no-crawl, no-browser, no-login, no-scan, and no-target-payment boundary.
@@ -30,8 +33,8 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 * **Compatibility**: JSON, wire, and Claim request payloads are unchanged. Education is limited to README, CLI help, and human-readable Task output; public API, schemas, transport, retry, checkpoint, credential, payment, Evaluation, and settlement behavior remain unchanged.
 * **Version materialization**: Updates package, User-Agent, and MCP Observation identities consistently to `1.17.1` without changing dependencies.
 * **Known environment boundary**: Windows plus Python 3.14 remains unsupported because of the transitive `coincurve` compatibility boundary; Python 3.11 remains recommended on Windows.
-* **Release status**: This Public release promotes the independently audited Private integrated candidate. It does not itself deploy or change Hondo runtime behavior.
-* **Details**: [v1.17.1 release notes](docs/release_notes/v1.17.1.md)
+* **Candidate status**: This Private integrated candidate does not implement a Hondo runtime change and does not claim Public promotion, release, publication, or deployment.
+* **Details**: [v1.17.1 candidate notes](docs/release_notes/v1.17.1.md)
 
 ## [1.17.0] - 2026-07-28 (Private Source Candidate — Agent Task Venue SDK)
 * **Public Agent Task lifecycle**: Adds a synchronous, wallet-keyless `AgentTaskClient` for discovery, detail, Claim, public-safe Observation Register, Completion, and bounded reward-status polling for the domainless `payment_surface_discovery.v1` Task at the fixed LN Church origin.
@@ -477,4 +480,3 @@ All notable changes to the `ln-church-agent` SDK will be documented in this file
 
 ## [1.0.0] - Initial Stable Release
 * Introduced the autonomous `Probe → Pay → Execute` loop across `L402`/`MPP` (Lightning), `x402` (Polygon), and `x402-solana` (Solana).
-

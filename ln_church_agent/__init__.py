@@ -112,11 +112,21 @@ from .failures import (
 from .capabilities import get_capability_matrix
 
 
-# v1.18's Task-v2 surface is lazy so importing the keyless inspect-only MCP
-# does not initialize the scheduled worker or its secret-bearing models.  A
+# Scheduled and immediate Task surfaces are lazy so importing the keyless
+# inspect-only MCP does not initialize their workers or secret-bearing models. A
 # normal explicit import (``from ln_church_agent import AgentTaskV2Client``)
 # resolves and caches exactly the requested public symbol.
 _V18_LAZY_EXPORTS = {
+    "AgentImmediateVisitClient": (
+        "immediate_visit_client",
+        "AgentImmediateVisitClient",
+    ),
+    "ImmediateVisitExecutor": ("immediate_visit", "ImmediateVisitExecutor"),
+    "FrozenImmediateVisitReport": (
+        "immediate_visit",
+        "FrozenImmediateVisitReport",
+    ),
+    "ImmediateVisitJournal": ("immediate_visit_journal", "ImmediateVisitJournal"),
     "AgentTaskV2Client": ("task_v2_client", "AgentTaskV2Client"),
     "ScheduledTaskClaimCredential": (
         "task_v2_models",
@@ -293,6 +303,10 @@ __all__ = [
     "TaskAPIError",
     "TaskAmbiguousOutcomeError",
     "AgentTaskV2Client",
+    "AgentImmediateVisitClient",
+    "ImmediateVisitExecutor",
+    "FrozenImmediateVisitReport",
+    "ImmediateVisitJournal",
     "ScheduledTaskClaimCredential",
     "ScheduledTaskReadiness",
     "ScheduledCompletionReport",

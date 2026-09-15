@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/observation.schema.json",
+  "title": "immediate_http_visit.v1 observation",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "status",
+        "media_family",
+        "body_bytes",
+        "fetch_started_at",
+        "fetch_finished_at",
+        "structure_sha256",
+        "body_sha256"
+      ],
+      "properties": {
+        "outcome": {
+          "const": "comparable"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 599,
+          "not": {
+            "enum": [
+              206,
+              304
+            ]
+          }
+        },
+        "media_family": {
+          "enum": [
+            "html",
+            "json"
+          ]
+        },
+        "body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "fetch_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fetch_finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "structure_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "status",
+        "media_family",
+        "body_bytes",
+        "fetch_started_at",
+        "fetch_finished_at",
+        "reason"
+      ],
+      "properties": {
+        "outcome": {
+          "const": "inconclusive"
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 100,
+          "maximum": 599
+        },
+        "media_family": {
+          "enum": [
+            "html",
+            "json",
+            null
+          ]
+        },
+        "body_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fetch_started_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fetch_finished_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "enum": [
+            "url_disallowed",
+            "dns_failed",
+            "dns_disallowed",
+            "connection_failed",
+            "peer_mismatch",
+            "tls_failed",
+            "fetch_timeout",
+            "fetch_outcome_lost",
+            "headers_limit_exceeded",
+            "http_invalid",
+            "content_encoding_unsupported",
+            "body_limit_exceeded",
+            "body_incomplete",
+            "body_empty",
+            "partial_response",
+            "media_unsupported",
+            "media_invalid",
+            "charset_unsupported",
+            "utf8_invalid",
+            "html_structure_empty",
+            "json_invalid",
+            "json_depth_exceeded",
+            "json_root_unsupported",
+            "json_structure_unavailable"
+          ]
+        }
+      }
+    }
+  ]
+}

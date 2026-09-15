@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/page.schema.json",
+  "title": "immediate_http_visit.v1 page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tasks",
+    "next_cursor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task_page.immediate_visit.v1"
+    },
+    "tasks": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "task_id",
+          "task_type",
+          "status",
+          "published_at",
+          "listing_ends_at",
+          "plan_id",
+          "registration_amount_atomic",
+          "repeat_policy",
+          "capacity_total",
+          "capacity_reserved",
+          "capacity_consumed",
+          "capacity_available",
+          "definition_version",
+          "profile_id",
+          "endpoints",
+          "reward",
+          "definition_url",
+          "summary_url",
+          "results_url"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "ln_church.agent_task.immediate_visit.v1"
+          },
+          "task_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+          },
+          "task_type": {
+            "const": "immediate_http_visit.v1"
+          },
+          "status": {
+            "enum": [
+              "OPEN",
+              "LISTING_ENDED",
+              "CLOSED"
+            ]
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "listing_ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "plan_id": {
+            "enum": [
+              "C50",
+              "C500",
+              "C5000"
+            ]
+          },
+          "registration_amount_atomic": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "repeat_policy": {
+            "enum": [
+              "allow",
+              "once_per_endpoint"
+            ]
+          },
+          "capacity_total": {
+            "enum": [
+              50,
+              500,
+              5000
+            ]
+          },
+          "capacity_reserved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capacity_consumed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "capacity_available": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "definition_version": {
+            "const": "1.0.0"
+          },
+          "profile_id": {
+            "const": "immediate_visit_utf8.v1"
+          },
+          "endpoints": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint_id",
+                "url"
+              ],
+              "properties": {
+                "endpoint_id": {
+                  "type": "string",
+                  "pattern": "^ep_[a-f0-9]{64}$"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "reward": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "network",
+              "asset",
+              "asset_address",
+              "base_amount_atomic",
+              "bonus_amount_atomic",
+              "maximum_amount_atomic"
+            ],
+            "properties": {
+              "network": {
+                "const": "eip155:8453"
+              },
+              "asset": {
+                "const": "USDC"
+              },
+              "asset_address": {
+                "const": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+              },
+              "base_amount_atomic": {
+                "const": "7500"
+              },
+              "bonus_amount_atomic": {
+                "const": "7500"
+              },
+              "maximum_amount_atomic": {
+                "const": "15000"
+              }
+            }
+          },
+          "definition_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "summary_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "results_url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "next_cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

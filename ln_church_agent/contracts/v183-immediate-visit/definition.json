@@ -1,0 +1,37 @@
+{
+  "schema_version": "ln_church.task_definition.immediate_visit.v1",
+  "task_type": "immediate_http_visit.v1",
+  "task_schema_version": "ln_church.agent_task.immediate_visit.v1",
+  "definition_version": "1.0.0",
+  "profile_id": "immediate_visit_utf8.v1",
+  "plans": {
+    "C50": {
+      "registration_amount_atomic": "1000000",
+      "capacity_total": 50
+    },
+    "C500": {
+      "registration_amount_atomic": "10000000",
+      "capacity_total": 500
+    },
+    "C5000": {
+      "registration_amount_atomic": "100000000",
+      "capacity_total": 5000
+    }
+  },
+  "listing_duration_seconds": 172800,
+  "claim_duration_seconds": 600,
+  "repeat_policies": [
+    "allow",
+    "once_per_endpoint"
+  ],
+  "reward": {
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "base_amount_atomic": "7500",
+    "bonus_amount_atomic": "7500",
+    "maximum_amount_atomic": "15000"
+  },
+  "definition_url": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/SKILL.md",
+  "requester_guide_url": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/requester-registration/SKILL.md"
+}

@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v1/1.0.0/summary.schema.json",
+  "title": "immediate_http_visit.v1 summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "status",
+    "published_at",
+    "listing_ends_at",
+    "plan_id",
+    "registration_amount_atomic",
+    "repeat_policy",
+    "capacity_total",
+    "capacity_reserved",
+    "capacity_consumed",
+    "capacity_available",
+    "received_report_count",
+    "base_approved_count",
+    "bonus_approved_count",
+    "mismatch_count",
+    "inconclusive_count",
+    "repeat_drop_count",
+    "approved_amount_atomic",
+    "paid_confirmed_amount_atomic",
+    "updated_at",
+    "evaluation_pending_count",
+    "payment_progress",
+    "endpoints"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_offer_summary.immediate_visit.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "immediate_http_visit.v1"
+    },
+    "status": {
+      "enum": [
+        "OPEN",
+        "LISTING_ENDED",
+        "CLOSED"
+      ]
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "listing_ends_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "plan_id": {
+      "enum": [
+        "C50",
+        "C500",
+        "C5000"
+      ]
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "repeat_policy": {
+      "enum": [
+        "allow",
+        "once_per_endpoint"
+      ]
+    },
+    "capacity_total": {
+      "enum": [
+        50,
+        500,
+        5000
+      ]
+    },
+    "capacity_reserved": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "capacity_consumed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "capacity_available": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "received_report_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "base_approved_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bonus_approved_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mismatch_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "inconclusive_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repeat_drop_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "approved_amount_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "paid_confirmed_amount_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evaluation_pending_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payment_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pending",
+        "ambiguous",
+        "paid_confirmed",
+        "failed"
+      ],
+      "properties": {
+        "pending": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ambiguous": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paid_confirmed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "endpoint_id",
+          "url",
+          "received_report_count",
+          "base_approved_count",
+          "bonus_approved_count",
+          "mismatch_count",
+          "inconclusive_count",
+          "repeat_drop_count",
+          "approved_amount_atomic",
+          "paid_confirmed_amount_atomic",
+          "updated_at"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string",
+            "pattern": "^ep_[a-f0-9]{64}$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "received_report_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "base_approved_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bonus_approved_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mismatch_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inconclusive_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "repeat_drop_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approved_amount_atomic": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "paid_confirmed_amount_atomic": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

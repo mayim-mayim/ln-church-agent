@@ -1,0 +1,968 @@
+--- a/justhtml/core/doctype.py
++++ b/justhtml/core/doctype.py
+@@ -2,7 +2,7 @@
+ 
+ from typing import TYPE_CHECKING
+ 
+-from justhtml.core.constants import (
++from ln_church_agent._vendor.justhtml.core.constants import (
+     HTML4_PUBLIC_PREFIXES,
+     LIMITED_QUIRKY_PUBLIC_PREFIXES,
+     QUIRKY_PUBLIC_MATCHES,
+@@ -11,7 +11,7 @@
+ )
+ 
+ if TYPE_CHECKING:
+-    from justhtml.core.types import Doctype
++    from ln_church_agent._vendor.justhtml.core.types import Doctype
+ 
+ 
+ def contains_prefix(haystack: tuple[str, ...], needle: str) -> bool:
+--- a/justhtml/core/errors.py
++++ b/justhtml/core/errors.py
+@@ -1,4 +1,6 @@
+ """Error-code definitions and human-readable messages."""
++
++from __future__ import annotations
+ 
+ PARSER_ERROR_CODES = frozenset(
+     {
+--- a/justhtml/dom/__init__.py
++++ b/justhtml/dom/__init__.py
+@@ -1,12 +1,15 @@
+ from __future__ import annotations
+ 
+-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+-
+-from justhtml.serializer import to_html
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import TypeAlias
++
++from typing import TYPE_CHECKING, Any, cast
++
++from ln_church_agent._vendor.justhtml.serializer import to_html
+ 
+ if TYPE_CHECKING:
+-    from justhtml.core.types import Doctype
+-    from justhtml.serializer import HTMLContext
++    from ln_church_agent._vendor.justhtml.core.types import Doctype
++    from ln_church_agent._vendor.justhtml.serializer import HTMLContext
+ 
+ 
+ def _to_text_collect(node: NodeType, parts: list[str], strip: bool) -> None:
+@@ -335,7 +338,7 @@
+         Raises:
+             ValueError: If the selector is invalid
+         """
+-        from justhtml.selector import query  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.selector import query  # noqa: PLC0415
+ 
+         return query(self, selector)
+ 
+@@ -404,7 +407,7 @@
+         - Tables and images are preserved as raw HTML.
+         - Unknown elements fall back to rendering their children.
+         """
+-        from justhtml.serializer.markdown import to_markdown  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer.markdown import to_markdown  # noqa: PLC0415
+ 
+         return to_markdown(self, html_passthrough=html_passthrough)
+ 
+@@ -836,7 +839,7 @@
+         return self.data
+ 
+     def to_markdown(self, html_passthrough: bool = False) -> str:
+-        from justhtml.serializer.markdown import to_markdown  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer.markdown import to_markdown  # noqa: PLC0415
+ 
+         return to_markdown(self, html_passthrough=html_passthrough)
+ 
+@@ -857,5 +860,5 @@
+ 
+ 
+ # Public type aliases for users who accept or return JustHTML DOM nodes.
+-NodeType: TypeAlias = Node | Text
+-QueryMatch: TypeAlias = Element | Comment
++NodeType: TypeAlias = _typing.Union[Node, Text]
++QueryMatch: TypeAlias = _typing.Union[Element, Comment]
+--- a/justhtml/dom/builder.py
++++ b/justhtml/dom/builder.py
+@@ -3,8 +3,8 @@
+ from collections.abc import Iterable, Mapping
+ from typing import Any, Literal, overload
+ 
+-from justhtml.core.types import Doctype
+-from justhtml.serializer import _validate_serializable_attr_name, _validate_serializable_tag_name
++from ln_church_agent._vendor.justhtml.core.types import Doctype
++from ln_church_agent._vendor.justhtml.serializer import _validate_serializable_attr_name, _validate_serializable_tag_name
+ 
+ from . import Comment, Element, Node, Template, Text
+ 
+--- a/justhtml/parser/__init__.py
++++ b/justhtml/parser/__init__.py
+@@ -2,17 +2,19 @@
+ 
+ from __future__ import annotations
+ 
++import typing as _typing
++
+ from typing import TYPE_CHECKING, Any
+ 
+-from justhtml.core.types import ParseError
+-from justhtml.dom import Document, DocumentFragment, Node, QueryMatch, Text
+-from justhtml.sanitizer import (
++from ln_church_agent._vendor.justhtml.core.types import ParseError
++from ln_church_agent._vendor.justhtml.dom import Document, DocumentFragment, Node, QueryMatch, Text
++from ln_church_agent._vendor.justhtml.sanitizer import (
+     UrlRule,
+     _prepare_standalone_url_value_for_checking,
+     _sanitize_url_value_with_rule,
+ )
+-from justhtml.serializer import to_html as serialize_html
+-from justhtml.transforms import apply_compiled_transforms, compile_transforms
++from ln_church_agent._vendor.justhtml.serializer import to_html as serialize_html
++from ln_church_agent._vendor.justhtml.transforms import apply_compiled_transforms, compile_transforms
+ 
+ from .context import FragmentContext
+ from .encoding import decode_html
+@@ -24,9 +26,9 @@
+ )
+ 
+ if TYPE_CHECKING:
+-    from justhtml.sanitizer import SanitizationPolicy
+-    from justhtml.serializer import HTMLContext
+-    from justhtml.transforms import TransformSpec
++    from ln_church_agent._vendor.justhtml.sanitizer import SanitizationPolicy
++    from ln_church_agent._vendor.justhtml.serializer import HTMLContext
++    from ln_church_agent._vendor.justhtml.transforms import TransformSpec
+ 
+     from .options import ParserOptions
+ 
+@@ -54,7 +56,7 @@
+         self.end_offset = getattr(exc, "end_offset", None)
+ 
+ 
+-class _BoundedErrorList(list[ParseError]):
++class _BoundedErrorList(_typing.List[ParseError]):
+     """List-like diagnostic sink that retains at most a fixed number of errors."""
+ 
+     __slots__ = ("_max_errors",)
+@@ -115,7 +117,7 @@
+         explicit_sanitize_policy: SanitizationPolicy | None = None
+         explicit_rawtext_policy: SanitizationPolicy | None = None
+         if transforms:
+-            from justhtml.transforms import _transform_parse_requirements  # noqa: PLC0415
++            from ln_church_agent._vendor.justhtml.transforms import _transform_parse_requirements  # noqa: PLC0415
+ 
+             requirements = _transform_parse_requirements(transforms, fallback_policy=policy)
+             track_tag_spans = requirements.track_tag_spans
+@@ -140,7 +142,7 @@
+         elif isinstance(html, (Node, Text)):
+             html_for_serialization = html
+             if sanitize_enabled or has_sanitize_transform or has_harden_rawtext_transform:
+-                from justhtml.sanitizer import (  # noqa: PLC0415
++                from ln_church_agent._vendor.justhtml.sanitizer import (  # noqa: PLC0415
+                     _default_policy_for_root_name,
+                     _sanitize_rawtext_element_contents,
+                 )
+@@ -236,8 +238,8 @@
+         if not transforms and not sanitize_enabled:
+             return transform_errors
+ 
+-        from justhtml.sanitizer import _default_policy_for_root_name  # noqa: PLC0415
+-        from justhtml.transforms import (  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.sanitizer import _default_policy_for_root_name  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.transforms import (  # noqa: PLC0415
+             HardenRawtext,
+             Sanitize,
+             _iter_flattened_transforms,
+@@ -312,7 +314,7 @@
+     @staticmethod
+     def escape_js_string(value: str, *, quote: str = '"') -> str:
+         """Escape a value for safe inclusion in a JavaScript string literal."""
+-        from justhtml.serializer import _escape_js_string  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer import _escape_js_string  # noqa: PLC0415
+ 
+         return _escape_js_string(value, quote=quote)
+ 
+@@ -322,14 +324,14 @@
+         if quote not in {'"', "'"}:
+             raise ValueError("quote must be ' or \"")
+ 
+-        from justhtml.serializer import _escape_attr_value  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer import _escape_attr_value  # noqa: PLC0415
+ 
+         return _escape_attr_value(value, quote)
+ 
+     @staticmethod
+     def escape_url_value(value: str) -> str:
+         """Percent-encode a URL value (useful before embedding into non-URL contexts)."""
+-        from justhtml.serializer import _escape_url_value  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer import _escape_url_value  # noqa: PLC0415
+ 
+         return _escape_url_value(value)
+ 
+@@ -393,7 +395,7 @@
+         This produces a JS-string-safe value that, when assigned to innerHTML,
+         will be interpreted as text (not markup).
+         """
+-        from justhtml.serializer import _escape_text  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.serializer import _escape_text  # noqa: PLC0415
+ 
+         return JustHTML.escape_js_string(_escape_text(value), quote=quote)
+ 
+--- a/justhtml/parser/engine.py
++++ b/justhtml/parser/engine.py
+@@ -6,12 +6,14 @@
+ 
+ from __future__ import annotations
+ 
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import dataclass, remove_prefix, remove_suffix, zip_strict
++
+ import re
+ from bisect import bisect_left, bisect_right, insort
+-from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Any, SupportsIndex, cast
+ 
+-from justhtml.core.constants import (
++from ln_church_agent._vendor.justhtml.core.constants import (
+     BUTTON_SCOPE_TERMINATORS,
+     DEFAULT_SCOPE_TERMINATORS,
+     DEFINITION_SCOPE_TERMINATORS,
+@@ -30,28 +32,28 @@
+     TABLE_ALLOWED_CHILDREN,
+     VOID_ELEMENTS,
+ )
+-from justhtml.core.doctype import doctype_error_and_quirks
+-from justhtml.core.entities import decode_entities_in_text
+-from justhtml.core.errors import generate_error_message
+-from justhtml.core.text import _ASCII_LOWER_TABLE
+-from justhtml.core.types import Doctype, ParseError
+-from justhtml.dom import Comment, Document, DocumentFragment, Element, Node, ProcessingInstruction, Template, Text
+-from justhtml.sanitizer import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, _strip_invisible_unicode
+-from justhtml.sanitizer.url import (
++from ln_church_agent._vendor.justhtml.core.doctype import doctype_error_and_quirks
++from ln_church_agent._vendor.justhtml.core.entities import decode_entities_in_text
++from ln_church_agent._vendor.justhtml.core.errors import generate_error_message
++from ln_church_agent._vendor.justhtml.core.text import _ASCII_LOWER_TABLE
++from ln_church_agent._vendor.justhtml.core.types import Doctype, ParseError
++from ln_church_agent._vendor.justhtml.dom import Comment, Document, DocumentFragment, Element, Node, ProcessingInstruction, Template, Text
++from ln_church_agent._vendor.justhtml.sanitizer import DEFAULT_DOCUMENT_POLICY, DEFAULT_POLICY, SanitizationPolicy, _strip_invisible_unicode
++from ln_church_agent._vendor.justhtml.sanitizer.url import (
+     _URL_SINK_ATTRS,
+     _sanitize_url_sink_value,
+     _url_sink_kind_for_attr,
+ )
+-from justhtml.sanitizer.url.runtime import _get_scheme, _normalize_url_for_checking
++from ln_church_agent._vendor.justhtml.sanitizer.url.runtime import _get_scheme, _normalize_url_for_checking
+ 
+ from . import scanner as _scanner
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Collection, Iterable, Mapping
+ 
+-    from justhtml.parser.context import FragmentContext
+-    from justhtml.sanitizer.url import UrlPolicy, UrlRule
+-    from justhtml.sanitizer.url.spec import UrlSinkKind
++    from ln_church_agent._vendor.justhtml.parser.context import FragmentContext
++    from ln_church_agent._vendor.justhtml.sanitizer.url import UrlPolicy, UrlRule
++    from ln_church_agent._vendor.justhtml.sanitizer.url.spec import UrlSinkKind
+ 
+ _TAG_NAME_RE = re.compile(r"[A-Za-z][^\t\n\f\r />]*")
+ # HTML's tokenizer permits any non-delimiter code point in tag and attribute
+@@ -683,7 +685,7 @@
+     return plan
+ 
+ 
+-_FormattingSignature = tuple[()] | frozenset[tuple[str, str | None]]
++_FormattingSignature = _typing.Union[_typing.Tuple[()], _typing.FrozenSet[_typing.Tuple[str, _typing.Union[str, None]]]]
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -691,7 +693,7 @@
+     attrs: dict[str, str | None]
+ 
+ 
+-_FormattingSignatureState = _FormattingSignature | _DeferredFormattingSignature | None
++_FormattingSignatureState = _typing.Union[_FormattingSignature, _DeferredFormattingSignature, None]
+ 
+ 
+ @dataclass(slots=True)
+@@ -704,7 +706,7 @@
+     active: bool = True
+ 
+ 
+-class _FormattingSegment(dict[tuple[str, _FormattingSignature], list[_FormattingEntry]]):
++class _FormattingSegment(_typing.Dict[_typing.Tuple[str, _FormattingSignature], _typing.List[_FormattingEntry]]):
+     """One marker-bounded Noah index, with one lazily indexed entry."""
+ 
+     __slots__ = ("live_names", "pending")
+@@ -729,7 +731,7 @@
+ _UNWRAP_BATCH_THRESHOLD = 32
+ 
+ 
+-class _CountingStack(list[Node]):
++class _CountingStack(_typing.List[Node]):
+     """The open-elements stack, adaptively tracking the names it holds.
+ 
+     Scope-check helpers like `_find_open_index_before_boundary` scan from the
+@@ -1765,7 +1767,7 @@
+             return None
+ 
+         data = html[data_start:content_end]
+-        data = data.removesuffix("?")
++        data = remove_suffix(data, "?")
+         if data:
+             return f"{target} {data}"
+         return f"{target} "
+@@ -2098,7 +2100,7 @@
+                             append_text(html[lt:end], lt)
+                         elif not self._drop_comments:
+                             data = html[pos + 3 : end]
+-                            data = data.removesuffix("-").removesuffix("-")
++                            data = remove_suffix(remove_suffix(data, "-"), "-")
+                             self._append_comment(data, lt)
+                         pos = end
+                     else:
+@@ -2398,7 +2400,7 @@
+             text = _coerce_text_for_xml(text)
+         if self._ignore_lf:
+             self._ignore_lf = False
+-            text = text.removeprefix("\n")
++            text = remove_prefix(text, "\n")
+         text_is_space: bool | None = None
+         if self._in_head_noscript:
+             text_is_space = text.strip(_SPACE) == "" if text else True
+@@ -6164,7 +6166,7 @@
+                 copied_template = copied_element.template_content
+                 if original_template is not None and copied_template is not None:
+                     pending.append((original_template, copied_template))
+-            pending.extend(zip(original.children or (), copied.children or (), strict=True))
++            pending.extend(zip_strict(original.children or (), copied.children or ()))
+ 
+     def _unwrap_node(self, node: Element) -> None:
+         parent = node.parent
+--- a/justhtml/parser/stream.py
++++ b/justhtml/parser/stream.py
+@@ -1,15 +1,18 @@
+ from __future__ import annotations
+ 
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import TypeAlias, remove_suffix
++
+ import re
+-from typing import TYPE_CHECKING, Literal, TypeAlias
+-
+-from justhtml.core.constants import (
++from typing import TYPE_CHECKING, Literal
++
++from ln_church_agent._vendor.justhtml.core.constants import (
+     FOREIGN_BREAKOUT_ELEMENTS,
+     HTML_INTEGRATION_POINT_SET,
+     MATHML_TEXT_INTEGRATION_POINT_SET,
+     SVG_TAG_NAME_ADJUSTMENTS,
+ )
+-from justhtml.core.entities import decode_entities_in_text
++from ln_church_agent._vendor.justhtml.core.entities import decode_entities_in_text
+ 
+ from . import scanner as _scanner
+ from .encoding import decode_html
+@@ -17,12 +20,12 @@
+ if TYPE_CHECKING:
+     from collections.abc import Generator
+ 
+-StartEvent: TypeAlias = tuple[Literal["start"], tuple[str, dict[str, str | None]]]
+-EndEvent: TypeAlias = tuple[Literal["end"], str]
+-TextEvent: TypeAlias = tuple[Literal["text"], str]
+-CommentEvent: TypeAlias = tuple[Literal["comment"], str]
+-DoctypeEvent: TypeAlias = tuple[Literal["doctype"], tuple[str | None, str | None, str | None]]
+-StreamEvent: TypeAlias = StartEvent | EndEvent | TextEvent | CommentEvent | DoctypeEvent
++StartEvent: TypeAlias = _typing.Tuple[Literal['start'], _typing.Tuple[str, _typing.Dict[str, _typing.Union[str, None]]]]
++EndEvent: TypeAlias = _typing.Tuple[Literal['end'], str]
++TextEvent: TypeAlias = _typing.Tuple[Literal['text'], str]
++CommentEvent: TypeAlias = _typing.Tuple[Literal['comment'], str]
++DoctypeEvent: TypeAlias = _typing.Tuple[Literal['doctype'], _typing.Tuple[_typing.Union[str, None], _typing.Union[str, None], _typing.Union[str, None]]]
++StreamEvent: TypeAlias = _typing.Union[StartEvent, EndEvent, TextEvent, CommentEvent, DoctypeEvent]
+ 
+ _DOCTYPE_RE = re.compile(
+     r"""\s*([^\s>]+)(?:\s*(PUBLIC|SYSTEM)\s*(?:(?:"([^"]*)"|'([^']*)')\s*(?:"([^"]*)"|'([^']*)')?)?)?""",
+@@ -250,7 +253,7 @@
+                 data = html[comment_start:comment_end].replace("\0", "\ufffd")
+                 return True, ("comment", data), comment_end + closing_len, None
+             data = html[comment_start:end]
+-            data = data.removesuffix("--")
++            data = remove_suffix(data, "--")
+             return True, ("comment", data.replace("\0", "\ufffd")), end, None
+ 
+         if _scanner.ascii_startswith(html, "doctype", pos, end):
+--- a/justhtml/sanitizer/css.py
++++ b/justhtml/sanitizer/css.py
+@@ -1,6 +1,8 @@
+ """CSS sanitization helpers for JustHTML sanitizer policies."""
+ 
+ from __future__ import annotations
++
++from ln_church_agent._vendor.justhtml._compat import remove_suffix
+ 
+ from typing import TYPE_CHECKING
+ 
+@@ -73,7 +75,7 @@
+         i += 1
+ 
+     compact = "".join(normalized)
+-    ambient_value = compact.removesuffix("!important")
++    ambient_value = remove_suffix(compact, "!important")
+     if ambient_value in {"inherit", "revert", "revert-layer", "unset"}:
+         return True
+ 
+--- a/justhtml/sanitizer/dom.py
++++ b/justhtml/sanitizer/dom.py
+@@ -7,8 +7,8 @@
+ from .policy import SanitizationPolicy, _default_policy_for_root_name
+ 
+ if TYPE_CHECKING:
+-    from justhtml.core.types import ParseError
+-    from justhtml.dom import NodeType
++    from ln_church_agent._vendor.justhtml.core.types import ParseError
++    from ln_church_agent._vendor.justhtml.dom import NodeType
+ 
+ 
+ def _sanitize(node: Any, *, policy: SanitizationPolicy | None = None) -> Any:
+@@ -32,7 +32,7 @@
+     # Historically we allow a child element to inherit _source_html from an
+     # ancestor container; keep that behavior even though we sanitize a clone.
+     if policy.disallowed_tag_handling == "escape":
+-        from justhtml.dom import Node, Template  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.dom import Node, Template  # noqa: PLC0415
+ 
+         root_source_html = node._source_html if isinstance(node, Node) else None
+         if root_source_html:
+@@ -73,7 +73,7 @@
+         compiled_policy.apply_to(node, errors=errors)
+         return node
+ 
+-    from justhtml.dom import DocumentFragment  # noqa: PLC0415
++    from ln_church_agent._vendor.justhtml.dom import DocumentFragment  # noqa: PLC0415
+ 
+     wrapper = DocumentFragment()
+     wrapper.append_child(node)
+--- a/justhtml/sanitizer/policy.py
++++ b/justhtml/sanitizer/policy.py
+@@ -2,13 +2,15 @@
+ 
+ from __future__ import annotations
+ 
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from collections.abc import Collection, Mapping
+-from dataclasses import dataclass, field
++from dataclasses import field
+ from importlib import import_module
+ from typing import TYPE_CHECKING, Any, cast
+ 
+-from justhtml.core.types import ParseError
+-from justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits
++from ln_church_agent._vendor.justhtml.core.types import ParseError
++from ln_church_agent._vendor.justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits
+ 
+ from .url import (
+     DisallowedTagHandling,
+@@ -117,7 +119,7 @@
+     transforms: tuple[Any, ...]
+ 
+     def apply_to(self, node: Any, *, errors: list[ParseError] | None = None) -> None:
+-        from justhtml.transforms import apply_compiled_transforms  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.transforms import apply_compiled_transforms  # noqa: PLC0415
+ 
+         apply_compiled_transforms(node, self.transforms, errors=errors)
+ 
+@@ -361,7 +363,7 @@
+ 
+ 
+ def _compiled_sanitization_policy_for_policy(policy: SanitizationPolicy) -> CompiledSanitizationPolicy:
+-    from justhtml.transforms import Sanitize, compile_transforms  # noqa: PLC0415
++    from ln_church_agent._vendor.justhtml.transforms import Sanitize, compile_transforms  # noqa: PLC0415
+ 
+     signature = _sanitization_policy_signature(policy)
+     compiled_policy = policy._compiled_sanitize_policy
+--- a/justhtml/sanitizer/policy_defaults.py
++++ b/justhtml/sanitizer/policy_defaults.py
+@@ -4,7 +4,7 @@
+ 
+ from types import MappingProxyType
+ 
+-from justhtml.sanitizer.url import UrlPolicy, UrlRule
++from ln_church_agent._vendor.justhtml.sanitizer.url import UrlPolicy, UrlRule
+ 
+ 
+ def _seal_url_policy(url_policy: UrlPolicy) -> None:
+@@ -22,7 +22,7 @@
+ 
+ 
+ def _seal_default_policy(policy: object) -> None:
+-    from justhtml.sanitizer.policy import SanitizationPolicy  # noqa: PLC0415
++    from ln_church_agent._vendor.justhtml.sanitizer.policy import SanitizationPolicy  # noqa: PLC0415
+ 
+     if not isinstance(policy, SanitizationPolicy):
+         raise TypeError("policy must be a SanitizationPolicy")
+@@ -39,7 +39,7 @@
+ 
+ 
+ def _build_default_policies() -> tuple[object, frozenset[str], object]:
+-    from justhtml.sanitizer.policy import SanitizationPolicy  # noqa: PLC0415
++    from ln_church_agent._vendor.justhtml.sanitizer.policy import SanitizationPolicy  # noqa: PLC0415
+ 
+     default_policy = SanitizationPolicy(
+         allowed_tags=[
+--- a/justhtml/sanitizer/rawtext.py
++++ b/justhtml/sanitizer/rawtext.py
+@@ -4,8 +4,8 @@
+ 
+ from typing import Any
+ 
+-from justhtml.core.rawtext import neutralize_rawtext_end_tag_sequences
+-from justhtml.core.types import ParseError
++from ln_church_agent._vendor.justhtml.core.rawtext import neutralize_rawtext_end_tag_sequences
++from ln_church_agent._vendor.justhtml.core.types import ParseError
+ 
+ from .css import _css_value_may_load_external_resource
+ 
+@@ -44,7 +44,7 @@
+     policy: Any,
+     errors: list[ParseError] | None,
+ ) -> None:
+-    from justhtml.dom import Template  # noqa: PLC0415
++    from ln_church_agent._vendor.justhtml.dom import Template  # noqa: PLC0415
+ 
+     stack: list[Any] = [node]
+ 
+--- a/justhtml/sanitizer/url/policy.py
++++ b/justhtml/sanitizer/url/policy.py
+@@ -2,11 +2,14 @@
+ 
+ from __future__ import annotations
+ 
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from collections.abc import Callable, Collection, Mapping
+-from dataclasses import dataclass, field
++from dataclasses import field
+ from typing import Any, Literal
+ 
+-UrlFilter = Callable[[str, str, str], str | None]
++UrlFilter = _typing.Callable[[str, str, str], _typing.Union[str, None]]
+ 
+ 
+ class UnsafeHtmlError(ValueError):
+@@ -32,7 +35,7 @@
+         proxy_param = str(self.param)
+         if not proxy_param:
+             raise ValueError("UrlProxy.param must be a non-empty string")
+-        from justhtml.sanitizer.url import _validate_proxy_url  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.sanitizer.url import _validate_proxy_url  # noqa: PLC0415
+ 
+         _validate_proxy_url(proxy_url, proxy_param)
+         object.__setattr__(self, "url", proxy_url)
+--- a/justhtml/sanitizer/url/runtime.py
++++ b/justhtml/sanitizer/url/runtime.py
+@@ -1,6 +1,8 @@
+ """URL sanitization runtime helpers."""
+ 
+ from __future__ import annotations
++
++import typing as _typing
+ 
+ import re
+ from collections.abc import Callable, Collection, Mapping
+@@ -17,7 +19,7 @@
+ UrlPolicy = _url_policy.UrlPolicy
+ UrlProxy = _url_policy.UrlProxy
+ UrlRule = _url_policy.UrlRule
+-UrlSinkHandler = Callable[..., str | None]
++UrlSinkHandler = _typing.Callable[..., _typing.Union[str, None]]
+ 
+ _URL_PROXY_RULE = UrlRule(
+     resolve_protocol_relative=None,
+@@ -60,7 +62,7 @@
+ 
+ def _prepare_standalone_url_value_for_checking(value: str) -> str:
+     if "&" in value:
+-        from justhtml.core.entities import decode_entities_in_text  # noqa: PLC0415
++        from ln_church_agent._vendor.justhtml.core.entities import decode_entities_in_text  # noqa: PLC0415
+ 
+         value = decode_entities_in_text(value, in_attribute=True)
+     return _strip_invisible_unicode(value)
+--- a/justhtml/sanitizer/url/spec.py
++++ b/justhtml/sanitizer/url/spec.py
+@@ -2,7 +2,8 @@
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from typing import TYPE_CHECKING, Literal
+ 
+ if TYPE_CHECKING:
+--- a/justhtml/selector/core.py
++++ b/justhtml/selector/core.py
+@@ -3,14 +3,17 @@
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass, field
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
++from dataclasses import field
+ from functools import lru_cache
+ from typing import TYPE_CHECKING, Any
+ 
+-from justhtml.core.constants import HTML_SPACE_CHARACTERS
++from ln_church_agent._vendor.justhtml.core.constants import HTML_SPACE_CHARACTERS
+ 
+ if TYPE_CHECKING:
+-    from justhtml.dom import NodeType, QueryMatch
++    from ln_church_agent._vendor.justhtml.dom import NodeType, QueryMatch
+ 
+ 
+ class SelectorError(ValueError):
+@@ -431,7 +434,7 @@
+ 
+ 
+ # Type alias for parsed selectors
+-ParsedSelector = ComplexSelector | SelectorList
++ParsedSelector = _typing.Union[ComplexSelector, SelectorList]
+ 
+ 
+ class SelectorParser:
+--- a/justhtml/serializer/html.py
++++ b/justhtml/serializer/html.py
+@@ -3,6 +3,8 @@
+ # ruff: noqa: PERF401
+ 
+ from __future__ import annotations
++
++import typing as _typing
+ 
+ import re
+ from enum import Enum
+@@ -10,7 +12,7 @@
+ from typing import TYPE_CHECKING, Any
+ from urllib.parse import quote as url_quote
+ 
+-from justhtml.core.constants import (
++from ln_church_agent._vendor.justhtml.core.constants import (
+     FOREIGN_ATTRIBUTE_ADJUSTMENTS,
+     HTML_FORMATTING_SPACE_CHARACTERS,
+     HTML_SPACE_CHARACTERS,
+@@ -18,12 +20,12 @@
+     VOID_ELEMENTS,
+     WHITESPACE_PRESERVING_ELEMENTS,
+ )
+-from justhtml.core.rawtext import neutralize_rawtext_end_tag_sequences
++from ln_church_agent._vendor.justhtml.core.rawtext import neutralize_rawtext_end_tag_sequences
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Collection
+ 
+-    from justhtml.dom import NodeType
++    from ln_church_agent._vendor.justhtml.dom import NodeType
+ 
+ # Matches characters that prevent an attribute value from being unquoted.
+ # Note: This matches the logic of the previous loop-based implementation.
+@@ -808,7 +810,7 @@
+     return True
+ 
+ 
+-_HTML_FRAGMENT = str | tuple["_HTML_FRAGMENT", ...]
++_HTML_FRAGMENT = _typing.Union[str, _typing.Tuple['_HTML_FRAGMENT', ...]]
+ _MAX_PRETTY_INDENT_DEPTH = 64
+ 
+ 
+--- a/justhtml/serializer/markdown.py
++++ b/justhtml/serializer/markdown.py
+@@ -5,11 +5,11 @@
+ from typing import TYPE_CHECKING, Any
+ from urllib.parse import quote
+ 
+-from justhtml.core.constants import HTML_SPACE_CHARACTERS
+-from justhtml.dom import Element
++from ln_church_agent._vendor.justhtml.core.constants import HTML_SPACE_CHARACTERS
++from ln_church_agent._vendor.justhtml.dom import Element
+ 
+ if TYPE_CHECKING:
+-    from justhtml.dom import NodeType
++    from ln_church_agent._vendor.justhtml.dom import NodeType
+ 
+ 
+ def _markdown_escape_text(s: str) -> str:
+--- a/justhtml/transforms/__init__.py
++++ b/justhtml/transforms/__init__.py
+@@ -12,20 +12,22 @@
+ 
+ from __future__ import annotations
+ 
++import typing as _typing
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from contextvars import ContextVar
+-from dataclasses import dataclass
+ from importlib import import_module
+ from typing import TYPE_CHECKING, Literal, cast
+ 
+-from justhtml.core.constants import HTML_FORMATTING_SPACE_CHARACTERS, HTML_SPACE_CHARACTERS
+-from justhtml.core.types import ParseError
+-from justhtml.sanitizer import (
++from ln_church_agent._vendor.justhtml.core.constants import HTML_FORMATTING_SPACE_CHARACTERS, HTML_SPACE_CHARACTERS
++from ln_church_agent._vendor.justhtml.core.types import ParseError
++from ln_church_agent._vendor.justhtml.sanitizer import (
+     SanitizationPolicy,
+ )
+-from justhtml.sanitizer import (
++from ln_church_agent._vendor.justhtml.sanitizer import (
+     UrlPolicy as _UrlPolicy,
+ )
+-from justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits
++from ln_church_agent._vendor.justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits
+ 
+ from .linkify import CompiledLinkifyTransform
+ from .spec import (
+@@ -58,8 +60,8 @@
+     from collections.abc import Callable
+     from typing import Any, Protocol
+ 
+-    from justhtml.dom import Node
+-    from justhtml.selector import ParsedSelector
++    from ln_church_agent._vendor.justhtml.dom import Node
++    from ln_church_agent._vendor.justhtml.selector import ParsedSelector
+ 
+     class NodeCallback(Protocol):
+         def __call__(self, node: Node) -> None: ...
+@@ -201,32 +203,11 @@
+ 
+ 
+ Transform = (
+-    SetAttrs
+-    | Drop
+-    | Unwrap
+-    | Escape
+-    | Empty
+-    | Edit
+-    | EditDocument
+-    | Decide
+-    | EditAttrs
+-    | Linkify
+-    | CollapseWhitespace
+-    | PruneEmpty
+-    | Sanitize
+-    | HardenRawtext
+-    | DropComments
+-    | DropDoctype
+-    | DropForeignNamespaces
+-    | DropAttrs
+-    | AllowlistAttrs
+-    | DropUrlAttrs
+-    | AllowStyleAttrs
+-    | MergeAttrs
++    _typing.Union[SetAttrs, Drop, Unwrap, Escape, Empty, Edit, EditDocument, Decide, EditAttrs, Linkify, CollapseWhitespace, PruneEmpty, Sanitize, HardenRawtext, DropComments, DropDoctype, DropForeignNamespaces, DropAttrs, AllowlistAttrs, DropUrlAttrs, AllowStyleAttrs, MergeAttrs]
+ )
+ 
+ 
+-TransformSpec = Transform | Stage
++TransformSpec = _typing.Union[Transform, Stage]
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -425,25 +406,7 @@
+ 
+ 
+ CompiledTransform = (
+-    _CompiledSelectorTransform
+-    | _CompiledDecideTransform
+-    | _CompiledDecideChain
+-    | _CompiledDecideElementsChain
+-    | _CompiledDropForeignNamespacesTransform
+-    | _CompiledEditAttrsTransform
+-    | _CompiledEditAttrsChain
+-    | _CompiledStripInvisibleUnicodeTransform
+-    | CompiledLinkifyTransform
+-    | _CompiledCollapseWhitespaceTransform
+-    | _CompiledPruneEmptyTransform
+-    | _CompiledEditDocumentTransform
+-    | _CompiledDropCommentsTransform
+-    | _CompiledDropDoctypeTransform
+-    | _CompiledMergeAttrTokensTransform
+-    | _CompiledStageHookTransform
+-    | _CompiledStageBoundary
+-    | _CompiledHardenRawtextTransform
+-    | _CompiledSelectorLimitsTransform
++    _typing.Union[_CompiledSelectorTransform, _CompiledDecideTransform, _CompiledDecideChain, _CompiledDecideElementsChain, _CompiledDropForeignNamespacesTransform, _CompiledEditAttrsTransform, _CompiledEditAttrsChain, _CompiledStripInvisibleUnicodeTransform, CompiledLinkifyTransform, _CompiledCollapseWhitespaceTransform, _CompiledPruneEmptyTransform, _CompiledEditDocumentTransform, _CompiledDropCommentsTransform, _CompiledDropDoctypeTransform, _CompiledMergeAttrTokensTransform, _CompiledStageHookTransform, _CompiledStageBoundary, _CompiledHardenRawtextTransform, _CompiledSelectorLimitsTransform]
+ )
+ 
+ 
+--- a/justhtml/transforms/compile.py
++++ b/justhtml/transforms/compile.py
+@@ -8,10 +8,10 @@
+ 
+ from typing import TYPE_CHECKING, Any, Literal, cast
+ 
+-from justhtml.sanitizer import DEFAULT_POLICY, SanitizationPolicy, UrlPolicy, _sanitize_inline_style
+-from justhtml.sanitizer.rawtext import _RAWTEXT_SERIALIZATION_ELEMENTS
+-from justhtml.sanitizer.url import _URL_SINK_ATTRS, _sanitize_url_sink_value, _url_sink_kind_for_attr
+-from justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits, parse_selector
++from ln_church_agent._vendor.justhtml.sanitizer import DEFAULT_POLICY, SanitizationPolicy, UrlPolicy, _sanitize_inline_style
++from ln_church_agent._vendor.justhtml.sanitizer.rawtext import _RAWTEXT_SERIALIZATION_ELEMENTS
++from ln_church_agent._vendor.justhtml.sanitizer.url import _URL_SINK_ATTRS, _sanitize_url_sink_value, _url_sink_kind_for_attr
++from ln_church_agent._vendor.justhtml.selector import DEFAULT_SELECTOR_LIMITS, SelectorLimits, parse_selector
+ 
+ from . import (
+     CompiledTransform,
+@@ -69,8 +69,8 @@
+     from collections.abc import Callable
+     from typing import Protocol
+ 
+-    from justhtml.dom import Node
+-    from justhtml.selector import ParsedSelector
++    from ln_church_agent._vendor.justhtml.dom import Node
++    from ln_church_agent._vendor.justhtml.selector import ParsedSelector
+ 
+     class NodeCallback(Protocol):
+         def __call__(self, node: Node) -> None: ...
+--- a/justhtml/transforms/linkify.py
++++ b/justhtml/transforms/linkify.py
+@@ -2,17 +2,18 @@
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from typing import TYPE_CHECKING, Any, Literal
+ 
+-from justhtml.dom import Element, Text
++from ln_church_agent._vendor.justhtml.dom import Element, Text
+ 
+ from .linkify_core import LinkifyConfig, find_links_with_config
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Callable
+ 
+-    from justhtml.dom import Node
++    from ln_church_agent._vendor.justhtml.dom import Node
+ 
+     from .spec import Linkify
+ 
+--- a/justhtml/transforms/linkify_core.py
++++ b/justhtml/transforms/linkify_core.py
+@@ -11,8 +11,9 @@
+ 
+ from __future__ import annotations
+ 
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ import re
+-from dataclasses import dataclass
+ from typing import Final
+ 
+ 
+--- a/justhtml/transforms/runtime.py
++++ b/justhtml/transforms/runtime.py
+@@ -8,11 +8,11 @@
+ 
+ from typing import TYPE_CHECKING, Any, cast
+ 
+-from justhtml.core.constants import HTML_SPACE_CHARACTERS, VOID_ELEMENTS
+-from justhtml.dom import Element, Node, Template, Text
+-from justhtml.sanitizer import _sanitize_rawtext_element_contents, _strip_invisible_unicode
+-from justhtml.selector import SelectorMatcher, SelectorQueryContext
+-from justhtml.serializer import serialize_end_tag, serialize_start_tag
++from ln_church_agent._vendor.justhtml.core.constants import HTML_SPACE_CHARACTERS, VOID_ELEMENTS
++from ln_church_agent._vendor.justhtml.dom import Element, Node, Template, Text
++from ln_church_agent._vendor.justhtml.sanitizer import _sanitize_rawtext_element_contents, _strip_invisible_unicode
++from ln_church_agent._vendor.justhtml.selector import SelectorMatcher, SelectorQueryContext
++from ln_church_agent._vendor.justhtml.serializer import serialize_end_tag, serialize_start_tag
+ 
+ from . import (
+     _ERROR_SINK,
+@@ -43,7 +43,7 @@
+ from .spec import DecideAction
+ 
+ if TYPE_CHECKING:
+-    from justhtml.core.types import ParseError
++    from ln_church_agent._vendor.justhtml.core.types import ParseError
+ 
+ # Transform kinds whose runtime handling only ever assigns `node.attrs`, never
+ # adds/removes/reorders nodes in any `children` list. This is the exhaustive
+--- a/justhtml/transforms/spec.py
++++ b/justhtml/transforms/spec.py
+@@ -5,23 +5,24 @@
+ The transform compiler/runtime (compile_transforms/apply_compiled_transforms)
+ remains in `justhtml.transforms` to preserve the public import paths:
+ 
+-  from justhtml.transforms import Drop, compile_transforms, apply_compiled_transforms
++  from ln_church_agent._vendor.justhtml.transforms import Drop, compile_transforms, apply_compiled_transforms
+ """
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from ln_church_agent._vendor.justhtml._compat import dataclass
++
+ from enum import Enum
+ from typing import TYPE_CHECKING, ClassVar
+ 
+-from justhtml.core.constants import WHITESPACE_PRESERVING_ELEMENTS, WHITESPACE_TRIMMING_BLOCK_ELEMENTS
++from ln_church_agent._vendor.justhtml.core.constants import WHITESPACE_PRESERVING_ELEMENTS, WHITESPACE_TRIMMING_BLOCK_ELEMENTS
+ 
+ if TYPE_CHECKING:
+     from collections.abc import Callable, Collection
+     from typing import Any, Protocol
+ 
+-    from justhtml.dom import Node
+-    from justhtml.sanitizer import SanitizationPolicy, UrlPolicy
++    from ln_church_agent._vendor.justhtml.dom import Node
++    from ln_church_agent._vendor.justhtml.sanitizer import SanitizationPolicy, UrlPolicy
+ 
+     class NodeCallback(Protocol):
+         def __call__(self, node: Node) -> None: ...
+--- /dev/null
++++ b/justhtml/_compat.py
+@@ -0,0 +1,35 @@
++"""Python 3.8 support for the isolated JustHTML copy, without parser rules."""
++
++from dataclasses import dataclass as _dataclass
++from itertools import zip_longest
++import sys
++import typing
++
++
++TypeAlias = getattr(typing, "TypeAlias", object)
++
++
++def dataclass(_cls=None, **kwargs):
++    """Retain upstream dataclasses; slots are unavailable before Python 3.10."""
++    if sys.version_info < (3, 10):
++        kwargs.pop("slots", None)
++    if _cls is None:
++        return _dataclass(**kwargs)
++    return _dataclass(_cls, **kwargs)
++
++
++def remove_prefix(value, prefix):
++    return value[len(prefix):] if value.startswith(prefix) else value
++
++
++def remove_suffix(value, suffix):
++    return value[:-len(suffix)] if suffix and value.endswith(suffix) else value
++
++
++def zip_strict(*iterables):
++    """Preserve strict zip's equal-length requirement on Python 3.8 and 3.9."""
++    missing = object()
++    for row in zip_longest(*iterables, fillvalue=missing):
++        if any(value is missing for value in row):
++            raise ValueError("zip() arguments have different lengths")
++        yield row
