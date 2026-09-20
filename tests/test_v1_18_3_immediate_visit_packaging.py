@@ -156,7 +156,7 @@ def test_distribution_metadata_keeps_python_extras_entry_points(monkeypatch):
     monkeypatch.setattr(setuptools, "setup", lambda **values: captured.update(values))
     monkeypatch.chdir(ROOT)
     runpy.run_path(str(ROOT / "setup.py"), run_name="__main__")
-    assert captured["version"] == "1.18.3"
+    assert captured["version"] == "1.18.4"
     assert captured["python_requires"] == ">=3.8.1"
     assert captured["entry_points"] == {"console_scripts": [
         "ln-church-agent=ln_church_agent.cli:main",
@@ -179,5 +179,5 @@ def test_distribution_metadata_keeps_python_extras_entry_points(monkeypatch):
     }
     assert "ln_church_agent._vendor.justhtml" in captured["packages"]
     manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.18.3"
-    assert manifest["packages"][0]["version"] == "1.18.3"
+    assert manifest["version"] == "1.18.4"
+    assert manifest["packages"][0]["version"] == "1.18.4"
