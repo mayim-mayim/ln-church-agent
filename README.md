@@ -253,7 +253,7 @@ client = AgentTaskV2Client()
 tasks = client.list_tasks()
 ```
 
-The canonical fixture ships at `ln_church_agent/contracts/v18-scheduled-http-get-batch-contract-v1.json` with SHA-256 `09eb478e30b56fec6efb462cfb43733b1e907bb247943f8fe6336af73d362785`. Wheels and sdists must contain the exact bytes and final LF. No dependency is added for this feature.
+The canonical fixture ships at `ln_church_agent/contracts/v18-scheduled-http-get-batch-contract-v1.json` with SHA-256 `51b137a3d27eeb8a8cd69341cbbfd09e38309b3da4adf569e6c0cea2f56a8c14`. Wheels and sdists must contain the exact bytes and final LF. No dependency is added for this feature.
 
 Linux candidate evidence covers the deterministic suite, fixture parity, v1 regression, secret scan, journal crash matrix, and an exact fixture-driven 42-row network matrix: every one of the 21 required vectors runs through `ControlledHTTPSConnector.fetch` for both SDK-owned Manifest and target scopes with resolver/connect/send/read counts. It also covers package identity. Native macOS and native Windows remain separate qualification lanes for their filesystem locking and durability, DNS, socket-peer, and TLS behavior; mocks do not qualify a native platform. Native Windows qualification tests closed-handle-before-replace behavior and does not require PowerShell 5.1. WSL2 is Linux evidence when the SDK runtime is Linux.
 

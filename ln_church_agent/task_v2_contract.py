@@ -30,7 +30,7 @@ from .task_contract import (
 
 CONTRACT_RESOURCE_PATH = "contracts/v18-scheduled-http-get-batch-contract-v1.json"
 CONTRACT_FIXTURE_SHA256 = (
-    "09eb478e30b56fec6efb462cfb43733b1e907bb247943f8fe6336af73d362785"
+    "b703329585b6e649acd52b63ac5f5a6cd889353dcd1e1508a8a0b782d71f80be"
 )
 PUBLIC_API_ORIGIN = "https://kari.mayim-mayim.com"
 PUBLIC_API_HOST = "kari.mayim-mayim.com"

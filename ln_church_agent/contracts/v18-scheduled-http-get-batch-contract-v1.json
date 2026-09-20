@@ -382,14 +382,15 @@
         "PADDED",
         "TRUNCATED",
         "ALTERNATE_TEXT_ENCODING"
-      ]
+      ],
+      "shared_across_legacy_campaign_and_immediate_visit": true
     },
     "global_authorization_key": "SHA256_LOWERCASE_HEX_OF_RFC8785_JCS_ARRAY_[DOMAIN,EXACT_NETWORK,CANONICAL_ASSET,CANONICAL_AUTHORIZER,CANONICAL_NONCE]",
     "global_authorization_key_domain": "ln-church/x402-eip3009/v1",
     "settlement_dispatch": "ONE_DURABLE_FENCE_THEN_NO_AUTOMATIC_REDISPATCH",
     "origin_authorization_revalidate_active_unexpired_before_dispatch_fence": true,
     "origin_authorization_revalidate_same_id_version_active_unexpired_at_business_commit": true,
-    "origin_revoked_or_expired_before_commit": "NEVER_PUBLISH_CONFIRMED_PAYMENT_USES_TECHNICAL_REVERSAL",
+    "origin_revoked_or_expired_before_commit": "NEVER_PUBLISH_TECHNICAL_REVERSAL_REQUIRES_SAFE_BOUND_CHARGE",
     "admission_reservation_binding": {
       "digest_covers": [
         "RESERVATION_ID",
@@ -405,11 +406,11 @@
       "provider_source": "INDEPENDENT_BASE_RPC",
       "provider_must_be_distinct_from_facilitator": true,
       "required_chain_id": 8453,
-      "required_block_tag": "safe",
+      "required_block_tag": "latest",
       "allow_latest_fallback": false,
       "require_successful_receipt": true,
       "require_receipt_block_hash_canonical_at_height": true,
-      "require_receipt_block_ancestor_of_or_equal_safe_head": true,
+      "require_receipt_block_ancestor_of_or_equal_safe_head": false,
       "require_exact_asset_contract": true,
       "require_decoded_eip3009_call_args": [
         "from",
@@ -424,22 +425,12 @@
       "batched_or_wrapped_call_requires_independent_trace_and_log_index_correlation": true,
       "same_transaction_log_cooccurrence_is_sufficient": false,
       "unused_after_expiry_requires_safe_block_timestamp_gte_valid_before": true,
-      "require_global_authorization_binding": true
+      "require_global_authorization_binding": true,
+      "purpose": "OFFER_PUBLICATION_ONLY",
+      "require_complete_sealed_l2_block": true,
+      "allow_pending_or_flashblock_preconfirmation": false,
+      "require_receipt_block_ancestor_of_or_equal_latest_head": true
     },
-    "readback_offsets_minutes": [
-      0,
-      1,
-      2,
-      5,
-      10,
-      30,
-      60,
-      120,
-      240,
-      480,
-      720,
-      1440
-    ],
     "unknown_exhausted_is_failure": false,
     "late_authoritative_evidence_retained_after_automation_expiry": true,
     "failure_requires_positive_authoritative_chain_evidence": true,
@@ -472,7 +463,6 @@
     "paid_but_unpublishable_policy": "APPROVED_100_PERCENT_TECHNICAL_REGISTRATION_REVERSAL",
     "transient_commit_failure_state": "COMMIT_DUE",
     "commit_blocked_requires_immutable_precondition_failure_or_explicit_terminal_operator_decision": true,
-    "commit_blocked_transaction_sets_publication_prohibited_and_creates_reversal": true,
     "offer_commit_requires_publication_prohibited_absent": true,
     "technical_reversal_mutually_exclusive_with_promotional_refund": true,
     "maximum_authorizations_per_registration_intent": 1,
@@ -522,7 +512,122 @@
     "required_revert_replay_vectors": [
       "A_REVERTS_A_REMAINS_SPENDABLE_B_SAME_INTENT_BIND_AND_DISPATCH_REJECTED_A_LATE_SUCCESS_MAX_ONE_CHARGE_AND_OFFER",
       "A_REVERTS_SAFE_EXPIRES_UNUSED_OLD_INTENT_TERMINATES_NO_REBIND_LATE_A_REPLAY_REVERTS_ZERO_CHARGE"
-    ]
+    ],
+    "technical_reversal_accepted_finality": {
+      "exact_payment_checks": "SAME_INDEPENDENT_PROVIDER_CHAIN_ASSET_CALL_EVENT_TRACE_AND_GLOBAL_BINDING_CHECKS_AS_ACCEPTED_FINALITY",
+      "required_block_tag": "safe",
+      "allow_latest_fallback": false,
+      "require_successful_receipt": true,
+      "require_receipt_block_hash_canonical_at_height": true,
+      "require_receipt_block_ancestor_of_or_equal_safe_head": true,
+      "required_before": "UNPUBLISHED_TECHNICAL_REVERSAL_ENTITLEMENT_CREATION",
+      "outgoing_transaction_confirmation_policy": "UNCHANGED"
+    },
+    "publication_receipt_confirmation_states": {
+      "L2_RECEIPT_CONFIRMED": "FULL_CANONICAL_L2_RECEIPT_AND_EXACT_PAYMENT_BINDINGS_CONFIRMED",
+      "SAFE_CONFIRMED": "GENUINELY_SAFE_EVIDENCE_ONLY_INCLUDING_EXISTING_HISTORICAL_RECEIPTS"
+    },
+    "confirmed_payment_state_implies_safe": false,
+    "registration_confirmation_start": "FINITE_INITIAL_SECONDS_PHASE_FROM_ONCE_ONLY_SETTLEMENT_RESULT_OR_BOUND_TRANSACTION_REFERENCE_ORIGIN",
+    "registration_status_get_has_side_effects": false,
+    "commit_blocked_transaction_sets_publication_prohibited_and_terminalizes_capacity_hold": true,
+    "commit_blocked_transaction_creates_reversal_if_safe_evidence_present": true,
+    "commit_blocked_without_safe_evidence": "PUBLICATION_PROHIBITED_EXISTING_BOUNDED_READBACK_ONLY_NO_REVERSAL_ENTITLEMENT_YET",
+    "technical_reversal_entitlement_requires_safe_bound_charge": true,
+    "post_publication_incoming_payment_loss": "LN_CHURCH_BEAR_LOSS_KEEP_NORMAL_OFFER_CLAIM_REWARD_AND_CANCELLATION_REFUND_BEHAVIOR_NO_SPECIAL_RESPONSE",
+    "post_publication_loss_monitoring_or_new_amount_cap_required": false,
+    "reorg_releases_global_authorization_binding": false,
+    "authorization_expiry_invalidates_independently_confirmed_charge": false,
+    "readback_cadence_version": "PROVIDER_RESULT_SECONDS_V2",
+    "readback_offsets_seconds": [
+      0,
+      2,
+      5,
+      10,
+      60,
+      120,
+      300,
+      1800,
+      7200,
+      21600,
+      43200,
+      82800
+    ],
+    "readback_timing": {
+      "authority": "docs/V18_Scheduled_Agent_Concurrency_Campaign_Architecture_20260815.md#831-finite-cadence-and-normal-response-timing--2026-09-19",
+      "offset_origin": "F_FIRST_DURABLE_INITIAL_SETTLEMENT_OUTCOME_OR_BOUND_TRANSACTION_REFERENCE",
+      "ambiguity_origin": "F_ON_BOUNDED_PROVIDER_PATH_ENDING_FAILURE_OR_UNKNOWN_OR_FIRST_AUTHORIZED_RECOVERY_AFTER_PROCESS_LOSS",
+      "origin_written_once": true,
+      "deadline_origin": "D_EXISTING_INITIAL_SETTLEMENT_DISPATCH_FENCE",
+      "automatic_start_horizon_seconds": 86400,
+      "automatic_start_comparator": "START_STRICTLY_BEFORE_D_PLUS_HORIZON",
+      "maximum_allocations": 12,
+      "initial_indexes": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "later_indexes": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "consume_allocation": "AT_ATOMIC_EXCLUSIVE_ACQUISITION_BEFORE_FIRST_RPC",
+      "inline_worker_duplicate_delivery": "SAME_OPERATION_SAME_BUDGET_EXCLUSIVE_ATTEMPT_AUTHORITY",
+      "crash_refunds_allocation": false,
+      "overdue_policy": "SKIP_EARLIER_DUE_ALLOCATIONS_EXECUTE_ONLY_LATEST_DUE",
+      "skipped_allocations_count_against_budget": true,
+      "minimum_seconds_after_previous_completion_or_authority_expiry": 2,
+      "proof_pass": "FINITE_DISTINCT_REQUIRED_RPC_READS_NO_HIDDEN_POLL_OR_RETRY",
+      "late_started_attempt_completion": "EXISTING_SAME_OPERATION_EVIDENCE_AND_FENCING_RULES",
+      "stop_on": "APPLICABLE_PURPOSE_COMPLETED_NOT_L2_CONFIRMATION_ALONE",
+      "expired_window_means_unpaid": false,
+      "verify_success_or_intermediate_response_starts_origin": false
+    },
+    "legacy_readback_cadence": {
+      "version": "DISPATCH_MINUTES_V1",
+      "applies_to": "ALREADY_DISPATCHED_OPERATION_WITH_OLD_OR_ABSENT_V2_MARKER",
+      "offset_origin": "EXISTING_DISPATCH_TIME",
+      "offsets_minutes": [
+        0,
+        1,
+        2,
+        5,
+        10,
+        30,
+        60,
+        120,
+        240,
+        480,
+        720,
+        1440
+      ],
+      "preserve_consumed_skipped_counts_and_existing_deadline_semantics": true,
+      "migrate_or_reset": false
+    },
+    "registration_normal_response": {
+      "all_three_profiles": true,
+      "transport": "ORIGINAL_AUTHENTICATED_PAID_REQUEST",
+      "initial_wait_seconds": 15,
+      "wait_origin": "F",
+      "success": "RETURN_EXISTING_PROFILE_SUCCESS_IMMEDIATELY_AFTER_COMMITTED",
+      "first_missing_receipt_ends_normal_wait": false,
+      "normal_additional_wallet_signature": false,
+      "new_same_page_status_credential": false,
+      "automatic_paid_request_replay": false,
+      "after_initial_window": "EXISTING_PENDING_OR_AMBIGUOUS_RESPONSE_AND_FINITE_SAME_OPERATION_RECOVERY",
+      "end_to_end_healthy_response_budget_must_cover_initial_window_and_delivery": true,
+      "payment_confirmation_sla": false,
+      "wait_deadline_is_business_commit_validity_cutoff": false,
+      "extra_proof_attempt_at_wait_deadline": false,
+      "late_valid_commit": "RETAIN_SAME_TASK_AND_RECOVERABLE_RESULT"
+    }
   },
   "admission": {
     "alpha_spike_envelope_capacity_units": 5000,
@@ -951,7 +1056,10 @@
     },
     "completion_sla": false,
     "failure_changes_offer_state": false,
-    "reference_no_award_creates_refund": false
+    "reference_no_award_creates_refund": false,
+    "original_payment_safe_gate_added_by_registration_amendment": false,
+    "completed_refund_later_lost": "RECIPIENT_BEAR_LOSS_NO_COMPENSATION_OR_NEW_REFUND",
+    "outgoing_confirmation_and_incomplete_operation_recovery": "UNCHANGED"
   },
   "sdk": {
     "journal_key": [
@@ -1067,8 +1175,8 @@
   },
   "legacy_payment_migration": {
     "COMMITTED": "PRESERVE_NO_NEW_SETTLEMENT_OR_OFFER",
-    "SETTLED_INCOMPLETE_ACTIVATION": "IDEMPOTENTLY_COMPLETE_ONLY_EXACT_EXISTING_TASK",
-    "SETTLING": "READBACK_ONLY_SAFE_LATE_SUCCESS_MAY_ACTIVATE_ONLY_EXISTING_BOUND_TASK_FAILURE_UNPUBLISHED_UNKNOWN_QUARANTINED",
+    "SETTLED_INCOMPLETE_ACTIVATION": "INDEPENDENT_PUBLICATION_RECEIPT_REQUIRED_IDEMPOTENTLY_COMPLETE_ONLY_EXACT_EXISTING_TASK",
+    "SETTLING": "READBACK_ONLY_L2_RECEIPT_LATE_SUCCESS_MAY_ACTIVATE_ONLY_EXISTING_BOUND_TASK_SAFE_TERMINAL_FAILURE_UNPUBLISHED_UNKNOWN_QUARANTINED",
     "SETTLE_AMBIGUOUS": "SAME_AS_SETTLING_NO_RESETTLE_NO_NEW_TASK",
     "SETTLE_FAILED": "PRESERVE_TERMINAL_FAILURE_NEVER_PUBLISH",
     "PRIVATE_ORPHAN_WITHOUT_VALID_BINDING": "HIDDEN_BOUNDED_CLEANUP"
@@ -1108,5 +1216,31 @@
     ],
     "previous_approved_bundle_merge": "752d2dd24a263bdd7055876e060c6803648f0524",
     "previous_bundle_reinterpreted": false
+  },
+  "offer_registration_confirmation_amendment": {
+    "id": "offer_registration_confirmation_20260918",
+    "status": "DRAFT_FOR_EXACT_HUMAN_APPROVAL_AND_CANONICALIZATION",
+    "architecture": "docs/Offer_Registration_Confirmation_Architecture_20260918.md",
+    "priority": "BEFORE_V1_18_5",
+    "release_number_assigned": false,
+    "applies_to": [
+      "NEW_V17_OFFER_REGISTRATION",
+      "NEW_SCHEDULED_OFFER_REGISTRATION",
+      "NEW_IMMEDIATE_VISIT_OFFER_REGISTRATION",
+      "SUPPORTED_READBACK_OF_ALREADY_BOUND_UNPUBLISHED_REGISTRATION"
+    ],
+    "historical_published_offer_and_receipt_rewrite_required": false
+  },
+  "offer_registration_timing_correction": {
+    "id": "offer_registration_timing_20260919",
+    "status": "DRAFT_FOR_EXACT_HUMAN_APPROVAL_AND_CANONICALIZATION",
+    "architecture": "docs/Offer_Registration_Confirmation_Architecture_20260918.md",
+    "section": "4.2",
+    "new_cadence_applies_at": "FIRST_NEW_DISPATCH_AFTER_ACTIVATION",
+    "read_recovery_authentication_changed": false,
+    "accepted_finality_changed": false,
+    "technical_reversal_or_terminal_no_charge_evidence_changed": false,
+    "economics_or_loss_allocation_changed": false,
+    "product_source_authority": "NONE"
   }
 }

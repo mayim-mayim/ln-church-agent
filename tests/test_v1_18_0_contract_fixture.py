@@ -16,7 +16,7 @@ FIXTURE_PATH = (
     / "v18-scheduled-http-get-batch-contract-v1.json"
 )
 FIXTURE_SHA256 = (
-    "09eb478e30b56fec6efb462cfb43733b1e907bb247943f8fe6336af73d362785"
+    "b703329585b6e649acd52b63ac5f5a6cd889353dcd1e1508a8a0b782d71f80be"
 )
 
 
@@ -62,6 +62,32 @@ def test_canonical_fixture_is_declared_as_contract_package_data():
     assert package_data == {
         "ln_church_agent": ["contracts/*.json"]
     }
+
+
+def test_offer_publication_uses_complete_l2_and_keeps_safe_for_reversal():
+    from ln_church_agent.task_v2_contract import load_contract_fixture_bytes
+
+    data, fixture = _fixture()
+    assert load_contract_fixture_bytes() == data
+    payment = fixture["payment"]
+    publication = payment["accepted_finality"]
+    assert publication["purpose"] == "OFFER_PUBLICATION_ONLY"
+    assert publication["required_block_tag"] == "latest"
+    assert publication["require_complete_sealed_l2_block"] is True
+    assert publication["allow_pending_or_flashblock_preconfirmation"] is False
+    assert publication["require_receipt_block_ancestor_of_or_equal_latest_head"] is True
+    assert publication["same_transaction_log_cooccurrence_is_sufficient"] is False
+    assert payment["confirmed_payment_state_implies_safe"] is False
+    assert set(payment["publication_receipt_confirmation_states"]) == {
+        "L2_RECEIPT_CONFIRMED", "SAFE_CONFIRMED"
+    }
+    reversal = payment["technical_reversal_accepted_finality"]
+    assert reversal["required_block_tag"] == "safe"
+    assert reversal["allow_latest_fallback"] is False
+    assert reversal["require_receipt_block_ancestor_of_or_equal_safe_head"] is True
+    terminal = payment["terminal_no_bound_charge_evidence"]
+    assert terminal["source"] == "INDEPENDENT_BASE_RPC_CANONICAL_SAFE_CHAIN"
+    assert terminal["safe_expired_unused"]["authorization_state_at_same_safe_block"] is False
 
 
 def test_fixture_network_fetch_policy_leaves_are_exact():
@@ -321,3 +347,24 @@ def test_fixture_at_t_binding_leaf_drives_durable_journal_oracle(tmp_path):
     assert claim_token not in persisted
     assert signed_manifest_url not in persisted
     assert "FIXTURE_BINDING_SECRET_SENTINEL" not in persisted
+
+
+def test_offer_registration_timing_new_and_legacy_cadences_preserve_finality():
+    payment = _fixture()[1]["payment"]
+    assert payment["readback_cadence_version"] == "PROVIDER_RESULT_SECONDS_V2"
+    assert payment["readback_offsets_seconds"] == [0, 2, 5, 10, 60, 120, 300, 1800, 7200, 21600, 43200, 82800]
+    legacy = payment["legacy_readback_cadence"]
+    assert legacy["version"] == "DISPATCH_MINUTES_V1"
+    assert legacy["offsets_minutes"] == [0, 1, 2, 5, 10, 30, 60, 120, 240, 480, 720, 1440]
+    assert legacy["migrate_or_reset"] is False
+    assert payment["accepted_finality"]["required_block_tag"] == "latest"
+    assert payment["technical_reversal_accepted_finality"]["required_block_tag"] == "safe"
+    normal = payment["registration_normal_response"]
+    assert normal["transport"] == "ORIGINAL_AUTHENTICATED_PAID_REQUEST"
+    assert normal["all_three_profiles"] is True
+    assert normal["initial_wait_seconds"] == 15
+    assert normal["first_missing_receipt_ends_normal_wait"] is False
+    assert normal["normal_additional_wallet_signature"] is False
+    assert normal["automatic_paid_request_replay"] is False
+    assert normal["extra_proof_attempt_at_wait_deadline"] is False
+    assert normal["wait_deadline_is_business_commit_validity_cutoff"] is False
