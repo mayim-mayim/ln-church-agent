@@ -261,7 +261,7 @@ policy = PaymentPolicy(
     allowed_hosts=["your-selected-seller.example.com"],
     max_spend_per_tx_usd=0.01, max_spend_per_session_usd=0.02,
 )
-with PaidServiceTrialTaskClient() as tasks:
+with PaidServiceTrialTaskClient(claim_directory=state_dir) as tasks:
     task = tasks.get_task(task_id)
     claim = tasks.claim_task(task.task_id, "your-agent-id", signer.address,
                              idempotency_key=claim_key)
@@ -270,6 +270,43 @@ with PaidServiceTrialTaskClient() as tasks:
     outcome = executor.execute(claim, journal=journal)
     # REPORTED means report acceptance, not reward approval or paid confirmation.
 ```
+
+In 1.18.6, `claim_task` saves the exact request and Idempotency-Key **before**
+the Claim POST and returns only after private credentials and the purchase
+journal are durable. Keep `task_id`, `claim_key`, the selected v1/v2 client
+version and this private directory for the same operation. Recovery makes at
+most one same-key POST per explicit call; it never generates a replacement key.
+
+If `CLAIM_OUTCOME_UNKNOWN` is raised, do not buy or start another Claim. On a
+later explicit attempt, including after a process restart:
+
+```python
+with PaidServiceTrialTaskClient(claim_directory=state_dir) as tasks:
+    claim = tasks.recover_claim(task_id, idempotency_key=claim_key)
+    journal = PaidServiceTrialJournal(state_dir, claim)
+    # Continue the usual executor with the original credential and journal.
+```
+
+Recovery loads the original request; it needs no new agent/address parameters.
+A recovered Claim keeps its original execution ID, acceptance time and deadline.
+An already saved success returns locally without another Claim POST. A confirmed
+4xx rejection is retained and raised again; a new Claim is a separate explicit
+action subject to server participation rules. A transport failure marked
+`request_bytes_sent=False` is definitely unsent only if no earlier attempt was
+unknown. Validation/storage failure returns no usable Claim; repeat the original
+`claim_task` after an initial request-save failure, or `recover_claim` once its
+request record exists. Never delete private state to repair a purchase.
+
+Without `claim_directory`, the default is `~/.ln-church-agent/claims` on POSIX
+or `%LOCALAPPDATA%/ln-church-agent/claims` on Windows; use
+`tasks.claim_directory` for the executor journal too. Request records and
+credential files are private, permission-checked and atomically saved. Do not
+print their contents. Ordinary Claim serializers still omit the token.
+
+Provider Bazaar/discovery metadata is handled by the normal SDK parser in
+1.18.6. No custom HTTP adapter is needed. Economic/domain/timeout/known alias
+and fixed-request checks remain in force; metadata is never echoed in accepted
+payment requirements or added to canonical identities.
 
 Linux retains Tier 1 support. Use the existing private claims directory convention
 under `%LOCALAPPDATA%/ln-church-agent/claims` on Windows; no new Windows support
@@ -280,7 +317,7 @@ have happened, reopen it and recover the saved report:
 claim = PaidServiceTrialJournal.load_claim(state_dir, task_id, execution_id)
 journal = PaidServiceTrialJournal(state_dir, claim)
 report = journal.load_report()
-with PaidServiceTrialTaskClient() as tasks:
+with PaidServiceTrialTaskClient(claim_directory=state_dir) as tasks:
     if report is not None:
         result = tasks.recover_completion(claim, report, journal=journal)
         # A later transaction locator supplements this same identity:

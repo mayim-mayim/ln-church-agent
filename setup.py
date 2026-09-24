@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.5",
+    version="1.18.6",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     package_data={
         "ln_church_agent": [

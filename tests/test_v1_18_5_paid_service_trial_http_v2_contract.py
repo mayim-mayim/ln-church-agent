@@ -152,7 +152,7 @@ class V2TaskTransport:
         return status_for_v2(self.accepted)
 
 
-def test_default_v2_and_shared_claim_request(wire_v2):
+def test_default_v2_and_shared_claim_request(wire_v2,tmp_path):
     wire=wire_v2;seen=[]
     def exchange(method,path,query,headers,body,timeout):
         seen.append((method,path,query,headers,body))
@@ -160,7 +160,7 @@ def test_default_v2_and_shared_claim_request(wire_v2):
         if path.endswith('/claim'):value=wire.claim
         if path=='/api/agent/tasks':value={'schema_version':'ln_church.agent_task_page.paid_service_trial.v2','tasks':[wire.task],'next_cursor':None}
         return PaidServiceTrialRawResponse(200,{},json.dumps(value).encode())
-    client=PaidServiceTrialTaskClient(transport=PaidServiceTrialTransport(exchange=exchange))
+    client=PaidServiceTrialTaskClient(transport=PaidServiceTrialTransport(exchange=exchange),claim_directory=tmp_path)
     assert client.version=='v2'
     client.list_tasks();client.get_task(wire.task['task_id']);claim=client.claim_task(wire.task['task_id'],'agent',wire.signer.address,idempotency_key='claim')
     assert seen[0][2]=='task_type=paid_service_trial.v2&task_schema_version=ln_church.agent_task.paid_service_trial.v2&limit=25'

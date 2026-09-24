@@ -128,6 +128,58 @@ class PaidServiceTrialHTTPS:
                     except Exception:pass
 
 
+def _validate_extensions(value: Any, requirements: dict, request: Any=None) -> None:
+    """Discard descriptive extension data only after checking known semantics.
+
+    JSON schemas/examples and HTTP input data are descriptions, not payment
+    condition containers. Known payment fields in extension info/parameters/
+    requirements/domain remain binding and unsupported rails remain rejected.
+    """
+    if type(value) is not dict:
+        raise PaidServiceTrialTermsError('invalid_payment_required')
+    fields={'scheme','network','asset','amount','payTo','maxTimeoutSeconds',
+        'chainId','chain_id','maxAmountRequired','recipient','destination',
+        'tokenAddress','token_address','contract','authorization_method',
+        'x402_version','x402Version','assetTransferMethod'}
+    method=request['method'] if request is not None else 'GET'
+    def check(container: dict) -> None:
+        known={k:v for k,v in container.items() if k in fields}
+        if known:
+            _v2_condition(dict(requirements,parameters=known))
+        if 'method' in container and container['method']!=method:
+            raise PaidServiceTrialTermsError('conflicting_payment_terms')
+        if 'domain' in container:
+            domain=container['domain']
+            if type(domain) is not dict:
+                raise PaidServiceTrialTermsError('invalid_payment_required')
+            expected={'name':requirements.get('extra',{}).get('name','USD Coin'),
+                'version':requirements.get('extra',{}).get('version','2')}
+            for k,v in expected.items():
+                if k in domain and domain[k]!=v:
+                    raise PaidServiceTrialTermsError('conflicting_payment_terms')
+            if 'verifyingContract' in domain and c.address(domain['verifyingContract'])!=requirements['asset']:
+                raise PaidServiceTrialTermsError('conflicting_payment_terms')
+            check(domain)
+        for key,item in container.items():
+            if ('permit' in key.lower() or '7710' in key or key in {'authorization','settlement','paymentRequirements'}):
+                raise PaidServiceTrialTermsError('unsupported_payment_profile')
+            if key in {'info','input','parameters','requirements','extra'}:
+                if type(item) is not dict:
+                    raise PaidServiceTrialTermsError('invalid_payment_required')
+                if key=='extra':
+                    for field,default in (('name','USD Coin'),('version','2')):
+                        if field in item and item[field]!=requirements.get('extra',{}).get(field,default):
+                            raise PaidServiceTrialTermsError('conflicting_payment_terms')
+                check(item)
+    check(value)
+    for name,data in value.items():
+        if type(data) is not dict:
+            raise PaidServiceTrialTermsError('invalid_payment_required')
+        if any(x in name.lower() for x in ('permit','7710','payment','settlement','authorization')):
+            raise PaidServiceTrialTermsError('unsupported_payment_profile')
+        check(data)
+
+
 def normalize_requirements(value: Any) -> PurchaseTerms:
     if type(value) is not dict:
         raise ValueError('Unsupported purchase terms.')
@@ -142,7 +194,7 @@ def normalize_requirements(value: Any) -> PurchaseTerms:
     extra=req.get('extra',{})
     if type(extra) is not dict or any('permit' in str(k).lower() or '7710' in str(k) for k in list(req)+list(extra)):
         raise ValueError('Unsupported purchase terms.')
-    if any(key in req for key in ('extensions','authorization','paymentRequirements')):
+    if any(key in req for key in ('authorization','paymentRequirements')):
         raise ValueError('Unsupported purchase terms.')
     if any(key in extra for key in ('scheme','network','asset','amount','payTo','maxTimeoutSeconds','chainId','tokenAddress')):
         raise ValueError('Unsupported purchase terms.')
@@ -150,7 +202,10 @@ def normalize_requirements(value: Any) -> PurchaseTerms:
     selected['asset']=c.address(selected['asset'])
     selected['extra']={k:extra[k] for k in ('name','version','assetTransferMethod') if k in extra}
     selected['extra'].setdefault('name','USD Coin');selected['extra'].setdefault('version','2')
-    return PurchaseTerms(x402_version=2,authorization_method='EIP-3009',requirements=selected)
+    terms=PurchaseTerms(x402_version=2,authorization_method='EIP-3009',requirements=selected)
+    _validate_extensions(req.get('extensions',{}),terms.requirements.wire())
+    _validate_extensions(extra.get('extensions',{}),terms.requirements.wire())
+    return terms
 
 
 @dataclass(frozen=True, repr=False)
@@ -183,8 +238,7 @@ def _current_terms_context(response: PaidTrialHTTPResponse, selected: PurchaseTe
     def candidates(data: Any) -> list:
         if type(data) is not dict or type(data.get('x402Version')) is not int or data['x402Version']!=2 or type(data.get('accepts')) is not list:
             raise ValueError('Unsupported purchase terms.')
-        if 'extensions' in data and data['extensions']:
-            raise ValueError('Unsupported purchase terms.')
+        _validate_extensions(data.get('extensions',{}),selected.requirements.wire())
         result=[]
         for raw in data['accepts']:
             try:
@@ -286,7 +340,7 @@ class PaidServiceTrialTermsError(ValueError):
         super().__init__(self.reason)
 
 
-def _v2_condition(raw: Any) -> dict:
+def _v2_condition(raw: Any, request: Any=None) -> dict:
     if type(raw) is not dict:
         raise PaidServiceTrialTermsError('invalid_payment_required')
     keys = ('scheme', 'network', 'asset', 'amount', 'payTo', 'maxTimeoutSeconds')
@@ -338,7 +392,7 @@ def _v2_condition(raw: Any) -> dict:
                 raise PaidServiceTrialTermsError('conflicting_payment_terms')
     if (any('permit' in k.lower() or '7710' in k for k in list(raw)+list(extra)+list(parameters))
             or any(k in container for container in (raw, parameters)
-                   for k in ('extensions','authorization','paymentRequirements'))):
+                   for k in ('authorization','paymentRequirements'))):
         raise PaidServiceTrialTermsError('unsupported_payment_profile')
     normalized_extra = {k:extra[k] for k in ('name','version','assetTransferMethod') if k in extra}
     if selected['network']==c.NETWORK and selected['asset']==c.ASSET:
@@ -346,6 +400,10 @@ def _v2_condition(raw: Any) -> dict:
     if any(type(v) is not str for v in normalized_extra.values()):
         raise PaidServiceTrialTermsError('invalid_payment_required')
     selected['extra'] = normalized_extra
+    _validate_extensions(raw.get('extensions',{}),selected,request)
+    _validate_extensions(extra.get('extensions',{}),selected,request)
+    if 'extensions' in parameters:
+        _validate_extensions(parameters['extensions'],selected,request)
     return selected
 
 
@@ -383,11 +441,10 @@ def _current_v2_terms(response: PaidTrialHTTPResponse, selected: PurchaseTerms, 
             raise PaidServiceTrialTermsError('resource_mismatch')
         if ('x402_version' in value and (type(value['x402_version']) is not int or value['x402_version']!=2)):
             raise PaidServiceTrialTermsError('conflicting_payment_terms')
-        if value.get('extensions'):
-            raise PaidServiceTrialTermsError('unsupported_payment_profile')
+        _validate_extensions(value.get('extensions',{}),selected.requirements.wire(),request)
         result = {}
         for raw in value['accepts']:
-            identity = _condition_identity(_v2_condition(raw))
+            identity = _condition_identity(_v2_condition(raw,request))
             # Retain only the first same-candidate pair, never the raw object.
             result.setdefault(identity,(raw['asset'],raw['payTo']))
         return result

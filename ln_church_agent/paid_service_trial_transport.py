@@ -23,7 +23,7 @@ from .paid_service_trial_contract import (
 
 MAXIMUM_JSON_BYTES = 4 * 1024 * 1024  # bounded 100-Task page with ten 2-KiB endpoints each
 MAXIMUM_RESPONSE_HEADER_BYTES = 32768
-USER_AGENT = "ln-church-agent-paid-service-trial/1.18.5"
+USER_AGENT = "ln-church-agent-paid-service-trial/1.18.6"
 _SAFE_CODES = frozenset({
     "TRANSPORT_CLOSED", "CLIENT_CLOSED", "REQUEST_INVALID", "RESPONSE_INVALID", "TIMEOUT",
     "TRANSPORT_ERROR", "DNS_POLICY_REJECTED", "RESPONSE_TOO_LARGE", "RESPONSE_ENCODING_REJECTED",
@@ -101,7 +101,7 @@ class PaidServiceTrialTransport:
 
     def __enter__(self) -> "PaidServiceTrialTransport":
         if self._closed:
-            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED")
+            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED", request_bytes_sent=False)
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -164,7 +164,7 @@ class PaidServiceTrialTransport:
         version = self.version if version is None else c.validate_version(version)
         positive_bound(timeout_seconds, "timeout_seconds")
         if self._closed:
-            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED")
+            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED", request_bytes_sent=False)
         headers = {"Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": USER_AGENT}
         if claim_token is not None:
             headers[CLAIM_TOKEN_HEADER] = validate_claim_token(claim_token)
