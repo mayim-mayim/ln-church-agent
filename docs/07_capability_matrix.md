@@ -66,3 +66,16 @@ The low-level SVM transaction builder remains available for payload construction
 * **Payment-Receipt presence** is not final settlement by itself. Future receipt states may include SETTLED, PENDING_FINALITY, REVERSED, CANCELLED-like categories. Receipt class, settlement state, attestor, canonical reference, and reversal state must be evaluated separately.
 * **Goal Surface Candidates** are observed historical memories, not automated recommendations.
 * **Payment draft challenge** is not blanket execution permission. Only concrete challenge shapes mapped to natively supported rails may execute. The SDK explicitly defers generating unstable `Authorization: Payment <base64url-json>` credentials until schemas completely stabilize (`does_not_construct_payment_auth_json_credential = true`). Any unsupported shapes will halt execution safely (`stop_safely`).
+
+## Paid Service Trial (1.18.5)
+
+| Capability | Boundary |
+|---|---|
+| Dedicated native Python worker | Default `paid_service_trial.v2`; explicit v1 discovery/Claim and saved-version report/status/abandon |
+| External purchase | One immutable GET or canonical JSON POST in v2, GET in v1; Base native USDC, x402 v2 exact EIP-3009, explicit local EOA signer and PaymentPolicy |
+| Durable recovery | Same saved version/R, Claim, digests, purchase identity, Submission and signed validity; no automatic paid resend |
+| Transaction locator | Bounded standard `PAYMENT-RESPONSE`, including padded base64; locator is not payment proof |
+| Requester support | Explicit nonsecret descriptor for existing-purchase import; no paid registration wrapper |
+| Contract resources | Separate complete Backend-owned v1/v2 packs with Definition, Wire, English guides, fixture and manifest; digest-verified before new execution |
+| Existing protocols and platforms | Unchanged dependencies, support tier, entry points, old strict parsers and generic payment behavior |
+| MCP and CLI | Existing inspection/worker tools unchanged; no new mutating or payment tool |

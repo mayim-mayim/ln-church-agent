@@ -234,3 +234,107 @@ ln-church-agent observe-domain sponsor verify obsreq_123 \
 ln-church-agent observe-domain track status obsreq_123
 ```
 ---
+## Paid Service Trial: native Python
+
+Use a released package containing both Backend-owned contract bundles. New
+`PaidServiceTrialTaskClient()` instances select v2; explicitly use
+`PaidServiceTrialTaskClient(version="v1")` for v1 discovery and Claim creation.
+Saved-version recovery below works with either version. Choose the
+Task and Claim idempotency key explicitly; keep that key for Claim retries. Supply
+your signer through your existing secret-management path and never log its key.
+The signer must implement the SDK's existing EOA atomic EIP-3009 signing capability.
+
+```python
+from pathlib import Path
+from ln_church_agent import (
+    PaidServiceTrialTaskClient, PaidServiceTrialExecutor,
+    PaidServiceTrialJournal, PaymentPolicy,
+)
+
+# signer is your configured signer. task_id and claim_key identify your selected
+# Task and one Claim request. Keep the same private directory across restarts.
+state_dir = Path("/your/private/paid-trial-claims")
+state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+policy = PaymentPolicy(
+    allowed_schemes=["exact"], allowed_assets=["USDC"],
+    allowed_networks=["eip155:8453"],
+    allowed_hosts=["your-selected-seller.example.com"],
+    max_spend_per_tx_usd=0.01, max_spend_per_session_usd=0.02,
+)
+with PaidServiceTrialTaskClient() as tasks:
+    task = tasks.get_task(task_id)
+    claim = tasks.claim_task(task.task_id, "your-agent-id", signer.address,
+                             idempotency_key=claim_key)
+    journal = PaidServiceTrialJournal(state_dir, claim)
+    executor = PaidServiceTrialExecutor(signer=signer, policy=policy, client=tasks)
+    outcome = executor.execute(claim, journal=journal)
+    # REPORTED means report acceptance, not reward approval or paid confirmation.
+```
+
+Linux retains Tier 1 support. Use the existing private claims directory convention
+under `%LOCALAPPDATA%/ln-church-agent/claims` on Windows; no new Windows support
+tier is introduced. Do not delete a journal to retry a purchase. If dispatch may
+have happened, reopen it and recover the saved report:
+
+```python
+claim = PaidServiceTrialJournal.load_claim(state_dir, task_id, execution_id)
+journal = PaidServiceTrialJournal(state_dir, claim)
+report = journal.load_report()
+with PaidServiceTrialTaskClient() as tasks:
+    if report is not None:
+        result = tasks.recover_completion(claim, report, journal=journal)
+        # A later transaction locator supplements this same identity:
+        # result = tasks.supplement_transaction(claim, report, tx_hash, journal=journal)
+```
+
+`NO_DISPATCH` means that preparation did not authorize a paid GET/POST. If the sealed
+Base block guard is unavailable, explicit abandonment is possible using
+`tasks.abandon_claim(claim, idempotency_key=abandon_key)`. Lost/corrupt state is an
+error, not permission to regenerate a nonce. A prepared-but-undispatched operation
+also does not automatically regenerate its signature.
+
+Completion recovery has at most three automatic POST attempts across restarts,
+reads status before replay, and has a 90-second invocation ceiling. After
+exhaustion, each explicit recovery call reads status and can make at most one
+identical report attempt. Status reads never buy, verify, or pay. If your own
+application polls, wait at least 60 seconds and stop at a final result, the saved
+verification deadline or your configured finite count. The client does not start
+a polling loop. Verification deadlines do not revoke an already approved reward.
+
+V2 Task/Claim `request` is immutable public input. GET has no body; POST has
+canonical JSON text, body SHA-256 and exact UTF-8 Content-Length. JSON objects,
+arrays and scalars are allowed, including `null` and `""`; an empty input is not
+JSON. Original/canonical body limits are 16,384 bytes, depth 64. Duplicate keys,
+invalid Unicode, nonfinite values and unsafe integers fail before target I/O.
+Unicode is preserved without normalization. Review the entire canonical body
+before signing: unpaid terms checks send that same GET/POST and may have side
+effects. Changed selected terms stop the paid request.
+
+To describe an existing purchase for Requester import (no network or signing):
+
+```python
+from ln_church_agent import prepare_paid_service_request, export_purchase_import_descriptor
+
+request = prepare_paid_service_request({
+    "method": "POST", "url": "https://your-selected-seller.example.com/paid",
+    "body": '{"query":"public task input"}',
+})
+descriptor = export_purchase_import_descriptor(
+    request, transaction_hash, purchase_terms,
+    import_request_id=saved_import_uuid,  # lowercase UUIDv4, retained on retries
+)
+```
+
+The optional `purchase` contains the full nonsecret authorization identity.
+Omission remains omission across retries and permits supported mined contract-wallet
+payments without a new local signature. V2 always requires R and selected terms,
+even when only the transaction locator is supplied as payment evidence. Save the
+returned descriptor and reuse it exactly; never reconstruct a pending import
+from today's form. The original endpoint-based export is available through
+`export_purchase_import_descriptor(endpoint, tx, terms, version="v1")`.
+
+Follow the [v2 Requester Guide](https://kari.mayim-mayim.com/agent-task-specs/paid_service_trial.v2/2.0.0/requester-guide.md).
+Import does not buy, assert a previous LN dispatch, or prove historical HTTP
+method/body or product delivery. Independent matching payment is a separate fact.
+The external sample purchase and LN registration fee are separate costs with
+possibly different payers. No SDK paid Offer-registration wrapper is added.

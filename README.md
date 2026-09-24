@@ -1063,5 +1063,51 @@ ln-church-agent observe-domain track domain kari.mayim-mayim.com
 * **[Integrations (MCP & LangChain)](docs/05_integrations.md)**
 * **[Monzen Observation Network](docs/06_monzen.md)**
 
+## Paid Service Trial (v1.18.5)
+
+The native Python `PaidServiceTrialTaskClient()` selects
+`paid_service_trial.v2` / Definition `2.0.0`. Use
+`PaidServiceTrialTaskClient(version="v1")` for explicit v1 discovery and Claims.
+Saved Claims and journal recovery always retain their original version. Use `PaidServiceTrialExecutor` with an explicit signer,
+`PaymentPolicy` and persistent `PaidServiceTrialJournal`. The signer must control
+the Claim reward address. A successful Claim is required before spending.
+
+The worker buys one fixed Base/native-USDC x402-v2 exact EIP-3009 request (1–10,000
+atomic USDC). V2 uses the Task’s immutable GET or POST request; v1 remains GET.
+POST sends the exact canonical JSON UTF-8 bytes, which are public Task input.
+Unpaid terms checks use the same method, query and body and may have target-side
+effects. No alternate method is probed automatically. It saves the purchase identity before dispatch and reports it even
+when HTTP fails or no transaction hash is returned. Recovery never automatically
+buys again. An accepted report, verified purchase, approved 20,000-atomic reward
+and confirmed payout are separate facts. Income and delivery are not guaranteed.
+
+See the [native Python quickstart](docs/01_quickstart.md#paid-service-trial-native-python),
+[Agent Guide (SKILL.md)](https://kari.mayim-mayim.com/agent-task-specs/paid_service_trial.v2/2.0.0/SKILL.md)
+and [Requester Guide](https://kari.mayim-mayim.com/agent-task-specs/paid_service_trial.v2/2.0.0/requester-guide.md).
+Explicit v1 use retains its [Agent Guide (SKILL.md)](https://kari.mayim-mayim.com/agent-task-specs/paid_service_trial.v1/1.0.0/SKILL.md)
+and [Requester Guide](https://kari.mayim-mayim.com/agent-task-specs/paid_service_trial.v1/1.0.0/requester-guide.md).
+The immutable Backend-owned Definition, Wire, guides, semantic fixture and
+manifest use the separate `ln_church_agent/contracts/v185-paid-service-trial-v2/`
+mirror. The original v1 pack remains unchanged at
+`ln_church_agent/contracts/v185-paid-service-trial/`. Each version requires its
+complete fixed Backend pack.
+The loader verifies their actual bytes and descriptor digest before use;
+an unavailable bundle prevents new paid execution.
+
+`export_purchase_import_descriptor` exports a nonsecret request for an **existing**
+purchase, with the explicit validated v2 request, digests and selected terms.
+Use `version="v1"` with an endpoint for the original import shape. Export performs
+no network request or new purchase. Import verifies matching payment; it does not
+prove historical method/body execution or useful product delivery. Preserve the descriptor
+and its UUID before import and reuse it on retries. A source SDK purchase unknown
+to LN must be imported; it is not already an LN sample operation. Sample payer and
+LN registration-fee payer may differ. The fixed plans buy 40/400/4,000 reward
+approvals for 1/10/100 USDC, with no unused-capacity refund. External purchase cost
+and LN registration fee are separate. Approved Agent purchase/reward transaction
+links can be public; signatures, Claim tokens and sample/fee evidence are private.
+
+Existing worker APIs, default discovery, generic `Payment402Client` retries and
+the inspect-only MCP remain unchanged. This feature adds no paid CLI/MCP tool.
+
 ## License
 MIT

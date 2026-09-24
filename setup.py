@@ -9,11 +9,13 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.4",
+    version="1.18.5",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     package_data={
         "ln_church_agent": [
             "contracts/*.json",
+            "contracts/v185-paid-service-trial/*",
+            "contracts/v185-paid-service-trial-v2/*",
             "contracts/v183-immediate-visit/*",
             "contracts/v183-immediate-visit/requester-registration/SKILL.md",
         ],

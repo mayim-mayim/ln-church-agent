@@ -6,7 +6,10 @@ recursive-include examples *.py
 recursive-include tests *.py
 recursive-include tests/fixtures/v183-immediate-visit *.json
 recursive-include ln_church_agent/contracts/v183-immediate-visit *
+recursive-include ln_church_agent/contracts/v185-paid-service-trial *
 include ln_church_agent/_vendor/justhtml/LICENSE
 include ln_church_agent/_vendor/justhtml/UPSTREAM.md
 include ln_church_agent/_vendor/justhtml/compatibility.patch
 include ln_church_agent/_vendor/justhtml/py.typed
+recursive-include ln_church_agent/contracts/v185-paid-service-trial-v2 *
+recursive-include tests/fixtures/v185-paid-service-trial-v2 *

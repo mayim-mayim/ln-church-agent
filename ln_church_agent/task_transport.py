@@ -1290,7 +1290,7 @@ class TaskTransport:
         headers = {
             "Accept": "application/json",
             "Accept-Encoding": "identity",
-            "User-Agent": "ln-church-agent-task/1.18.4",
+            "User-Agent": "ln-church-agent-task/1.18.5",
             "Connection": "close",
         }
         if body is not None:
