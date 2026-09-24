@@ -168,14 +168,14 @@ def test_receipt_verification_approval_and_payout_distinct(wire):
     with pytest.raises(ValueError):PaidServiceTrialSubmissionStatus.model_validate(pending)
 
 
-def test_exact_free_and_private_routes(wire):
+def test_exact_free_and_private_routes(wire,tmp_path):
     seen=[]
     def exchange(method,path,query,headers,body,timeout):
         seen.append((method,path,query,headers,body))
         value=wire.task if path.endswith(wire.task['task_id']) else wire.claim
         if path=='/api/agent/tasks':value={'schema_version':'ln_church.agent_task_page.paid_service_trial.v1','tasks':[wire.task],'next_cursor':None}
         return PaidServiceTrialRawResponse(200,{},json.dumps(value).encode())
-    client=PaidServiceTrialTaskClient(version='v1', transport=PaidServiceTrialTransport(version='v1', exchange=exchange))
+    client=PaidServiceTrialTaskClient(version='v1', transport=PaidServiceTrialTransport(version='v1', exchange=exchange),claim_directory=tmp_path)
     client.list_tasks();client.get_task(wire.task['task_id']);client.claim_task(wire.task['task_id'],'agent',wire.signer.address,idempotency_key='same-claim')
     assert seen[0][2]=='task_type=paid_service_trial.v1&task_schema_version=ln_church.agent_task.paid_service_trial.v1&limit=25'
     assert seen[1][2]=='task_schema_version=ln_church.agent_task.paid_service_trial.v1'

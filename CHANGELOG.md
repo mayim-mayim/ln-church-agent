@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.18.6
+
+- Persist Paid Service Trial Claim requests before sending and provide explicit
+  same-key recovery across restarts and response/storage failures. Return usable
+  credentials only after the private credential and purchase journal are saved.
+- Accept unrelated provider discovery extensions after known-condition checks;
+  preserve seller address spelling and existing once-only purchase/report rules.
+- Keep API/Task Definition versions and both formal contract packs unchanged.
+
+
 All notable changes to the `ln-church-agent` SDK will be documented in this file. Detailed release notes for specific versions can be found in the `docs/release_notes/` directory.
 
 ## [1.18.3] - 2026-09-14 (Private Source Work — Immediate HTTP Visit)

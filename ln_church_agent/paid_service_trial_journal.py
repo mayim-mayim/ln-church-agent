@@ -234,3 +234,64 @@ class PaidServiceTrialJournal:
         def update(data: dict) -> None:
             data['rejection']=code
         self._change(update)
+
+
+class _ClaimRequest:
+    """Private request/credential bridge before an execution ID is known."""
+    @_private_boundary
+    def __init__(self, directory: Any, version: str, task_id: str, key: str) -> None:
+        self.version=c.validate_version(version)
+        self.task_id=c.validate_task_id(task_id)
+        self.key=c.validate_opaque_id(key,'idempotency_key')
+        self.directory=Path(directory)
+        self.directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+        name=c.digest([c.PUBLIC_API_ORIGIN,version,task_id,key])
+        self.path=_validate_journal_path(self.directory/('claim-request-'+name+'.private.json'))
+        self.lock_path=_validate_journal_path(str(self.path)+'.lock')
+
+    def __repr__(self) -> str:
+        return '_ClaimRequest(<private>)'
+
+    def guard(self) -> Any:
+        return _StableLock(self.lock_path)
+
+    @_private_boundary
+    def read(self, body: Any=None) -> dict:
+        saved=_read(self.path,missing=body is not None)
+        if saved is None:
+            saved=dict(schema_version='ln_church.paid_service_trial_claim_request.local.v1',
+                origin=c.PUBLIC_API_ORIGIN,version=self.version,task_id=self.task_id,
+                idempotency_key=self.key,body=body.decode('utf-8'),state='NOT_SENT',claim=None,rejection=None)
+            _write(self.path,saved)
+        if (set(saved)!={'schema_version','origin','version','task_id','idempotency_key','body','state','claim','rejection'}
+                or saved['schema_version']!='ln_church.paid_service_trial_claim_request.local.v1'
+                or saved['origin']!=c.PUBLIC_API_ORIGIN or saved['version']!=self.version
+                or saved['task_id']!=self.task_id or saved['idempotency_key']!=self.key
+                or saved['state'] not in {'NOT_SENT','UNKNOWN','RECEIVED','READY','REJECTED'}):
+            raise JournalError('JOURNAL_INVALID')
+        raw=saved['body'].encode('utf-8')
+        request=c.decode_json_object(raw,65536)
+        expected=dict(schema_version='ln_church.agent_task_claim_request.v1',
+            agent_id=c.validate_agent_id(request['agent_id']),reward_address=c.address(request['reward_address']))
+        if raw!=c.canonical_bytes(expected) or (body is not None and body!=raw):
+            raise JournalError('JOURNAL_STATE_CONFLICT')
+        if saved['state'] in {'RECEIVED','READY'}:
+            claim=parse_claim(saved['claim'])
+            if (c.version_of(claim)!=self.version or claim.task_id!=self.task_id
+                    or claim.reward_address!=expected['reward_address']):
+                raise JournalError('JOURNAL_STATE_CONFLICT')
+        elif saved['claim'] is not None:
+            raise JournalError('JOURNAL_INVALID')
+        if saved['state']=='REJECTED':
+            error=saved['rejection']
+            if (type(error) is not dict or set(error)!={'code','status'}
+                    or type(error['status']) is not int or not 400<=error['status']<500
+                    or error['code'] not in c.ERROR_CODES_BY_STATUS.get(error['status'],())):
+                raise JournalError('JOURNAL_INVALID')
+        elif saved['rejection'] is not None:
+            raise JournalError('JOURNAL_INVALID')
+        return saved
+
+    @_private_boundary
+    def save(self, saved: dict) -> None:
+        _write(self.path,saved)

@@ -23,13 +23,13 @@ def test_metadata_support_and_entry_points_unchanged(monkeypatch):
     import setuptools
     captured={};monkeypatch.setattr(setuptools,'setup',lambda **kwargs:captured.update(kwargs))
     monkeypatch.chdir(ROOT);runpy.run_path(str(ROOT/'setup.py'))
-    assert captured['version']=='1.18.5' and captured['python_requires']=='>=3.8.1'
+    assert captured['version']=='1.18.6' and captured['python_requires']=='>=3.8.1'
     assert 'contracts/v185-paid-service-trial/*' in captured['package_data']['ln_church_agent']
     assert captured['entry_points']=={'console_scripts':[
         'ln-church-agent=ln_church_agent.cli:main','lnc-agent=ln_church_agent.cli:main',
         'ln-church-agent-mcp=ln_church_agent.integrations.mcp_inspect:main']}
     manifest=json.loads((ROOT/'server.json').read_text())
-    assert manifest['version']=='1.18.5' and manifest['packages'][0]['version']=='1.18.5'
+    assert manifest['version']=='1.18.6' and manifest['packages'][0]['version']=='1.18.6'
     # New source retains the existing minimum Python grammar; runtime/platform
     # qualification beyond the existing support tier is not claimed.
     for path in (ROOT/'ln_church_agent').glob('paid_service_trial*.py'):
