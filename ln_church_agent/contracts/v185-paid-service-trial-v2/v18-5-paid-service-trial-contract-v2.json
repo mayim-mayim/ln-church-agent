@@ -1,0 +1,1792 @@
+{
+  "contract_id": "ln_church.v18_5_paid_service_trial.semantic.v2",
+  "contract_version": "2.0.0",
+  "creation_state": "PROPOSED_EXACT_BUNDLE_FOR_HUMAN_APPROVAL",
+  "authority_after": "EXACT_HUMAN_APPROVAL_AND_CANONICALIZATION",
+  "development_origin": "NORMAL",
+  "implementation_authority": "NONE",
+  "representation": "SEMANTIC_PARITY_NOT_PHYSICAL_API_OR_PERSISTED_SCHEMA",
+  "source_path_base": "REPOSITORY_ROOT",
+  "sources": {
+    "architecture": "docs/V18_5_Paid_Service_Trial_Architecture_20260921.md",
+    "wire": "docs/V18_5_Paid_Service_Trial_Wire_Contract_20260921.md",
+    "taskboard_timing": "docs/V18_5_TaskBoard_and_Reward_Timing_Architecture_20260921.md",
+    "fee_read_recovery": "docs/Offer_Registration_Read_Recovery_Wire_20260918.md",
+    "http_architecture": "docs/V18_5_Paid_Service_Request_V2_Architecture_20260922.md",
+    "http_wire": "docs/V18_5_Paid_Service_Request_V2_Wire_Contract_20260922.md"
+  },
+  "status_note": "Creation status records provenance. This v2 fixture inherits the explicitly unchanged v1 economic, time, witness, fee-recovery and result meanings. The HTTP addendum overrides only request/version/binding and the common future LN Sample dispatch guard; the v1 fixture and old packs remain unchanged.",
+  "initial_profile": {
+    "source_refs": [
+      "http_architecture#2",
+      "http_architecture#3",
+      "http_wire#1",
+      "http_wire#2"
+    ],
+    "endpoints": 1,
+    "url_scheme": "https",
+    "public_origin_only": true,
+    "x402_version": 2,
+    "scheme": "exact",
+    "authorization_method": "EIP-3009",
+    "network": "eip155:8453",
+    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "asset_decimals": 6,
+    "atomic_encoding": "CANONICAL_UNSIGNED_DECIMAL_STRING",
+    "address_identity": "LOWERCASE_EVM_ADDRESS",
+    "nonce_and_tx_identity": "LOWERCASE_0x_64_HEX",
+    "purchase_min_atomic": "1",
+    "purchase_max_atomic": "10000",
+    "purchase_amount_match": "EXACT_IMMUTABLE_TERMS",
+    "redirects": 0,
+    "query_allowed_without_secrets": true,
+    "permit2_or_other_exact_variants": false,
+    "ownership_proof_required": false,
+    "http_methods": [
+      "GET",
+      "POST"
+    ],
+    "task_kind": "paid_service_trial.v2",
+    "purchase_profile": "paid_service_trial_base_usdc_eip3009.v2",
+    "definition_version": "2.0.0"
+  },
+  "economics": {
+    "source_refs": [
+      "architecture#1",
+      "architecture#7",
+      "wire#1"
+    ],
+    "reward_atomic": "20000",
+    "purchase_reimbursement_atomic": "0",
+    "additional_bonus_atomic": "0",
+    "plans": [
+      {
+        "fee_atomic": "1000000",
+        "approval_capacity": 40,
+        "maximum_reward_atomic": "800000",
+        "gross_difference_atomic": "200000"
+      },
+      {
+        "fee_atomic": "10000000",
+        "approval_capacity": 400,
+        "maximum_reward_atomic": "8000000",
+        "gross_difference_atomic": "2000000"
+      },
+      {
+        "fee_atomic": "100000000",
+        "approval_capacity": 4000,
+        "maximum_reward_atomic": "80000000",
+        "gross_difference_atomic": "20000000"
+      }
+    ],
+    "capacity_counts": "REWARD_APPROVALS_NOT_UNIQUE_AGENTS",
+    "post_publication_cancellation": false,
+    "unused_capacity_refund": false
+  },
+  "time_contract": {
+    "source_refs": [
+      "architecture#5.2",
+      "architecture#6.1",
+      "architecture#7",
+      "wire#3",
+      "wire#4"
+    ],
+    "listing_duration_ms": 172800000,
+    "first_report_window_ms": 600000,
+    "verification_window_ms": 3600000,
+    "symbols": {
+      "p": "published_at_ms",
+      "l": "listing_ends_at_ms",
+      "c": "claim_accepted_at_ms",
+      "r": "first_durable_report_accepted_at_ms",
+      "b": "sealed_l2_block_timestamp_seconds",
+      "h": "verification_deadline_ms",
+      "a": "server_complete_witness_accepted_at_ms"
+    },
+    "listing_end": "l = p + 172800000",
+    "new_claim": "p <= c AND c < l AND admission_conditions_hold",
+    "first_report": "r < c + 600000",
+    "after_claim_payment": "b > floor(c / 1000)",
+    "verification_deadline": "h = r + 3600000",
+    "complete_witness_cutoff": "complete_witness_accepted_at_ms < h",
+    "late_settlement_of_same_timely_reported_purchase": "ALLOWED_WITHIN_ORIGINAL_VERIFICATION_WINDOW_AND_SIGNED_AUTHORIZATION_VALIDITY",
+    "new_witness_at_or_after_h_revives": false,
+    "retry_supplement_read_or_restart_extends_h": false,
+    "wall_clock_slot_recovery_sla_at_exact_h": false,
+    "payout_subject_to_verification_deadline": false,
+    "complete_witness_acceptance_point": "AFTER_COMPLETE_RPC_BINDING_AND_ASYNC_PREREQUISITES_IMMEDIATELY_BEFORE_PERSISTENCE_INVOCATION",
+    "physical_commit_or_success_ack_before_h_required": false,
+    "eligible_witness_requires_durable_identity_and_acceptance": true,
+    "finalize_eligible_saved_witness_after_h": true,
+    "persistence_expiry_order": {
+      "eligible_conditional_persistence_first": "FINALIZE_SAME_SAVED_WITNESS_NO_EXPIRY_RELEASE",
+      "no_award_expiry_first": "REJECT_LATE_WITNESS_WRITE_AND_APPROVAL_NO_REVIVAL",
+      "in_memory_acceptance_guarantees_priority_or_reward": false,
+      "unknown_write_means_failed": false,
+      "success_ack_controls_order": false,
+      "retry": "SAME_WITNESS_IDENTITY_AND_A_WITHIN_EXISTING_FINITE_RECOVERY",
+      "crash_lost_unsaved_decision": "NO_POST_H_RECONSTRUCTION_OR_BACKDATING_FINITE_EXPIRY",
+      "new_logical_acceptance_after_h": false
+    }
+  },
+  "claim_repeat_and_slots": {
+    "source_refs": [
+      "architecture#6",
+      "architecture#7",
+      "wire#3",
+      "wire#4"
+    ],
+    "repeat_policies": [
+      "ALLOW_REPEAT",
+      "ONCE_PER_OFFER_REWARD_ADDRESS"
+    ],
+    "implicit_repeat_default": false,
+    "single_flight_scope": [
+      "offer",
+      "canonical_reward_address"
+    ],
+    "maximum_nonterminal_claims_in_scope": 1,
+    "once_consumed_at": "REWARD_APPROVAL",
+    "once_checked_at": "CLAIM_BEFORE_PURCHASE",
+    "no_award_consumes_once": false,
+    "terminal_allows_next_claim_subject_to_listing_capacity_once": true,
+    "extra_cooldown_ms": 0,
+    "repeat_waits_for_previous_payout": false,
+    "wallet_wide_fence": false,
+    "capacity_invariant": "0 <= reserved + approved_consumed <= approval_capacity",
+    "claim_success": {
+      "reserved_delta": 1,
+      "approved_consumed_delta": 0
+    },
+    "approval": {
+      "reserved_delta": -1,
+      "approved_consumed_delta": 1
+    },
+    "no_award_terminal": {
+      "reserved_delta": -1,
+      "approved_consumed_delta": 0
+    },
+    "rejected_claim": {
+      "reserved_delta": 0,
+      "approved_consumed_delta": 0
+    },
+    "full_reservations_are_permanent_capacity_consumption": false,
+    "closure_waits_for_paid_confirmation": false
+  },
+  "payment_and_report": {
+    "source_refs": [
+      "architecture#4",
+      "architecture#5",
+      "wire#3",
+      "wire#4",
+      "http_architecture#5",
+      "http_architecture#6"
+    ],
+    "payer_equality": "VERIFIED_EIP3009_FROM_AND_TRANSFER_FROM_EQUAL_CLAIM_REWARD_ADDRESS",
+    "outer_transaction_from_must_equal_reward_address": false,
+    "confirmation": "INDEPENDENT_RPC_CANONICAL_COMPLETE_L2_SUCCESS_RECEIPT_WITH_CALL_AND_EVENT_BINDING",
+    "safe_wait_for_purchase_approval": false,
+    "successful_http_delivery_required": false,
+    "report_identity": [
+      "network",
+      "asset",
+      "payer",
+      "authorization_nonce",
+      "payTo",
+      "amount",
+      "authorization_validity_fields",
+      "claim_and_terms_binding"
+    ],
+    "tx_hash_at_first_report": "OPTIONAL_LOCATOR",
+    "payload_digest_alone_sufficient": false,
+    "late_tx_hash": "SAME_IDENTITY_AND_ORIGINAL_AUTHORIZATION_VALIDITY_ONLY_NO_NEW_SUBMISSION_NO_BUDGET_OR_DEADLINE_RESET",
+    "same_report_retry": "SAME_DURABLE_ACCEPTANCE_AND_RESULT_EVEN_AFTER_FIRST_REPORT_DEADLINE",
+    "conflicting_report_replacement": "REJECT_WITH_ORIGINAL_ACCEPTED_REPORT_RETAINED",
+    "used_payment_key": [
+      "network",
+      "canonical_asset",
+      "canonical_USDC_payer",
+      "canonical_authorization_nonce"
+    ],
+    "used_transaction_key": [
+      "network",
+      "canonical_transaction_hash"
+    ],
+    "used_scope": "ALL_PAID_SERVICE_TRIAL_CLAIMS_AND_OFFERS",
+    "used_record_made_at": "ATOMIC_REWARD_APPROVAL",
+    "used_record_expiry_reopens_payment": false,
+    "atomic_approval_facts": [
+      "final_evaluation",
+      "reserved_to_consumed_slot",
+      "once_eligibility_if_applicable",
+      "used_payment_key",
+      "used_transaction_key",
+      "one_reward_entitlement"
+    ],
+    "reorg_or_payout_failure_reverts_approval_used_record_or_entitlement": false,
+    "requester_sample_reuse": "SEPARATE_FROM_REWARD_DEDUP_RECHECK_CURRENT_CANONICAL_REQUEST_AND_TERMS"
+  },
+  "evaluation_meanings": {
+    "source_refs": [
+      "architecture#6",
+      "wire#4"
+    ],
+    "PENDING": {
+      "approved_atomic": null,
+      "reservation": "HELD",
+      "continuation": "SAME_PURCHASE_WITH_ORIGINAL_BUDGET_AND_WINDOW"
+    },
+    "APPROVED": {
+      "approved_atomic": "20000",
+      "reservation": "CONSUMED_SLOT",
+      "continuation": "EXISTING_REWARD_SETTLEMENT"
+    },
+    "MISMATCH": {
+      "approved_atomic": "0",
+      "reservation": "RELEASED",
+      "continuation": "FINAL_SAME_RESULT"
+    },
+    "PAYMENT_ALREADY_USED": {
+      "approved_atomic": "0",
+      "reservation": "RELEASED",
+      "continuation": "FINAL_SAME_RESULT"
+    },
+    "INCONCLUSIVE": {
+      "approved_atomic": "0",
+      "reservation": "RELEASED",
+      "continuation": "FINAL_SAME_RESULT_NOT_PROOF_OF_NONPAYMENT"
+    },
+    "automatic_repurchase_or_post_terminal_reevaluation": false
+  },
+  "recovery": {
+    "source_refs": [
+      "architecture#4",
+      "architecture#8",
+      "wire#2.1",
+      "wire#2.2"
+    ],
+    "fee_profile": "V185_PAID_SERVICE_TRIAL",
+    "fee_reference_namespace": "paid-service-trial-registration",
+    "fee_reference_algorithm": "wire#2.1",
+    "fee_authentication": "ORIGINAL_LN_FEE_PAYER_EXISTING_READ_RECOVERY_PROOF",
+    "sample_authentication": "IMMUTABLE_SAMPLE_PAYER_EOA_OR_SUPPORTED_READONLY_ERC1271",
+    "sample_reference": "NONSECRET_BOUND_TO_SAMPLE_OPERATION_AND_STABLE_PAYMENT_IDENTITY_BEFORE_DISPATCH",
+    "sample_eip712_domain": {
+      "name": "LNChurch Purchase Sample Recovery",
+      "version": "1",
+      "chainId": 8453
+    },
+    "sample_primary_type": "PurchaseSampleRead",
+    "sample_action": "read_purchase_sample_result",
+    "sample_ordered_fields": [
+      [
+        "string",
+        "audience"
+      ],
+      [
+        "string",
+        "action"
+      ],
+      [
+        "string",
+        "operationRef"
+      ],
+      [
+        "address",
+        "payer"
+      ],
+      [
+        "bytes32",
+        "nonce"
+      ],
+      [
+        "uint256",
+        "issuedAt"
+      ],
+      [
+        "uint256",
+        "expiresAt"
+      ]
+    ],
+    "sample_audience": "ONE_DC_FIXED_CANONICAL_READ_API_URL_UNDER_OFFICIAL_API_ORIGIN",
+    "read_proof_lifetime_seconds": 300,
+    "read_proof_time_check": "issuedAt <= now AND now < expiresAt AND expiresAt = issuedAt + 300",
+    "sample_payer_must_equal_fee_payer": false,
+    "normal_success_requires_extra_read_signature": false,
+    "read_can_dispatch_settle_repurchase_register_refund_or_reset_budget": false,
+    "unknown_paid_dispatch": "READ_SAME_OPERATION_NO_AUTOMATIC_NEW_NONCE_OR_PAID_GET_REPLAY",
+    "proof_storage": "PAGE_MEMORY_ONLY",
+    "reference_alone_authorizes_read": false,
+    "fee_unpublished_technical_reversal": "EXISTING_SAFE_EVIDENCE_AND_SAME_OPERATION_RULES_PRESERVED"
+  },
+  "public_projection": {
+    "source_refs": [
+      "architecture#9",
+      "wire#5"
+    ],
+    "access": "FREE_PUBLIC",
+    "row_identity": "ONE_DURABLY_ACCEPTED_SUBMISSION",
+    "order": [
+      "received_at",
+      "stable_public_identifier"
+    ],
+    "received_order_direction": "NEWEST_FIRST",
+    "allowlist_meanings": [
+      "public_task_id",
+      "public_submission_id",
+      "received_at",
+      "purchase_verification_status",
+      "finite_safe_reason",
+      "properly_bound_purchase_tx_and_explorer",
+      "stored_verified_at",
+      "evaluation_status",
+      "approved_atomic_or_null",
+      "stored_evaluated_at",
+      "payout_state",
+      "properly_bound_reward_tx_and_explorer",
+      "confirmed_paid_atomic",
+      "stored_paid_confirmation_at",
+      "projection_updated_at",
+      "public_USDC_Base_information"
+    ],
+    "excluded": [
+      "requester_sample_tx",
+      "LN_registration_fee_tx",
+      "direct_agent_wallet_column",
+      "wallet_aggregation_or_search",
+      "private_claim_or_execution_id",
+      "authorization_nonce_or_payload",
+      "signature",
+      "secret",
+      "raw_response_body",
+      "raw_provider_error"
+    ],
+    "wallet_correlation_via_public_transactions": "HUMAN_APPROVED",
+    "hash_alone_means_paid": false,
+    "undetermined_reward_is_maximum": false,
+    "unknown_counter_is_zero": false,
+    "read_model": "SAVED_BOUNDED_TASK_PROJECTION_AND_OPAQUE_CURSOR_PAGES",
+    "full_scan_or_all_page_prefetch_or_get_side_effects": false,
+    "after_closure_payout_updates": true
+  },
+  "task_id_lookup": {
+    "source_refs": [
+      "taskboard_timing#2"
+    ],
+    "included": true,
+    "placement": "BETWEEN_FILTERS_AND_PAGINATION",
+    "match": "EXACT_TASK_ID",
+    "task_families": [
+      "V17_PAYMENT_SURFACE_DISCOVERY",
+      "V18_SCHEDULED",
+      "V183_IMMEDIATE_VISIT",
+      "V185_PAID_SERVICE_TRIAL"
+    ],
+    "independent_of_current_filter_and_page": true,
+    "closed_or_full_public_task_reachable": true,
+    "result": "EXISTING_PUBLIC_OVERVIEW_RESULTS_AND_SUMMARIES",
+    "errors": [
+      "INVALID_INPUT",
+      "PUBLIC_TASK_NOT_FOUND",
+      "READ_FAILED"
+    ],
+    "full_history_or_substring_or_wallet_search": false,
+    "mutation_or_authentication_required": false,
+    "ui_baseline": "EXACT_APPROVED_MOCK_PLUS_HUMAN_TEXT_DELTA_SEARCH_FIELD_NOT_ALREADY_PRESENT_IN_MOCK"
+  },
+  "reward_timing": {
+    "source_refs": [
+      "taskboard_timing#4",
+      "taskboard_timing#5"
+    ],
+    "primary_scope": [
+      "V18_SCHEDULED",
+      "V183_IMMEDIATE_VISIT"
+    ],
+    "shared_impact_scope": [
+      "V17_PAYMENT_SURFACE_DISCOVERY",
+      "V185_PAID_SERVICE_TRIAL"
+    ],
+    "normal_condition_target_minutes": [
+      5,
+      10
+    ],
+    "target_origin": "FIRST_LEGITIMATE_PAYABLE_TIME_NOT_RETRY_DUE_AT",
+    "target_end": "EXISTING_PAID_CONFIRMATION",
+    "retain_full_approval_to_paid_duration": true,
+    "five_minutes_is_minimum_wait": false,
+    "sla_or_late_compensation": false,
+    "preserve": [
+      "economic_terms",
+      "due_time_guard",
+      "outgoing_finality",
+      "same_entitlement_and_operation",
+      "nonce_uniqueness",
+      "saved_signed_bytes",
+      "no_resend_on_unknown",
+      "applicable_finite_budgets",
+      "HonoGateway_CDP_sole_owner"
+    ],
+    "purchase_verification_hour_limits_approved_payout": false,
+    "worker_period_alone_proves_target": false
+  },
+  "vector_conventions": {
+    "purpose": "SEMANTIC_EXAMPLES_NOT_IMPLEMENTATION_TEST_PASS_OR_EXHAUSTIVE_TEST_SUITE",
+    "default": "All unmodified admission, immutable-term, authorization-validity and independent successful-receipt conditions hold. For HTTP v2, the complete valid v2 kind/Definition/request/terms tuple also holds unless varied explicitly.",
+    "reference_times": {
+      "c_ms": 1000000,
+      "report_deadline_ms": 1600000,
+      "r_ms": 1500000,
+      "h_ms": 5100000
+    }
+  },
+  "vectors": [
+    {
+      "id": "V01_MATCHING_PAYMENT_HTTP_FAILED",
+      "source_refs": [
+        "architecture#5.1",
+        "wire#4"
+      ],
+      "given": {
+        "payer_matches_reward_address": true,
+        "outer_tx_sender_is_facilitator": true,
+        "http_delivery": "FAILED",
+        "sealed_block_seconds": 1001
+      },
+      "expect": {
+        "evaluation": "APPROVED",
+        "reward_atomic": "20000",
+        "slot_consumed": 1
+      }
+    },
+    {
+      "id": "V02_ECONOMIC_MISMATCH",
+      "source_refs": [
+        "architecture#3",
+        "architecture#5.1"
+      ],
+      "independent_cases": [
+        "payer_differs",
+        "payTo_differs",
+        "amount_differs_even_within_cap",
+        "wrong_token_or_chain"
+      ],
+      "expect_each": {
+        "evaluation": "MISMATCH",
+        "reward_atomic": "0",
+        "reserved_slot_released": true
+      }
+    },
+    {
+      "id": "V03_LISTING_BOUNDARY",
+      "source_refs": [
+        "architecture#5.2",
+        "architecture#7"
+      ],
+      "given": {
+        "listing_ends_at_ms": 1000001
+      },
+      "cases": [
+        {
+          "claim_at_ms": 1000000,
+          "expect": "CLAIM_CAN_SUCCEED_REPORT_DEADLINE_REMAINS_1600000"
+        },
+        {
+          "claim_at_ms": 1000001,
+          "expect": "NO_NEW_CLAIM_NO_RESERVATION"
+        }
+      ]
+    },
+    {
+      "id": "V04_PURCHASE_BLOCK_BOUNDARY",
+      "source_refs": [
+        "architecture#5.2",
+        "wire#4"
+      ],
+      "cases": [
+        {
+          "sealed_block_seconds": 1000,
+          "expect": "MISMATCH"
+        },
+        {
+          "sealed_block_seconds": 1001,
+          "expect": "APPROVED"
+        }
+      ],
+      "note": "validAfter=0 or a new report does not replace sealed-block inclusion evidence."
+    },
+    {
+      "id": "V05_FIRST_REPORT_BOUNDARY",
+      "source_refs": [
+        "architecture#5.2",
+        "wire#3"
+      ],
+      "cases": [
+        {
+          "first_received_at_ms": 1599999,
+          "expect": "ACCEPT_IF_IDENTIFYING_EVIDENCE_VALID"
+        },
+        {
+          "first_received_at_ms": 1600000,
+          "expect": "NOT_ACCEPTED_DEADLINE"
+        }
+      ]
+    },
+    {
+      "id": "V06_HASH_MISSING_LATE_SAME_SETTLEMENT",
+      "source_refs": [
+        "architecture#5.2",
+        "wire#3",
+        "wire#4"
+      ],
+      "given": {
+        "r_ms": 1500000,
+        "initial_tx_hash": null,
+        "complete_identifying_authorization_evidence": true,
+        "sealed_block_seconds": 1700,
+        "complete_witness_accepted_at_ms": 1800000,
+        "eligible_witness_durably_recorded": true
+      },
+      "expect": {
+        "initial": "PENDING_RESERVED",
+        "final": "APPROVED",
+        "same_purchase_only": true,
+        "h_ms": 5100000
+      }
+    },
+    {
+      "id": "V07_RETRY_SUPPLEMENT_AND_CONFLICT",
+      "source_refs": [
+        "wire#3"
+      ],
+      "given": {
+        "accepted_at_ms": 1500000,
+        "retry_at_ms": 1700000
+      },
+      "expect": {
+        "same_report": "SAME_SUBMISSION_STATUS",
+        "matching_tx_supplement": "SAME_IDENTITY_ONLY",
+        "changed_nonce_or_payer": "REJECT_PRESERVE_ORIGINAL",
+        "h_ms": 5100000,
+        "new_budget": false
+      }
+    },
+    {
+      "id": "V08_ELIGIBLE_WITNESS_PERSISTENCE_FIRST",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "complete_witness_accepted_at_ms": 5099999,
+        "eligible_witness_durably_visible_at_ms": 5100001,
+        "success_ack_at_ms": 5100002,
+        "conditional_winner": "ELIGIBLE_WITNESS_PERSISTENCE",
+        "evaluation_commit_at_ms": 5100003
+      },
+      "expect": {
+        "can_finalize_saved_witness": true,
+        "approval_and_slot_transition_count": 1,
+        "release_plus_approval_double_change": false,
+        "hidden_physical_commit_timestamp_required": false
+      }
+    },
+    {
+      "id": "V09_COMPLETE_ACCEPTANCE_AT_CUTOFF_OR_LATER",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "independent_cases": [
+        {
+          "complete_witness_accepted_at_ms": 5100000
+        },
+        {
+          "complete_witness_accepted_at_ms": 5100001
+        }
+      ],
+      "expect_each": {
+        "evaluation": "INCONCLUSIVE",
+        "reserved_slot_released": true,
+        "reward_atomic": "0",
+        "purchase_reimbursement_atomic": "0",
+        "assert_unpaid": false,
+        "automatic_revival": false
+      }
+    },
+    {
+      "id": "V10_SAME_SCOPE_CONCURRENT_CLAIMS",
+      "source_refs": [
+        "architecture#6",
+        "wire#3"
+      ],
+      "given": {
+        "offer_and_reward_address": "SAME",
+        "concurrent_requests": 2
+      },
+      "expect": {
+        "maximum_created_claims": 1,
+        "maximum_reserved_delta": 1,
+        "same_success_retry_adds_lifetime": false,
+        "other_offer_wallet_fence": false
+      }
+    },
+    {
+      "id": "V11_ONCE_ELIGIBILITY",
+      "source_refs": [
+        "architecture#6"
+      ],
+      "cases": [
+        {
+          "prior_same_offer_address": "APPROVED_PENDING_PAYOUT",
+          "expect": "CLAIM_REJECTED_BEFORE_PURCHASE"
+        },
+        {
+          "prior_same_offer_address": "TERMINAL_INCONCLUSIVE",
+          "expect": "NEW_CLAIM_ALLOWED_SUBJECT_TO_LISTING_AND_CAPACITY_NEW_PURCHASE_REQUIRED"
+        }
+      ]
+    },
+    {
+      "id": "V12_REPEAT_PAYOUT_PENDING",
+      "source_refs": [
+        "architecture#6",
+        "wire#5"
+      ],
+      "given": {
+        "repeat_policy": "ALLOW_REPEAT",
+        "prior_evaluation": "APPROVED",
+        "prior_payout": "UNKNOWN"
+      },
+      "expect": {
+        "new_claim_can_succeed": true,
+        "extra_cooldown_ms": 0,
+        "previous_entitlement_preserved": true,
+        "previous_unknown_transfer_resend": false
+      }
+    },
+    {
+      "id": "V13_GLOBAL_PAYMENT_AND_TX_REUSE",
+      "source_refs": [
+        "architecture#5.3",
+        "wire#4"
+      ],
+      "cases": [
+        {
+          "different_claims": 2,
+          "same_payment_racing": true,
+          "expect": "ONE_APPROVAL_OTHER_PAYMENT_ALREADY_USED_AND_SLOT_RELEASE"
+        },
+        {
+          "used_authorization": true,
+          "new_tx_hash_after_reinclusion": true,
+          "expect": "PAYMENT_ALREADY_USED"
+        },
+        {
+          "used_network_and_tx_hash": true,
+          "different_claim_or_offer": true,
+          "expect": "PAYMENT_ALREADY_USED"
+        }
+      ]
+    },
+    {
+      "id": "V14_PURCHASE_REORG_AFTER_APPROVAL",
+      "source_refs": [
+        "architecture#7",
+        "wire#5"
+      ],
+      "given": {
+        "evaluation": "APPROVED",
+        "purchase_later_disappears": true,
+        "payout_time_exceeds_h": true
+      },
+      "expect": {
+        "entitlement_and_used_payment_preserved": true,
+        "slot_consumption_preserved": true,
+        "recharge_or_repurchase": false,
+        "payout_recovery": "EXISTING_SAME_OPERATION_RULES"
+      }
+    },
+    {
+      "id": "V15_SEPARATE_RECOVERY_PAYERS",
+      "source_refs": [
+        "architecture#8",
+        "wire#2.1",
+        "wire#2.2"
+      ],
+      "given": {
+        "sample_payer": "A",
+        "registration_fee_payer": "B",
+        "different_payers": true
+      },
+      "expect": {
+        "valid_registration_possible": true,
+        "sample_read_auth": "A_WITH_SAMPLE_PURPOSE",
+        "fee_read_auth": "B_WITH_FEE_PURPOSE",
+        "cross_purpose_proof_accepted": false,
+        "read_dispatches_payment": false
+      }
+    },
+    {
+      "id": "V16_PUBLIC_ROW_AND_PAYMENT_STATE",
+      "source_refs": [
+        "architecture#9",
+        "wire#5"
+      ],
+      "given": {
+        "one_report_retried": true,
+        "reward_tx_hash_present": true,
+        "paid_confirmation": false
+      },
+      "expect": {
+        "public_rows": 1,
+        "rewarded_execution_increment": 0,
+        "purchase_and_reward_tx_allowed": true,
+        "requester_sample_or_fee_tx_allowed": false,
+        "direct_agent_wallet_column_allowed": false,
+        "refresh_mutates": false
+      }
+    },
+    {
+      "id": "V17_CLOSED_TASK_LOOKUP",
+      "source_refs": [
+        "taskboard_timing#2"
+      ],
+      "given": {
+        "lookup_id": "KNOWN_PUBLIC_CLOSED_TASK",
+        "current_filter_is_other_family": true,
+        "task_absent_from_current_page": true
+      },
+      "expect": {
+        "exact_public_detail_and_summaries_reachable": true,
+        "all_four_families_supported": true,
+        "full_scan": false,
+        "new_claim_or_payment": false,
+        "invalid_notfound_readfailed_distinct": true
+      }
+    },
+    {
+      "id": "V18_RETRY_DUE_DOES_NOT_RESET_LATENCY",
+      "source_refs": [
+        "taskboard_timing#5.2",
+        "taskboard_timing#5.3"
+      ],
+      "given": {
+        "approved_at_ms": 0,
+        "first_payable_at_ms": 60000,
+        "retry_due_at_ms": 540000,
+        "paid_confirmed_at_ms": 600000
+      },
+      "expect": {
+        "payable_to_paid_ms": 540000,
+        "approval_to_paid_ms": 600000,
+        "reported_latency_ms_is_60000": false,
+        "outgoing_finality_and_finite_budget_unchanged": true
+      }
+    },
+    {
+      "id": "V19_EXPIRY_WINS_BEFORE_LATE_WRITE",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "complete_witness_accepted_at_ms": 5099999,
+        "eligible_saved_witness_at_expiry": false,
+        "conditional_winner": "NO_AWARD_EXPIRY",
+        "late_witness_write": true
+      },
+      "expect": {
+        "evaluation": "INCONCLUSIVE",
+        "late_write_rejected": true,
+        "reserved_slot_released_once": true,
+        "entitlement_count": 0,
+        "automatic_revival": false
+      }
+    },
+    {
+      "id": "V20_DURABLE_WITNESS_ACK_LOSS_AND_CRASH",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "complete_witness_accepted_at_ms": 5099999,
+        "eligible_witness_durably_recorded": true,
+        "success_ack": "LOST",
+        "worker_restart_after_h": true,
+        "conditional_winner": "ELIGIBLE_WITNESS_PERSISTENCE"
+      },
+      "expect": {
+        "read_same_durable_witness": true,
+        "can_finalize_saved_witness": true,
+        "new_chain_rpc": false,
+        "ack_loss_causes_rejection": false,
+        "approval_and_slot_transition_count": 1
+      }
+    },
+    {
+      "id": "V21_CRASH_LOSES_UNSAVED_DECISION",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "complete_witness_accepted_in_memory_at_ms": 5099999,
+        "unsaved_decision_lost": true,
+        "recoverable_eligible_witness": false,
+        "worker_restart_at_ms": 5100001
+      },
+      "expect": {
+        "backdate_or_recreate_acceptance": false,
+        "new_chain_rpc": false,
+        "finite_expiry": "INCONCLUSIVE_AND_RELEASE",
+        "entitlement_count": 0,
+        "assert_unpaid": false
+      }
+    },
+    {
+      "id": "V22_ASYNC_PREREQUISITE_CROSSES_H",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "rpc_facts_complete_at_ms": 5099998,
+        "required_async_record_read_returns_at_ms": 5100000,
+        "complete_witness_accepted_at_ms": 5100000
+      },
+      "expect": {
+        "initial_rpc_time_substitutes_for_acceptance": false,
+        "eligible_witness": false,
+        "expiry": "INCONCLUSIVE_AND_RELEASE"
+      }
+    },
+    {
+      "id": "V23_SAME_WRITE_RETRY_NOT_NEW_EVIDENCE",
+      "source_refs": [
+        "architecture#6.1",
+        "wire#4"
+      ],
+      "given": {
+        "complete_witness_accepted_at_ms": 5099999,
+        "write_result": "UNKNOWN",
+        "within_same_execution_and_finite_recovery": true,
+        "retry_at_ms": 5100001
+      },
+      "expect": {
+        "same_witness_identity_and_a_only": true,
+        "refreshing_cas_version_may_overwrite_terminal": false,
+        "new_or_filled_in_witness": false,
+        "deadline_or_budget_reset": false,
+        "conditional_order_controls_result": true
+      }
+    }
+  ],
+  "http_request": {
+    "source_refs": [
+      "http_architecture#3",
+      "http_wire#2"
+    ],
+    "schema_version": "ln_church.paid_service_request.v2",
+    "request_input_required_fields": [
+      "method",
+      "url",
+      "body"
+    ],
+    "request_input_post_body": "ORIGINAL_JSON_TEXT_STRING_BEFORE_LOSSY_OBJECT_PARSE",
+    "request_required_fields": [
+      "schema_version",
+      "method",
+      "url",
+      "content_type",
+      "body",
+      "body_sha256"
+    ],
+    "closed": true,
+    "url": "EXISTING_CANONICAL_PUBLIC_HTTPS_POLICY_ONCE_THEN_IDENTICAL_INCLUDING_QUERY",
+    "get": {
+      "content_type": null,
+      "body": null,
+      "body_sha256": null,
+      "send_body": false,
+      "send_content_type": false,
+      "send_content_length": false
+    },
+    "post": {
+      "content_type": "application/json",
+      "body": "RFC8785_JCS_JSON_TEXT_STRING",
+      "body_sha256": "LOWERCASE_SHA256_OF_EXACT_TARGET_UTF8_BYTES_NO_0X",
+      "content_length": "ACTUAL_TARGET_UTF8_BYTE_LENGTH",
+      "bom": false,
+      "content_encoding": false,
+      "trailing_newline": false,
+      "requote_for_target": false
+    },
+    "json": {
+      "input_utf8_bytes_max": 16384,
+      "canonical_utf8_bytes_max": 16384,
+      "max_container_depth": 64,
+      "depth_definition": "Maximum simultaneous object/array nesting; root container=1, scalar root=0",
+      "envelope_utf8_bytes_max": 65536,
+      "root_values": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "true",
+        "false",
+        "null"
+      ],
+      "empty_or_whitespace_only_valid": false,
+      "duplicate_member_names_after_escape_decoding": "REJECT_BEFORE_LOSSY_PARSING",
+      "unpaired_surrogate_or_invalid_utf8": "REJECT",
+      "unicode_normalization": false,
+      "key_sort": "UTF16_CODE_UNITS",
+      "prototype_like_keys": "ORDINARY_DATA_PRESERVED_NO_PROTOTYPE_MUTATION",
+      "number_serialization": "FINITE_BINARY64_ECMASCRIPT_RFC8785",
+      "ln_max_safe_integer": "9007199254740991",
+      "ln_min_safe_integer": "-9007199254740991",
+      "integer_range_check": "BOTH_EXACT_INTEGRAL_SOURCE_DECIMAL_BEFORE_ROUNDING_AND_PARSED_INTEGER",
+      "nonintegral_rounding": "BINARY64_PREVIEW_BEFORE_SIGNING",
+      "negative_zero_canonical": "0"
+    },
+    "invalid_before": [
+      "TARGET_IO",
+      "SIGNATURE_REQUEST"
+    ],
+    "public_body": true,
+    "secret_header_inputs": 0,
+    "arbitrary_header_inputs": 0,
+    "task_request_is_same_as_terms_sample_agent": true,
+    "endpoint_alias": "DERIVED_EQUAL_TO_REQUEST_URL_NOT_AUTHORITY",
+    "unpaid_post_guaranteed_side_effect_free": false,
+    "automatic_get_to_post_probe": false
+  },
+  "http_digests": {
+    "source_refs": [
+      "http_wire#3"
+    ],
+    "H": "LOWERCASE_HEX_SHA256_UTF8_RFC8785_JCS",
+    "request_digest": "H(VALIDATED_R)",
+    "purchase_binding_required_fields": [
+      "schema_version",
+      "request_digest",
+      "resource_url",
+      "x402_version",
+      "authorization_method",
+      "requirements"
+    ],
+    "purchase_binding_schema": "ln_church.paid_service_purchase_binding.v2",
+    "resource_url": "R.url",
+    "x402_version": 2,
+    "authorization_method": "EIP-3009",
+    "requirements": "EXISTING_CANONICAL_SELECTED_REQUIREMENTS",
+    "purchase_terms_digest": "H(PURCHASE_BINDING)",
+    "public_offer_terms_closed_fields": [
+      "request",
+      "request_digest",
+      "purchase_terms",
+      "purchase_terms_digest",
+      "plan_id",
+      "registration_amount_atomic",
+      "capacity_total",
+      "repeat_policy",
+      "reward"
+    ],
+    "terms_digest": "H(PUBLIC_OFFER_TERMS)",
+    "task_claim_report_tuple": [
+      "task_kind",
+      "definition_version",
+      "definition_digest",
+      "terms_digest"
+    ],
+    "full_authorization_in_saved_private_binding": true,
+    "sample_ref_input_fields": [
+      "request_digest",
+      "purchase_terms_digest",
+      "network",
+      "asset",
+      "payer",
+      "authorization_nonce"
+    ],
+    "sample_ref": "ps2_ + lowercase_hex(SHA256(UTF8('paid-service-trial-sample-v2' + U+0000 + JCS(I))))",
+    "sample_ref_length": 68,
+    "request_sha256": "H(CLOSED_DISPATCH_REQUEST_WITH_ONLY_SIGNATURE_REMOVED)",
+    "changed_validity_with_same_ref": "CONFLICT",
+    "import_ref": "pi2_ + LOWERCASE_UUID_V4",
+    "import_ref_length": 40,
+    "attachment_purpose": "paid-service-trial-sample-attachment-v2",
+    "attachment_committed_fields": [
+      "version",
+      "operation_ref",
+      "verified_record_version",
+      "request_digest",
+      "purchase_terms_digest"
+    ],
+    "attachment_version": 2,
+    "attachment_read_or_dispatch_authority": false,
+    "old_attachment_accepted_by_v2": false
+  },
+  "http_terms": {
+    "source_refs": [
+      "http_architecture#4",
+      "http_wire#4"
+    ],
+    "required_status": 402,
+    "required_header": "PAYMENT-REQUIRED",
+    "resource_url": "REQUIRED_NORMALIZED_EQUAL_TO_R_URL_NO_FETCH_FROM_RESOURCE",
+    "resource_mime_type": "RESPONSE_TYPE_NOT_REQUEST_CONTENT_TYPE",
+    "arbitrary_response_body_allowed": true,
+    "body_dual_representation_markers": [
+      "x402Version",
+      "resource",
+      "accepts"
+    ],
+    "body_compare_only_when_all_markers_present": true,
+    "dual_compare": [
+      "NORMALIZED_RESOURCE_URL",
+      "NORMALIZED_CONDITION_SET"
+    ],
+    "set_order_or_duplicate_representation_changes_terms": false,
+    "malformed_or_alias_conflicting_known_condition_dropped": false,
+    "irrelevant_descriptive_metadata_bound": false,
+    "additional_alternative_changes_selected_terms": false,
+    "seller_method_body_extension_required": false,
+    "check_points": [
+      "REQUESTER_BEFORE_SIGNATURE",
+      "BACKEND_BEFORE_PAID_DISPATCH",
+      "SDK_BEFORE_SIGNATURE_AND_PAID_DISPATCH"
+    ],
+    "observed_drift": "STOP_BEFORE_PAID_PAYLOAD_NO_AUTOMATIC_REPURCHASE",
+    "future_seller_drift_prevented_atomically": false,
+    "form_revision": "IGNORE_LATE_RESPONSE_FOR_OLD_INPUT",
+    "canonical_R_or_purchase_terms_change_invalidates": [
+      "UNSENT_TERMS_SELECTION",
+      "SAMPLE_SELECTION",
+      "SIGNATURE",
+      "FEE_PREVIEW"
+    ],
+    "canonical_whitespace_only_change": "SAME_R_REUSABLE_AFTER_EQUALITY_CHECK",
+    "plan_or_repeat_only_change_invalidates_sample": false,
+    "ui_signature_discard_revokes_eip3009_signature": false,
+    "sent_original_operation": "RETAIN_SAVED_REQUEST_AND_SAME_OPERATION_READ_RECOVERY",
+    "payment_signature_on": [
+      "FENCED_PAID_REQUEST_ONLY"
+    ],
+    "payment_signature_on_terms_read_or_rpc": false,
+    "unsupported_purchase_terms_reasons": [
+      "expected_402",
+      "missing_payment_required",
+      "invalid_payment_required",
+      "conflicting_payment_terms",
+      "resource_mismatch",
+      "unsupported_payment_profile"
+    ],
+    "error_dto": "V2_REQUIRED_FINITE_REASON_OR_NULL_V1_UNCHANGED"
+  },
+  "http_import": {
+    "source_refs": [
+      "http_architecture#5",
+      "http_wire#5"
+    ],
+    "external_sdk_route": true,
+    "tx_only_without_request": false,
+    "required_meanings": [
+      "EXPLICIT_VALID_R",
+      "CURRENT_MATCHING_UNPAID_TERMS",
+      "EXISTING_VERIFIABLE_PAYMENT"
+    ],
+    "prior_ln_dispatch_required": false,
+    "proof": "DECLARED_HTTP_REQUEST_BINDING_PLUS_VERIFIED_MATCHING_PAYMENT",
+    "chain_proves_http_method_body_or_delivery": false,
+    "ln_dispatch_proves_seller_execution_or_delivery": false,
+    "paid_request": false,
+    "dispatch_guard_created_from_import": false,
+    "reward_used_record_created": false,
+    "existing_ln_dispatch_binding_overwritten": false,
+    "optional_unresolved_identity": "PRESERVE_ORIGINAL_IMPORT_REQUEST_NOT_TODAYS_FORM",
+    "same_request_retry": "ORIGINAL_SAVED_OPERATION",
+    "unpaid_post_side_effects_possible": true,
+    "status_recovery_target_io": false
+  },
+  "version_compatibility": {
+    "source_refs": [
+      "http_architecture#2",
+      "http_architecture#7",
+      "http_wire#1"
+    ],
+    "dedicated_v2_schemas": {
+      "Task": "ln_church.agent_task.paid_service_trial.v2",
+      "Task page": "ln_church.agent_task_page.paid_service_trial.v2",
+      "Claim response": "ln_church.agent_task_claim_response.paid_service_trial.v2",
+      "Abandon request": "ln_church.agent_task_abandon_request.paid_service_trial.v2",
+      "Abandon response": "ln_church.agent_task_abandon_response.paid_service_trial.v2",
+      "Completion": "ln_church.task_completion.paid_service_trial.v2",
+      "Completion receipt": "ln_church.task_completion_receipt.paid_service_trial.v2",
+      "Submission status": "ln_church.task_submission_status.paid_service_trial.v2",
+      "Offer summary": "ln_church.task_offer_summary.paid_service_trial.v2",
+      "Execution summaries": "ln_church.task_offer_execution_summaries.paid_service_trial.v2",
+      "Registration request": "ln_church.task_offer_create_request.paid_service_trial.v2",
+      "Registration response": "ln_church.task_offer_create_response.paid_service_trial.v2",
+      "Error": "ln_church.task_error.paid_service_trial.v2",
+      "Sample terms request": "ln_church.paid_service_trial_sample_terms_request.v2",
+      "Sample terms response": "ln_church.paid_service_trial_sample_terms.v2",
+      "Sample dispatch": "ln_church.paid_service_trial_sample_dispatch_request.v2",
+      "Sample import": "ln_church.paid_service_trial_sample_import_request.v2",
+      "Sample result": "ln_church.paid_service_trial_sample_result.v2",
+      "Sample read challenge request": "ln_church.purchase_sample_read_challenge_request.v2",
+      "Sample read challenge": "ln_church.purchase_sample_read_challenge.v2",
+      "Sample read request": "ln_church.purchase_sample_read_request.v2",
+      "Definition": "ln_church.agent_task_definition.paid_service_trial.v2",
+      "SDK private journal": "ln_church.paid_service_trial_journal.v2"
+    },
+    "common_claim_request": "ln_church.agent_task_claim_request.v1",
+    "new_discovery_pair": {
+      "task_type": "paid_service_trial.v2",
+      "task_schema_version": "ln_church.agent_task.paid_service_trial.v2"
+    },
+    "prior_explicit_and_unqualified_selectors": "UNCHANGED",
+    "known_id": "RESOLVE_SAVED_VERSION",
+    "ui_category": "ONE_PAID_SERVICE_TRIAL_FAMILY_FOR_V1_AND_V2",
+    "normal_new_ui_sdk_creation": "V2",
+    "explicit_v1_new_api": "RETAIN_OLD_CONTRACT_PLUS_COMMON_DISPATCH_IDENTITY_GUARD",
+    "old_saved_task_claim_sample_fee_result_journal": "READ_ORIGINAL_TUPLE_NO_REWRITE",
+    "missing_v2_request_defaults_get": false,
+    "unknown_or_mixed_tuple": "REJECT_BEFORE_SIGNATURE_OR_EXTERNAL_IO",
+    "old_pack_bytes_or_digest_rewritten": false,
+    "new_pack": "frontend/agent-task-specs/paid_service_trial.v2/2.0.0/",
+    "pack_files": [
+      "SKILL.md",
+      "definition.json",
+      "requester-guide.md",
+      "v18-5-paid-service-trial-contract-v2.json",
+      "wire-contract.json",
+      "manifest.json"
+    ],
+    "pack_producer": "BACKEND_ONLY",
+    "sdk_mirror": "SAME_NAMES_AND_BYTES",
+    "descriptor_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+    "descriptor_entries": "PATH_SORTED_FIVE_NON_MANIFEST_FILES_WITH_ACTUAL_BLOB_MODE_AND_SHA256",
+    "sample_read_domain_version": "1",
+    "sample_read_primary_type": "PurchaseSampleRead",
+    "sample_read_action": "read_purchase_sample_result",
+    "fee_profile": "V185_PAID_SERVICE_TRIAL",
+    "fee_reference_algorithm": "UNCHANGED",
+    "fee_committed_read": "ORIGINAL_SAVED_V1_OR_V2_RESPONSE",
+    "reward_used_identity_version_partition": false,
+    "old_audit_or_acceptance_reused_for_new_http": false
+  },
+  "http_public_and_ui": {
+    "source_refs": [
+      "http_architecture#3",
+      "http_architecture#7",
+      "http_wire#6"
+    ],
+    "task_or_offer_view": "SAME_PUBLIC_R_AND_DIGESTS",
+    "execution_row_body_duplication": false,
+    "response_body_public": false,
+    "preview_before_signature": [
+      "METHOD",
+      "URL",
+      "CONTENT_TYPE",
+      "ENTIRE_CANONICAL_BODY",
+      "PRICE",
+      "CURRENCY",
+      "PAYEE"
+    ],
+    "disclose": [
+      "REQUEST_BODY_IS_PUBLIC",
+      "UNPAID_CHECK_SENDS_THE_REQUEST",
+      "SAMPLE_AND_LN_FEE_ARE_SEPARATE_COSTS",
+      "PAYMENT_PROOF_DOES_NOT_PROVE_HTTP_BODY_OR_DELIVERY"
+    ],
+    "limited_exact_ui_baseline": "PENDING_HUMAN_APPROVAL_OF_ADDED_PARTS",
+    "other_task_layout_redesign": false,
+    "product_source_or_runtime_authority": false
+  },
+  "http_golden_vectors": {
+    "purpose": "LANGUAGE_NEUTRAL_FINITE_EXAMPLES_NOT_PRODUCT_TEST_PASS",
+    "derivation": {
+      "hash": "lowercase hex SHA-256 of the specified exact UTF-8 bytes",
+      "jcs": "RFC8785",
+      "runtime_used": "v24.19.0",
+      "validation": "Manually specified canonical strings compared with JS primitive serialization/UTF16 key sorting for these finite valid vectors; SHA-256 computed with Node standard crypto.",
+      "caveats": [
+        "Invalid examples state required semantics; this script does not implement a strict duplicate-aware or raw UTF-8 JSON parser.",
+        "Numbers use binary64 rounding and ECMAScript number serialization; the safe-integer bound is an additional LN profile rule.",
+        "The body hash is over the body text itself; R hash is over the JCS representation in which body is a JSON string.",
+        "GET null body fields are distinct from POST body text null and POST JSON empty-string text.",
+        "This script does not exhaustively validate RFC8785, transport behavior, payment evidence or implementation readiness."
+      ]
+    },
+    "limits": {
+      "input_utf8_bytes_max": 16384,
+      "canonical_utf8_bytes_max": 16384,
+      "max_container_depth": 64,
+      "depth_definition": "Maximum simultaneous object/array nesting; root container=1, scalar root=0",
+      "envelope_utf8_bytes_max": 65536
+    },
+    "valid_body_vectors": [
+      {
+        "id": "body_object_order",
+        "input": "{\"b\":2,\"a\":1}",
+        "canonical": "{\"a\":1,\"b\":2}",
+        "canonical_utf8_bytes": 13,
+        "body_sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+      },
+      {
+        "id": "body_null",
+        "input": "null",
+        "canonical": "null",
+        "canonical_utf8_bytes": 4,
+        "body_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      {
+        "id": "body_empty_json_string",
+        "input": "\"\"",
+        "canonical": "\"\"",
+        "canonical_utf8_bytes": 2,
+        "body_sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
+      },
+      {
+        "id": "body_utf16_key_order",
+        "input": "{\"\\ufb33\":1,\"\\ud83d\\ude00\":2,\"\\u20ac\":3}",
+        "canonical": "{\"€\":3,\"😀\":2,\"דּ\":1}",
+        "canonical_utf8_bytes": 26,
+        "body_sha256": "5c180c101f0b15741b8ed5d221a0202249b89a245c1cb9c01279ef2bdfc4a31e"
+      },
+      {
+        "id": "body_proto_keys_preserved",
+        "input": "{\"prototype\":3,\"constructor\":2,\"__proto__\":{\"x\":1}}",
+        "canonical": "{\"__proto__\":{\"x\":1},\"constructor\":2,\"prototype\":3}",
+        "canonical_utf8_bytes": 51,
+        "body_sha256": "cc6d18b34c76be2296e6661cfe8681b4d9f4d6e2477347b53f774eda04d050e7"
+      },
+      {
+        "id": "body_binary64_number_forms",
+        "input": "[-0,1.0,1e-7,333333333.33333329]",
+        "canonical": "[0,1,1e-7,333333333.3333333]",
+        "canonical_utf8_bytes": 28,
+        "body_sha256": "9ac877809d31e5c49799828c376c0b88a4fc65992599a0ca2e60f65b4f348516"
+      },
+      {
+        "id": "body_array_order_preserved",
+        "input": "[{\"b\":2,\"a\":1},null]",
+        "canonical": "[{\"a\":1,\"b\":2},null]",
+        "canonical_utf8_bytes": 20,
+        "body_sha256": "21a32b4c080b39ab98536ccbaec1eba674de9e19b53f3594018a17b5b6bdae0d"
+      },
+      {
+        "id": "body_unicode_not_normalized",
+        "input": "{\"é\":1,\"e\\u0301\":2}",
+        "canonical": "{\"é\":2,\"é\":1}",
+        "canonical_utf8_bytes": 16,
+        "body_sha256": "a7962fb10dc1255be368ece9c22b2256605921dc6d0a8c9409d3ee406bcb86e5"
+      }
+    ],
+    "request_binding_vectors": [
+      {
+        "id": "request_get_no_body",
+        "source_body_input": null,
+        "request": {
+          "schema_version": "ln_church.paid_service_request.v2",
+          "method": "GET",
+          "url": "https://example.com/paid?x=1",
+          "content_type": null,
+          "body": null,
+          "body_sha256": null
+        },
+        "canonical_request": "{\"body\":null,\"body_sha256\":null,\"content_type\":null,\"method\":\"GET\",\"schema_version\":\"ln_church.paid_service_request.v2\",\"url\":\"https://example.com/paid?x=1\"}",
+        "request_digest": "542dfc4951c496e7fd6915805a52d247a4f7a7413ff7bd648377181931079c6a",
+        "purchase_binding": {
+          "schema_version": "ln_church.paid_service_purchase_binding.v2",
+          "request_digest": "542dfc4951c496e7fd6915805a52d247a4f7a7413ff7bd648377181931079c6a",
+          "resource_url": "https://example.com/paid?x=1",
+          "x402_version": 2,
+          "authorization_method": "EIP-3009",
+          "requirements": {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "amount": "10000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "USD Coin",
+              "version": "2"
+            }
+          }
+        },
+        "canonical_purchase_binding": "{\"authorization_method\":\"EIP-3009\",\"request_digest\":\"542dfc4951c496e7fd6915805a52d247a4f7a7413ff7bd648377181931079c6a\",\"requirements\":{\"amount\":\"10000\",\"asset\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\",\"extra\":{\"name\":\"USD Coin\",\"version\":\"2\"},\"maxTimeoutSeconds\":300,\"network\":\"eip155:8453\",\"payTo\":\"0x1111111111111111111111111111111111111111\",\"scheme\":\"exact\"},\"resource_url\":\"https://example.com/paid?x=1\",\"schema_version\":\"ln_church.paid_service_purchase_binding.v2\",\"x402_version\":2}",
+        "purchase_terms_digest": "8ed698d4135e7c17252d6b31aa3e2baaf91d275548134cd9c784978d93a6ea2a"
+      },
+      {
+        "id": "request_post_object",
+        "source_body_input": "{\"b\":2,\"a\":1}",
+        "request": {
+          "schema_version": "ln_church.paid_service_request.v2",
+          "method": "POST",
+          "url": "https://example.com/paid?x=1",
+          "content_type": "application/json",
+          "body": "{\"a\":1,\"b\":2}",
+          "body_sha256": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+        },
+        "canonical_request": "{\"body\":\"{\\\"a\\\":1,\\\"b\\\":2}\",\"body_sha256\":\"43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777\",\"content_type\":\"application/json\",\"method\":\"POST\",\"schema_version\":\"ln_church.paid_service_request.v2\",\"url\":\"https://example.com/paid?x=1\"}",
+        "request_digest": "0aa32e0a20d5bc09a5458ea9e33b79ce54ccbe5d09901c05a5eb1f57846b8c47",
+        "purchase_binding": {
+          "schema_version": "ln_church.paid_service_purchase_binding.v2",
+          "request_digest": "0aa32e0a20d5bc09a5458ea9e33b79ce54ccbe5d09901c05a5eb1f57846b8c47",
+          "resource_url": "https://example.com/paid?x=1",
+          "x402_version": 2,
+          "authorization_method": "EIP-3009",
+          "requirements": {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "amount": "10000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "USD Coin",
+              "version": "2"
+            }
+          }
+        },
+        "canonical_purchase_binding": "{\"authorization_method\":\"EIP-3009\",\"request_digest\":\"0aa32e0a20d5bc09a5458ea9e33b79ce54ccbe5d09901c05a5eb1f57846b8c47\",\"requirements\":{\"amount\":\"10000\",\"asset\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\",\"extra\":{\"name\":\"USD Coin\",\"version\":\"2\"},\"maxTimeoutSeconds\":300,\"network\":\"eip155:8453\",\"payTo\":\"0x1111111111111111111111111111111111111111\",\"scheme\":\"exact\"},\"resource_url\":\"https://example.com/paid?x=1\",\"schema_version\":\"ln_church.paid_service_purchase_binding.v2\",\"x402_version\":2}",
+        "purchase_terms_digest": "fe5cee6016bf50f052c7393ca22b6bbc6c5943433034eff9fdaa4fa00d742db5"
+      },
+      {
+        "id": "request_post_null",
+        "source_body_input": "null",
+        "request": {
+          "schema_version": "ln_church.paid_service_request.v2",
+          "method": "POST",
+          "url": "https://example.com/paid?x=1",
+          "content_type": "application/json",
+          "body": "null",
+          "body_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "canonical_request": "{\"body\":\"null\",\"body_sha256\":\"74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b\",\"content_type\":\"application/json\",\"method\":\"POST\",\"schema_version\":\"ln_church.paid_service_request.v2\",\"url\":\"https://example.com/paid?x=1\"}",
+        "request_digest": "d505d9bb2380a625152a78f945a899c295dd2ba90c82921a181e7f1ac5f53620",
+        "purchase_binding": {
+          "schema_version": "ln_church.paid_service_purchase_binding.v2",
+          "request_digest": "d505d9bb2380a625152a78f945a899c295dd2ba90c82921a181e7f1ac5f53620",
+          "resource_url": "https://example.com/paid?x=1",
+          "x402_version": 2,
+          "authorization_method": "EIP-3009",
+          "requirements": {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "amount": "10000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "USD Coin",
+              "version": "2"
+            }
+          }
+        },
+        "canonical_purchase_binding": "{\"authorization_method\":\"EIP-3009\",\"request_digest\":\"d505d9bb2380a625152a78f945a899c295dd2ba90c82921a181e7f1ac5f53620\",\"requirements\":{\"amount\":\"10000\",\"asset\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\",\"extra\":{\"name\":\"USD Coin\",\"version\":\"2\"},\"maxTimeoutSeconds\":300,\"network\":\"eip155:8453\",\"payTo\":\"0x1111111111111111111111111111111111111111\",\"scheme\":\"exact\"},\"resource_url\":\"https://example.com/paid?x=1\",\"schema_version\":\"ln_church.paid_service_purchase_binding.v2\",\"x402_version\":2}",
+        "purchase_terms_digest": "d07d7051aadcf2d6dd6e7521fc19a5901a23b41a9b0c31caed3bab27705c38a8"
+      },
+      {
+        "id": "request_post_empty_json_string",
+        "source_body_input": "\"\"",
+        "request": {
+          "schema_version": "ln_church.paid_service_request.v2",
+          "method": "POST",
+          "url": "https://example.com/paid?x=1",
+          "content_type": "application/json",
+          "body": "\"\"",
+          "body_sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
+        },
+        "canonical_request": "{\"body\":\"\\\"\\\"\",\"body_sha256\":\"12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126\",\"content_type\":\"application/json\",\"method\":\"POST\",\"schema_version\":\"ln_church.paid_service_request.v2\",\"url\":\"https://example.com/paid?x=1\"}",
+        "request_digest": "4f2fb525899604c12e16c41c8510d983ed4e417c20b0403cf7408c242e309ce6",
+        "purchase_binding": {
+          "schema_version": "ln_church.paid_service_purchase_binding.v2",
+          "request_digest": "4f2fb525899604c12e16c41c8510d983ed4e417c20b0403cf7408c242e309ce6",
+          "resource_url": "https://example.com/paid?x=1",
+          "x402_version": 2,
+          "authorization_method": "EIP-3009",
+          "requirements": {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+            "amount": "10000",
+            "payTo": "0x1111111111111111111111111111111111111111",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "USD Coin",
+              "version": "2"
+            }
+          }
+        },
+        "canonical_purchase_binding": "{\"authorization_method\":\"EIP-3009\",\"request_digest\":\"4f2fb525899604c12e16c41c8510d983ed4e417c20b0403cf7408c242e309ce6\",\"requirements\":{\"amount\":\"10000\",\"asset\":\"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913\",\"extra\":{\"name\":\"USD Coin\",\"version\":\"2\"},\"maxTimeoutSeconds\":300,\"network\":\"eip155:8453\",\"payTo\":\"0x1111111111111111111111111111111111111111\",\"scheme\":\"exact\"},\"resource_url\":\"https://example.com/paid?x=1\",\"schema_version\":\"ln_church.paid_service_purchase_binding.v2\",\"x402_version\":2}",
+        "purchase_terms_digest": "9a96cc2b9376953cb2bd6f92ef80ff4379d58455a2e944a1b2a381ee652821c4"
+      }
+    ],
+    "invalid_body_vectors": [
+      {
+        "id": "body_duplicate_decoded_key",
+        "input": "{\"a\":1,\"\\u0061\":2}",
+        "expected": "REJECT",
+        "reason": "Duplicate member names after escape decoding; detect before ordinary JSON.parse discards one value."
+      },
+      {
+        "id": "body_lone_high_surrogate",
+        "input": "\"\\ud800\"",
+        "expected": "REJECT",
+        "reason": "Unpaired Unicode surrogate."
+      },
+      {
+        "id": "body_lone_low_surrogate_key",
+        "input": "{\"\\udead\":1}",
+        "expected": "REJECT",
+        "reason": "Unpaired Unicode surrogate in member name."
+      },
+      {
+        "id": "body_unsafe_integer",
+        "input": "9007199254740992",
+        "expected": "REJECT",
+        "reason": "LN safe-integer profile; not a restriction imposed by RFC8785 itself."
+      },
+      {
+        "id": "body_unsafe_integer_exponent",
+        "input": "9.007199254740992e15",
+        "expected": "REJECT",
+        "reason": "Integer-valued exponent spelling must not bypass the LN safe-integer limit."
+      },
+      {
+        "id": "body_unsafe_integer_decimal_spelling",
+        "input": "9007199254740992.0",
+        "expected": "REJECT",
+        "reason": "Decimal-point spelling must not bypass the LN safe-integer limit."
+      },
+      {
+        "id": "body_numeric_overflow",
+        "input": "1e400",
+        "expected": "REJECT",
+        "reason": "Not finite binary64."
+      },
+      {
+        "id": "body_invalid_utf8_surrogate_encoding",
+        "input_utf8_hex": "22eda08022",
+        "expected": "REJECT",
+        "reason": "UTF-8 encoding of a surrogate is invalid; do not decode with replacement characters."
+      }
+    ],
+    "inherited_vector_meanings": "V01_THROUGH_V23_RETAIN_BASE_CONTRACT_MEANINGS"
+  },
+  "http_vectors": [
+    {
+      "id": "H01_DISTINCT_BODY_STATES",
+      "source_refs": [
+        "http_wire#2"
+      ],
+      "cases": [
+        "GET_NULL_FIELDS_NO_TARGET_BODY",
+        "POST_NULL_TEXT_4_BYTES",
+        "POST_JSON_EMPTY_STRING_2_BYTES"
+      ],
+      "expect": "THREE_DISTINCT_VALID_REQUEST_DIGESTS"
+    },
+    {
+      "id": "H02_CANONICAL_BODY",
+      "source_refs": [
+        "http_wire#2",
+        "http_wire#3"
+      ],
+      "given": {
+        "inputA": "{\"b\":2,\"a\":1}",
+        "inputB": "{ \"a\":1, \"b\":2 }"
+      },
+      "expect": {
+        "same_body_bytes": true,
+        "same_body_hash": true,
+        "same_R_if_other_fields_same": true,
+        "same_request_digest": true
+      }
+    },
+    {
+      "id": "H03_INPUT_LIMITS",
+      "source_refs": [
+        "http_wire#2"
+      ],
+      "cases": [
+        {
+          "bytes": 16384,
+          "depth": 64,
+          "other_conditions_valid": true,
+          "expect": "VALID"
+        },
+        {
+          "bytes": 16385,
+          "expect": "REJECT_BEFORE_IO_OR_SIGNATURE"
+        },
+        {
+          "depth": 65,
+          "expect": "REJECT_BEFORE_IO_OR_SIGNATURE"
+        },
+        {
+          "full_api_envelope_bytes": 65537,
+          "expect": "REJECT"
+        }
+      ]
+    },
+    {
+      "id": "H04_GET_BODY_AND_MIXED_TUPLE",
+      "source_refs": [
+        "http_wire#1",
+        "http_wire#2"
+      ],
+      "independent_cases": [
+        "GET_WITH_NON_NULL_BODY",
+        "MISSING_V2_REQUEST",
+        "V1_ATTACHMENT_WITH_V2",
+        "UNKNOWN_DEFINITION",
+        "V1_JOURNAL_WITH_V2_TASK"
+      ],
+      "expect_each": "REJECT_NO_SIGNATURE_OR_TARGET_IO"
+    },
+    {
+      "id": "H05_OPTIONAL_SELLER_BODY",
+      "source_refs": [
+        "http_wire#4"
+      ],
+      "given": {
+        "status": 402,
+        "valid_payment_required_header": true,
+        "resource_matches": true
+      },
+      "cases": [
+        {
+          "body": {
+            "error": "payment required"
+          },
+          "expect": "NORMAL_DESCRIPTION_ALLOWED"
+        },
+        {
+          "body": "<html>payment required</html>",
+          "expect": "ALLOWED"
+        },
+        {
+          "body": "",
+          "expect": "ALLOWED"
+        },
+        {
+          "body": "PAYMENT_REQUIRED_OBJECT_ALL_MARKERS_WITH_CONFLICTING_KNOWN_TERMS",
+          "expect": "CONFLICT_REJECT"
+        }
+      ]
+    },
+    {
+      "id": "H06_RESOURCE_AND_TERMS",
+      "source_refs": [
+        "http_wire#4"
+      ],
+      "independent_cases": [
+        "RESOURCE_MISSING",
+        "RESOURCE_URL_DIFFERS_INCLUDING_QUERY",
+        "KNOWN_AMOUNT_ALIAS_CONTRADICTION"
+      ],
+      "expect_each": "REJECT_NO_PAID_REQUEST"
+    },
+    {
+      "id": "H07_LATE_TERMS_RESPONSE_AND_DRIFT",
+      "source_refs": [
+        "http_architecture#4.2"
+      ],
+      "given": {
+        "revision_changed": true,
+        "old_terms_response_arrives": true
+      },
+      "expect": {
+        "old_response_installed": false,
+        "observed_drift_before_dispatch": "STOP_NO_PAID_REQUEST",
+        "sent_original_operation_preserved": true
+      }
+    },
+    {
+      "id": "H08_CROSS_VERSION_DISPATCH",
+      "source_refs": [
+        "http_architecture#6"
+      ],
+      "given": {
+        "v1_dispatch_guard_saved": true,
+        "same_payment_identity": true,
+        "new_v2_R_or_validity": true
+      },
+      "expect": {
+        "new_dispatch": false,
+        "original_result_preserved": true
+      }
+    },
+    {
+      "id": "H09_SAME_OPERATION_UNKNOWN",
+      "source_refs": [
+        "http_architecture#4.3",
+        "http_architecture#6"
+      ],
+      "given": {
+        "same_operation": true,
+        "paid_request_may_have_been_sent": true,
+        "ack_lost": true
+      },
+      "expect": {
+        "paid_resend": false,
+        "new_nonce": false,
+        "automatic_repurchase": false,
+        "recover": "SAME_SAVED_OPERATION"
+      }
+    },
+    {
+      "id": "H10_EXTERNAL_IMPORT",
+      "source_refs": [
+        "http_architecture#5"
+      ],
+      "given": {
+        "no_prior_ln_dispatch": true,
+        "explicit_R": true,
+        "current_matching_terms": true,
+        "matching_purchase_witness": true
+      },
+      "expect": {
+        "import_allowed": true,
+        "paid_dispatch": false,
+        "independent_http_body_execution_proven": false,
+        "reward_used_record_created": false
+      }
+    },
+    {
+      "id": "H11_FUTURE_GUARDED_RESIGNED_NONCE",
+      "source_refs": [
+        "http_architecture#6"
+      ],
+      "given": {
+        "original_operation_common_guard_saved": true,
+        "old_signature_expired": true,
+        "same_nonce_new_validity": true,
+        "different_request_or_operation": true
+      },
+      "expect": {
+        "new_dispatch": false,
+        "original_operation_read_allowed": true
+      }
+    },
+    {
+      "id": "H12_HUMAN_CONFIRMED_ZERO_PRIOR_SAMPLES",
+      "source_refs": [
+        "http_architecture#6"
+      ],
+      "given": {
+        "human_confirmed_prior_ln_sample_dispatch_records": 0,
+        "human_instructed_no_old_record_check": true
+      },
+      "expect": {
+        "old_record_recheck": false,
+        "history_inventory_or_scan": false,
+        "guard_backfill": false,
+        "migration_only_pause": false,
+        "recurring_release_history_check": false,
+        "future_v1_v2_common_guard": true,
+        "infer_fee_import_or_task_records_empty": false
+      }
+    },
+    {
+      "id": "H14_CROSS_VERSION_REWARD_USED",
+      "source_refs": [
+        "http_architecture#6"
+      ],
+      "given": {
+        "v1_reward_already_approved": true,
+        "same_payment_claimed_under_v2": true
+      },
+      "expect": {
+        "evaluation": "PAYMENT_ALREADY_USED",
+        "second_entitlement": false,
+        "reservation_released": true
+      }
+    },
+    {
+      "id": "H15_OLD_COMMITTED_FEE_RESULT",
+      "source_refs": [
+        "http_wire#1"
+      ],
+      "given": {
+        "original_fee_result_schema": "V1",
+        "current_new_registration_ui": "V2"
+      },
+      "expect": {
+        "recovery_result": "EXACT_ORIGINAL_V1_SAVED_RESULT",
+        "reconstruct_from_current_R": false
+      }
+    },
+    {
+      "id": "H16_PUBLIC_REQUEST_NOT_RESPONSE",
+      "source_refs": [
+        "http_wire#6"
+      ],
+      "given": {
+        "R_contains_public_post_body": true,
+        "external_response_body": "PRIVATE"
+      },
+      "expect": {
+        "task_exposes_same_R": true,
+        "individual_rows_duplicate_request_body": false,
+        "external_response_body_exposed": false
+      }
+    }
+  ],
+  "common_sample_dispatch_guard": {
+    "source_refs": [
+      "http_architecture#6",
+      "http_wire#5"
+    ],
+    "scope": "LN_MEDIATED_SIGNED_SAMPLE_HTTP_DISPATCH",
+    "key": [
+      "canonical_network",
+      "canonical_asset",
+      "canonical_payer",
+      "canonical_authorization_nonce"
+    ],
+    "version_partition": false,
+    "permanent_identity_binding": true,
+    "future_binding": [
+      "ORIGINAL_VERSIONED_REQUEST",
+      "COMPLETE_AUTHORIZATION_INCLUDING_VALIDITY",
+      "ORIGINAL_OPERATION"
+    ],
+    "reserve": "ATOMIC_WITH_DURABLE_DISPATCH_FACT",
+    "changed_R_terms_validity_version_ref_or_operation": "CONFLICT_NO_NEW_PAID_REQUEST",
+    "exact_original_retry": "SAVED_ORIGINAL_SCHEMA_RESULT_NO_RESEND",
+    "unknown_guard_write": "READ_SAME_FACT_NO_NEW_SEND_PERMISSION",
+    "known_not_sent": "SAME_ORIGINAL_OPERATION_ONLY",
+    "import_creates_guard_asserting_past_http": false,
+    "separate_from": [
+      "FEE_AUTHORIZATION_BINDING",
+      "REWARD_USED_PAYMENT_AND_TX"
+    ],
+    "conflict_reveals_other_private_operation": false,
+    "initial_history_scope": {
+      "basis": "HUMAN_OWNER_CONFIRMATION",
+      "confirmed_on": "2026-09-22",
+      "prior_ln_mediated_sample_dispatch_count": 0,
+      "old_record_search_or_count_required": false,
+      "runtime_or_provider_recheck_required": false,
+      "history_inventory_export_or_scan_required": false,
+      "guard_backfill_or_migration_writes_required": false,
+      "migration_only_pause_required": false,
+      "historical_coverage_acceptance_gate_required": false,
+      "recurring_release_history_check_required": false,
+      "future_dispatch": "V1_AND_V2_USE_COMMON_GUARD_IN_NORMAL_REQUEST_PROCESSING",
+      "scope_excludes": [
+        "LN_FEE_RECORDS",
+        "IMPORT_RECORDS",
+        "GENERAL_TASK_DATA"
+      ],
+      "production_measurement_claimed": false
+    }
+  }
+}

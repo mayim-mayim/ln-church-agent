@@ -117,6 +117,23 @@ from .capabilities import get_capability_matrix
 # normal explicit import (``from ln_church_agent import AgentTaskV2Client``)
 # resolves and caches exactly the requested public symbol.
 _V18_LAZY_EXPORTS = {
+    "PaidServiceRequest": ("paid_service_trial_models", "PaidServiceRequest"),
+    "PaidServiceTrialTaskV2": ("paid_service_trial_models", "PaidServiceTrialTaskV2"),
+    "PaidServiceTrialClaimV2": ("paid_service_trial_models", "PaidServiceTrialClaimV2"),
+    "PaidServiceTrialReportV2": ("paid_service_trial_models", "PaidServiceTrialReportV2"),
+    "PaidServiceTrialCompletionReceiptV2": ("paid_service_trial_models", "PaidServiceTrialCompletionReceiptV2"),
+    "PaidServiceTrialSubmissionStatusV2": ("paid_service_trial_models", "PaidServiceTrialSubmissionStatusV2"),
+    "prepare_paid_service_request": ("paid_service_trial_contract", "prepare_request"),
+    "PaidServiceTrialTaskClient": ("paid_service_trial_client", "PaidServiceTrialTaskClient"),
+    "PaidServiceTrialExecutor": ("paid_service_trial", "PaidServiceTrialExecutor"),
+    "PaidServiceTrialExecution": ("paid_service_trial", "PaidServiceTrialExecution"),
+    "export_purchase_import_descriptor": ("paid_service_trial", "export_purchase_import_descriptor"),
+    "PaidServiceTrialJournal": ("paid_service_trial_journal", "PaidServiceTrialJournal"),
+    "FrozenPaidServiceTrialReport": ("paid_service_trial_models", "FrozenPaidServiceTrialReport"),
+    "PaidServiceTrialClaim": ("paid_service_trial_models", "PaidServiceTrialClaim"),
+    "PaidServiceTrialTask": ("paid_service_trial_models", "PaidServiceTrialTask"),
+    "PaidServiceTrialSubmissionStatus": ("paid_service_trial_models", "PaidServiceTrialSubmissionStatus"),
+    "PaidServiceTrialCompletionReceipt": ("paid_service_trial_models", "PaidServiceTrialCompletionReceipt"),
     "AgentImmediateVisitClient": (
         "immediate_visit_client",
         "AgentImmediateVisitClient",
@@ -210,6 +227,24 @@ def __dir__():
 Http402Client = Payment402Client 
 
 __all__ = [
+    "PaidServiceRequest",
+    "PaidServiceTrialTaskV2",
+    "PaidServiceTrialClaimV2",
+    "PaidServiceTrialReportV2",
+    "PaidServiceTrialCompletionReceiptV2",
+    "PaidServiceTrialSubmissionStatusV2",
+    "prepare_paid_service_request",
+    "PaidServiceTrialTaskClient",
+    "PaidServiceTrialExecutor",
+    "PaidServiceTrialExecution",
+    "export_purchase_import_descriptor",
+    "PaidServiceTrialJournal",
+    "FrozenPaidServiceTrialReport",
+    "PaidServiceTrialClaim",
+    "PaidServiceTrialTask",
+    "PaidServiceTrialSubmissionStatus",
+    "PaidServiceTrialCompletionReceipt",
+
     "Payment402Client", 
     "LnChurchClient", 
     "AgentTaskClient",

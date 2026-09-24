@@ -1,4 +1,4 @@
-"""Route-closed, one-request transport for immediate visits; no lower retry."""
+"""Route-closed, one-request transport for Paid Service Trials; no lower retry."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,9 +9,11 @@ from urllib.parse import urlencode
 
 import httpx
 
+from . import paid_service_trial_contract as c
+
 from .task_transport import _WriteTracker, _new_pinned_httpx_transport, _resolve_addresses
 from .network_fetch import _resolve_public_addresses
-from .immediate_visit_contract import (
+from .paid_service_trial_contract import (
     PUBLIC_API_ORIGIN, PUBLIC_API_HOST, TASK_LIST_PATH, TASK_TYPE, TASK_SCHEMA_VERSION,
     CLAIM_TOKEN_HEADER, IDEMPOTENCY_KEY_HEADER, ERROR_SCHEMA_VERSION, ERROR_CODES_BY_STATUS,
     decode_json_object, positive_bound, validate_claim_token, validate_opaque_id,
@@ -21,7 +23,7 @@ from .immediate_visit_contract import (
 
 MAXIMUM_JSON_BYTES = 4 * 1024 * 1024  # bounded 100-Task page with ten 2-KiB endpoints each
 MAXIMUM_RESPONSE_HEADER_BYTES = 32768
-USER_AGENT = "ln-church-agent-immediate-visit/1.18.5"
+USER_AGENT = "ln-church-agent-paid-service-trial/1.18.5"
 _SAFE_CODES = frozenset({
     "TRANSPORT_CLOSED", "CLIENT_CLOSED", "REQUEST_INVALID", "RESPONSE_INVALID", "TIMEOUT",
     "TRANSPORT_ERROR", "DNS_POLICY_REJECTED", "RESPONSE_TOO_LARGE", "RESPONSE_ENCODING_REJECTED",
@@ -30,7 +32,7 @@ _SAFE_CODES = frozenset({
 })
 
 
-class ImmediateVisitError(Exception):
+class PaidServiceTrialError(Exception):
     def __init__(self, code: str, *, status_code: Optional[int] = None,
                  request_bytes_sent: Optional[bool] = None) -> None:
         self.code = code if code in _SAFE_CODES else "TRANSPORT_ERROR"
@@ -39,14 +41,15 @@ class ImmediateVisitError(Exception):
         super().__init__(self.code)
 
 
-class ImmediateVisitTransportError(ImmediateVisitError):
+class PaidServiceTrialTransportError(PaidServiceTrialError):
     pass
 
 
-class ImmediateVisitAPIError(ImmediateVisitError):
-    def __init__(self, public_error_code: str, *, status_code: int) -> None:
+class PaidServiceTrialAPIError(PaidServiceTrialError):
+    def __init__(self, public_error_code: str, *, status_code: int, reason: Optional[str]=None) -> None:
         self.public_error_code = (public_error_code if public_error_code in ERROR_CODES_BY_STATUS.get(status_code, ())
                                   else "invalid_response")
+        self.reason = reason if public_error_code=='unsupported_purchase_terms' and reason in c.V2_TERMS_REASONS else None
         super().__init__("API_ERROR", status_code=status_code, request_bytes_sent=True)
 
 
@@ -57,36 +60,37 @@ def _public_boundary(function: Any) -> Any:
         detached = None
         try:
             return function(*args, **kwargs)
-        except ImmediateVisitAPIError as error:
-            detached = ImmediateVisitAPIError(error.public_error_code, status_code=error.status_code)
-        except ImmediateVisitError as error:
-            detached = ImmediateVisitTransportError(error.code, status_code=error.status_code,
+        except PaidServiceTrialAPIError as error:
+            detached = PaidServiceTrialAPIError(error.public_error_code, status_code=error.status_code, reason=error.reason)
+        except PaidServiceTrialError as error:
+            detached = PaidServiceTrialTransportError(error.code, status_code=error.status_code,
                                                     request_bytes_sent=error.request_bytes_sent)
         except ValueError:
-            detached = ValueError("Invalid immediate visit request.")
+            detached = ValueError("Invalid Paid Service Trial request.")
         if detached is not None:
             raise detached
     return call
 
 
 @dataclass(frozen=True)
-class ImmediateVisitRawResponse:
+class PaidServiceTrialRawResponse:
     status_code: int
     headers: Mapping[str, str] = field(repr=False)
     body: bytes = field(repr=False)
 
 
-Exchange = Callable[[str, str, Optional[str], Mapping[str, str], bytes, float], ImmediateVisitRawResponse]
+Exchange = Callable[[str, str, Optional[str], Mapping[str, str], bytes, float], PaidServiceTrialRawResponse]
 
 
-class ImmediateVisitTransport:
+class PaidServiceTrialTransport:
     """Every method performs at most one HTTP request, including authenticated status."""
 
-    def __init__(self, *, exchange: Optional[Exchange] = None,
+    def __init__(self, *, version: str='v2', exchange: Optional[Exchange] = None,
                  resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
                  monotonic: Callable[[], float] = time.monotonic) -> None:
         if exchange is not None and not callable(exchange):
-            raise ValueError("Invalid immediate visit exchange.")
+            raise ValueError("Invalid Paid Service Trial exchange.")
+        self.version = c.validate_version(version)
         self._exchange = exchange or self._default_exchange
         self._resolver = resolver
         self._monotonic = monotonic
@@ -95,9 +99,9 @@ class ImmediateVisitTransport:
     def close(self) -> None:
         self._closed = True
 
-    def __enter__(self) -> "ImmediateVisitTransport":
+    def __enter__(self) -> "PaidServiceTrialTransport":
         if self._closed:
-            raise ImmediateVisitTransportError("TRANSPORT_CLOSED")
+            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED")
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -105,7 +109,7 @@ class ImmediateVisitTransport:
 
     def _default_exchange(self, method: str, path: str, query: Optional[str],
                           headers: Mapping[str, str], body: bytes,
-                          timeout_seconds: float) -> ImmediateVisitRawResponse:
+                          timeout_seconds: float) -> PaidServiceTrialRawResponse:
         tracker = _WriteTracker()
         transport = None
         deadline = self._monotonic() + timeout_seconds
@@ -114,7 +118,7 @@ class ImmediateVisitTransport:
                                                    timeout=min(5.0, timeout_seconds))
             remaining = deadline - self._monotonic()
             if remaining <= 0:
-                raise ImmediateVisitTransportError("TIMEOUT", request_bytes_sent=False)
+                raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=False)
             transport = _new_pinned_httpx_transport(addresses[0], tracker, deadline, self._monotonic)
             url = PUBLIC_API_ORIGIN + path + (("?" + query) if query is not None else "")
             timeout = httpx.Timeout(connect=min(5.0, remaining), read=min(10.0, remaining),
@@ -126,28 +130,28 @@ class ImmediateVisitTransport:
                     header_bytes = sum(len(k.encode("latin-1")) + len(v.encode("latin-1")) + 4
                                        for k, v in response.headers.multi_items())
                     if header_bytes > MAXIMUM_RESPONSE_HEADER_BYTES:
-                        raise ImmediateVisitTransportError("RESPONSE_TOO_LARGE", request_bytes_sent=tracker.request_bytes_sent)
+                        raise PaidServiceTrialTransportError("RESPONSE_TOO_LARGE", request_bytes_sent=tracker.request_bytes_sent)
                     encodings = response.headers.get_list("content-encoding")
                     if encodings and (len(encodings) != 1 or encodings[0].strip().lower() != "identity"):
-                        raise ImmediateVisitTransportError("RESPONSE_ENCODING_REJECTED", request_bytes_sent=tracker.request_bytes_sent)
+                        raise PaidServiceTrialTransportError("RESPONSE_ENCODING_REJECTED", request_bytes_sent=tracker.request_bytes_sent)
                     chunks = []
                     total = 0
                     for chunk in response.iter_raw():
                         if self._monotonic() >= deadline:
-                            raise ImmediateVisitTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent)
+                            raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent)
                         total += len(chunk)
                         if total > MAXIMUM_JSON_BYTES:
-                            raise ImmediateVisitTransportError("RESPONSE_TOO_LARGE", request_bytes_sent=tracker.request_bytes_sent)
+                            raise PaidServiceTrialTransportError("RESPONSE_TOO_LARGE", request_bytes_sent=tracker.request_bytes_sent)
                         chunks.append(bytes(chunk))
                     if self._monotonic() >= deadline:
-                        raise ImmediateVisitTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent)
-                    return ImmediateVisitRawResponse(response.status_code, dict(response.headers), b"".join(chunks))
-        except ImmediateVisitError:
+                        raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent)
+                    return PaidServiceTrialRawResponse(response.status_code, dict(response.headers), b"".join(chunks))
+        except PaidServiceTrialError:
             raise
         except httpx.TimeoutException:
-            raise ImmediateVisitTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent) from None
+            raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent) from None
         except Exception:
-            raise ImmediateVisitTransportError("TRANSPORT_ERROR", request_bytes_sent=tracker.request_bytes_sent) from None
+            raise PaidServiceTrialTransportError("TRANSPORT_ERROR", request_bytes_sent=tracker.request_bytes_sent) from None
         finally:
             if transport is not None:
                 transport.close()
@@ -156,25 +160,28 @@ class ImmediateVisitTransport:
     def _once(self, method: str, path: str, *, query: Optional[str] = None,
               claim_token: Optional[str] = None, idempotency_key: Optional[str] = None,
               body: bytes = b"", timeout_seconds: float = 20.0,
-              expected_statuses: tuple = (200,)) -> Dict[str, Any]:
+              expected_statuses: tuple = (200,), version: Optional[str] = None) -> Dict[str, Any]:
+        version = self.version if version is None else c.validate_version(version)
         positive_bound(timeout_seconds, "timeout_seconds")
         if self._closed:
-            raise ImmediateVisitTransportError("TRANSPORT_CLOSED")
+            raise PaidServiceTrialTransportError("TRANSPORT_CLOSED")
         headers = {"Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": USER_AGENT}
         if claim_token is not None:
             headers[CLAIM_TOKEN_HEADER] = validate_claim_token(claim_token)
         if idempotency_key is not None:
             headers[IDEMPOTENCY_KEY_HEADER] = validate_opaque_id(idempotency_key, "idempotency_key")
+        if len(body) > 65536:
+            raise ValueError("Paid trial request too large.")
         if body:
             headers["Content-Type"] = "application/json"
         try:
             raw = self._exchange(method, path, query, headers, body, float(timeout_seconds))
-        except ImmediateVisitError:
+        except PaidServiceTrialError:
             raise
         except Exception:
-            raise ImmediateVisitTransportError("TRANSPORT_ERROR", request_bytes_sent=None) from None
-        if not isinstance(raw, ImmediateVisitRawResponse) or type(raw.status_code) is not int:
-            raise ImmediateVisitTransportError("RESPONSE_INVALID", request_bytes_sent=True)
+            raise PaidServiceTrialTransportError("TRANSPORT_ERROR", request_bytes_sent=None) from None
+        if not isinstance(raw, PaidServiceTrialRawResponse) or type(raw.status_code) is not int:
+            raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True)
         status = raw.status_code
         try:
             if not isinstance(raw.headers, Mapping) or sum(len(str(k)) + len(str(v)) + 4 for k, v in raw.headers.items()) > MAXIMUM_RESPONSE_HEADER_BYTES:
@@ -184,32 +191,38 @@ class ImmediateVisitTransport:
                 raise ValueError
             payload = decode_json_object(raw.body, MAXIMUM_JSON_BYTES)
         except Exception:
-            raise ImmediateVisitTransportError("RESPONSE_INVALID", request_bytes_sent=True) from None
+            raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True) from None
         if status in expected_statuses:
             return payload
         if 200 <= status <= 299:
-            raise ImmediateVisitTransportError("RESPONSE_INVALID", request_bytes_sent=True)
-        if (set(payload) == {"schema_version", "code", "message", "request_id"}
-                and payload.get("schema_version") == ERROR_SCHEMA_VERSION
-                and payload.get("code") in ERROR_CODES_BY_STATUS.get(status, ())
-                and isinstance(payload.get("message"), str) and isinstance(payload.get("request_id"), str)):
-            code = payload["code"]
-            payload.clear()
-            raise ImmediateVisitAPIError(code, status_code=status)
+            raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True)
+        fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version=='v2' else set())
+        reason = payload.get('reason')
+        reason_valid = (version=='v1' or
+            (reason in c.V2_TERMS_REASONS if payload.get('code')=='unsupported_purchase_terms' and isinstance(reason,str)
+             else reason is None and payload.get('code')!='unsupported_purchase_terms'))
+        if (set(payload) == fields
+                and payload.get('schema_version') == 'ln_church.task_error.paid_service_trial.'+version
+                and payload.get('code') in ERROR_CODES_BY_STATUS.get(status, ())
+                and isinstance(payload.get('message'), str) and isinstance(payload.get('request_id'), str)
+                and reason_valid):
+            code = payload['code']; payload.clear()
+            raise PaidServiceTrialAPIError(code, status_code=status, reason=reason)
         payload.clear()
-        raise ImmediateVisitTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
+        raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
 
     def list_tasks(self, *, limit: int = 25, cursor: Optional[str] = None, timeout_seconds: float = 20.0) -> Dict[str, Any]:
-        positive_bound(limit, "limit", integer=True, maximum=100)
-        query = {"task_type": TASK_TYPE, "task_schema_version": TASK_SCHEMA_VERSION, "limit": str(limit)}
+        positive_bound(limit, "limit", integer=True, maximum=50)
+        query = {"task_type": "paid_service_trial."+self.version, "task_schema_version": "ln_church.agent_task.paid_service_trial."+self.version, "limit": str(limit)}
         if cursor is not None:
-            if not isinstance(cursor, str) or not cursor or len(cursor.encode("utf-8")) > 8192:
+            if not isinstance(cursor, str) or not cursor or len(cursor.encode("utf-8")) > 1024:
                 raise ValueError("Invalid cursor.")
-            query["cursor"] = cursor
+            from .paid_service_trial_contract import cursor as validate_cursor
+            query["cursor"] = validate_cursor(cursor)
         return self._once("GET", TASK_LIST_PATH, query=urlencode(query), timeout_seconds=timeout_seconds)
 
     def get_task(self, task_id: str, *, timeout_seconds: float = 20.0) -> Dict[str, Any]:
-        return self._once("GET", task_detail_path(task_id), timeout_seconds=timeout_seconds)
+        return self._once("GET", task_detail_path(task_id), query=urlencode({"task_schema_version": "ln_church.agent_task.paid_service_trial."+self.version}), timeout_seconds=timeout_seconds)
 
     def claim_task(self, task_id: str, body: bytes, *, idempotency_key: str,
                    timeout_seconds: float = 20.0) -> Dict[str, Any]:
@@ -217,17 +230,17 @@ class ImmediateVisitTransport:
                           timeout_seconds=timeout_seconds)
 
     def abandon_claim(self, task_id: str, claim_token: str, body: bytes, *, idempotency_key: str,
-                      timeout_seconds: float = 20.0) -> Dict[str, Any]:
+                      timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         return self._once("POST", task_abandon_path(task_id), claim_token=claim_token,
-                          idempotency_key=idempotency_key, body=body, timeout_seconds=timeout_seconds)
+                          idempotency_key=idempotency_key, body=body, timeout_seconds=timeout_seconds, version=version)
 
     def post_completion_bytes(self, task_id: str, claim_token: str, submission_id: str, body: bytes,
-                              *, timeout_seconds: float = 20.0) -> Dict[str, Any]:
+                              *, idempotency_key: Optional[str] = None, timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         return self._once("POST", task_completion_path(task_id), claim_token=claim_token,
-                          idempotency_key=validate_submission_id(submission_id), body=body,
-                          timeout_seconds=timeout_seconds, expected_statuses=(200, 202))
+                          idempotency_key=idempotency_key or validate_submission_id(submission_id), body=body,
+                          timeout_seconds=timeout_seconds, expected_statuses=(200, 202), version=version)
 
     def get_submission_status(self, task_id: str, submission_id: str, claim_token: str,
-                              *, timeout_seconds: float = 20.0) -> Dict[str, Any]:
+                              *, timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         return self._once("GET", task_status_path(task_id, submission_id), claim_token=claim_token,
-                          timeout_seconds=timeout_seconds)
+                          timeout_seconds=timeout_seconds, version=version)
