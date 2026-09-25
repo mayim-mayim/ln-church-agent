@@ -106,7 +106,7 @@ class PaidServiceTrialHTTPS:
             size=0
             while True:
                 raw_head=reader.read_head(c.MAX_HEADER_BYTES-size);size+=len(raw_head)
-                status,headers=_parse_immediate_visit_head(raw_head)
+                status,headers=_parse_immediate_visit_head(raw_head,retain_payment_headers=True)
                 if status==101:
                     raise ValueError
                 if status>=200:

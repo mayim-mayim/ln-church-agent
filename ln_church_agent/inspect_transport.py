@@ -539,7 +539,7 @@ def _pinned_url(target: _CanonicalTarget, address: str) -> str:
 def _fixed_headers(target: _CanonicalTarget, has_body: bool) -> dict:
     headers = {
         "Host": target.host_header,
-        "User-Agent": "ln-church-agent-inspect/1.18.6",
+        "User-Agent": "ln-church-agent-inspect/1.18.7",
         "Accept": "application/json, */*;q=0.1",
         "Accept-Encoding": "identity",
         "Connection": "close",

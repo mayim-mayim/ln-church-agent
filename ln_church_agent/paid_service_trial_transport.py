@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import wraps
 import time
+import re
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 from urllib.parse import urlencode
 
@@ -23,7 +24,7 @@ from .paid_service_trial_contract import (
 
 MAXIMUM_JSON_BYTES = 4 * 1024 * 1024  # bounded 100-Task page with ten 2-KiB endpoints each
 MAXIMUM_RESPONSE_HEADER_BYTES = 32768
-USER_AGENT = "ln-church-agent-paid-service-trial/1.18.6"
+USER_AGENT = "ln-church-agent-paid-service-trial/1.18.7"
 _SAFE_CODES = frozenset({
     "TRANSPORT_CLOSED", "CLIENT_CLOSED", "REQUEST_INVALID", "RESPONSE_INVALID", "TIMEOUT",
     "TRANSPORT_ERROR", "DNS_POLICY_REJECTED", "RESPONSE_TOO_LARGE", "RESPONSE_ENCODING_REJECTED",
@@ -32,12 +33,24 @@ _SAFE_CODES = frozenset({
 })
 
 
+def _safe_request_id(value: Any) -> Optional[str]:
+    """Optional presentation only; never reject or rewrite a wire identifier."""
+    return value if isinstance(value, str) and re.fullmatch(r'[\x21-\x7e]{1,256}', value) else None
+
+
 class PaidServiceTrialError(Exception):
     def __init__(self, code: str, *, status_code: Optional[int] = None,
-                 request_bytes_sent: Optional[bool] = None) -> None:
+                 request_bytes_sent: Optional[bool] = None,
+                 public_error_code: Optional[str] = None, reason: Optional[str] = None,
+                 request_id: Optional[str] = None) -> None:
         self.code = code if code in _SAFE_CODES else "TRANSPORT_ERROR"
         self.status_code = status_code if type(status_code) is int and 100 <= status_code <= 599 else None
         self.request_bytes_sent = request_bytes_sent if type(request_bytes_sent) is bool else None
+        self.public_error_code = (public_error_code if isinstance(public_error_code, str)
+            and public_error_code in ERROR_CODES_BY_STATUS.get(self.status_code, ()) else None)
+        self.reason = (reason if self.public_error_code == 'unsupported_purchase_terms'
+            and isinstance(reason, str) and reason in c.V2_TERMS_REASONS else None)
+        self.request_id = _safe_request_id(request_id)
         super().__init__(self.code)
 
 
@@ -46,11 +59,12 @@ class PaidServiceTrialTransportError(PaidServiceTrialError):
 
 
 class PaidServiceTrialAPIError(PaidServiceTrialError):
-    def __init__(self, public_error_code: str, *, status_code: int, reason: Optional[str]=None) -> None:
-        self.public_error_code = (public_error_code if public_error_code in ERROR_CODES_BY_STATUS.get(status_code, ())
-                                  else "invalid_response")
-        self.reason = reason if public_error_code=='unsupported_purchase_terms' and reason in c.V2_TERMS_REASONS else None
-        super().__init__("API_ERROR", status_code=status_code, request_bytes_sent=True)
+    def __init__(self, public_error_code: str, *, status_code: int, reason: Optional[str]=None,
+                 request_id: Optional[str]=None) -> None:
+        super().__init__("API_ERROR", status_code=status_code, request_bytes_sent=True,
+                         public_error_code=public_error_code, reason=reason, request_id=request_id)
+        if self.public_error_code is None:
+            self.public_error_code = "invalid_response"
 
 
 def _public_boundary(function: Any) -> Any:
@@ -61,10 +75,13 @@ def _public_boundary(function: Any) -> Any:
         try:
             return function(*args, **kwargs)
         except PaidServiceTrialAPIError as error:
-            detached = PaidServiceTrialAPIError(error.public_error_code, status_code=error.status_code, reason=error.reason)
+            detached = PaidServiceTrialAPIError(error.public_error_code, status_code=error.status_code,
+                                               reason=error.reason, request_id=error.request_id)
         except PaidServiceTrialError as error:
             detached = PaidServiceTrialTransportError(error.code, status_code=error.status_code,
-                                                    request_bytes_sent=error.request_bytes_sent)
+                                                    request_bytes_sent=error.request_bytes_sent,
+                                                    public_error_code=error.public_error_code,
+                                                    reason=error.reason, request_id=error.request_id)
         except ValueError:
             detached = ValueError("Invalid Paid Service Trial request.")
         if detached is not None:
@@ -77,6 +94,13 @@ class PaidServiceTrialRawResponse:
     status_code: int
     headers: Mapping[str, str] = field(repr=False)
     body: bytes = field(repr=False)
+
+
+class _ResponsePayload(dict):
+    """Keep actual received status outside the closed wire/DTO fields."""
+    def __init__(self, payload: Dict[str, Any], status: int) -> None:
+        super().__init__(payload)
+        self._http_status = status
 
 
 Exchange = Callable[[str, str, Optional[str], Mapping[str, str], bytes, float], PaidServiceTrialRawResponse]
@@ -112,6 +136,7 @@ class PaidServiceTrialTransport:
                           timeout_seconds: float) -> PaidServiceTrialRawResponse:
         tracker = _WriteTracker()
         transport = None
+        status = None
         deadline = self._monotonic() + timeout_seconds
         try:
             addresses = _resolve_public_addresses(PUBLIC_API_HOST, resolver=self._resolver,
@@ -121,12 +146,15 @@ class PaidServiceTrialTransport:
                 raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=False)
             transport = _new_pinned_httpx_transport(addresses[0], tracker, deadline, self._monotonic)
             url = PUBLIC_API_ORIGIN + path + (("?" + query) if query is not None else "")
-            timeout = httpx.Timeout(connect=min(5.0, remaining), read=min(10.0, remaining),
+            # Read may use the remaining API budget; the pinned stream clamps
+            # every read to this same absolute deadline, including body chunks.
+            timeout = httpx.Timeout(connect=min(5.0, remaining), read=remaining,
                                     write=min(10.0, remaining), pool=min(5.0, remaining))
             with httpx.Client(transport=transport, trust_env=False, follow_redirects=False,
                               cookies=None, timeout=timeout) as client:
                 transport = None
                 with client.stream(method, url, headers=dict(headers), content=body or None) as response:
+                    status = response.status_code
                     header_bytes = sum(len(k.encode("latin-1")) + len(v.encode("latin-1")) + 4
                                        for k, v in response.headers.multi_items())
                     if header_bytes > MAXIMUM_RESPONSE_HEADER_BYTES:
@@ -146,12 +174,13 @@ class PaidServiceTrialTransport:
                     if self._monotonic() >= deadline:
                         raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent)
                     return PaidServiceTrialRawResponse(response.status_code, dict(response.headers), b"".join(chunks))
-        except PaidServiceTrialError:
-            raise
+        except PaidServiceTrialError as error:
+            raise PaidServiceTrialTransportError(error.code, status_code=status,
+                request_bytes_sent=error.request_bytes_sent) from None
         except httpx.TimeoutException:
-            raise PaidServiceTrialTransportError("TIMEOUT", request_bytes_sent=tracker.request_bytes_sent) from None
+            raise PaidServiceTrialTransportError("TIMEOUT", status_code=status, request_bytes_sent=tracker.request_bytes_sent) from None
         except Exception:
-            raise PaidServiceTrialTransportError("TRANSPORT_ERROR", request_bytes_sent=tracker.request_bytes_sent) from None
+            raise PaidServiceTrialTransportError("TRANSPORT_ERROR", status_code=status, request_bytes_sent=tracker.request_bytes_sent) from None
         finally:
             if transport is not None:
                 transport.close()
@@ -191,11 +220,11 @@ class PaidServiceTrialTransport:
                 raise ValueError
             payload = decode_json_object(raw.body, MAXIMUM_JSON_BYTES)
         except Exception:
-            raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True) from None
+            raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True) from None
         if status in expected_statuses:
-            return payload
+            return _ResponsePayload(payload, status)
         if 200 <= status <= 299:
-            raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True)
+            raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
         fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version=='v2' else set())
         reason = payload.get('reason')
         reason_valid = (version=='v1' or
@@ -203,11 +232,12 @@ class PaidServiceTrialTransport:
              else reason is None and payload.get('code')!='unsupported_purchase_terms'))
         if (set(payload) == fields
                 and payload.get('schema_version') == 'ln_church.task_error.paid_service_trial.'+version
+                and isinstance(payload.get('code'), str)
                 and payload.get('code') in ERROR_CODES_BY_STATUS.get(status, ())
                 and isinstance(payload.get('message'), str) and isinstance(payload.get('request_id'), str)
                 and reason_valid):
-            code = payload['code']; payload.clear()
-            raise PaidServiceTrialAPIError(code, status_code=status, reason=reason)
+            code = payload['code']; request_id = _safe_request_id(payload['request_id']); payload.clear()
+            raise PaidServiceTrialAPIError(code, status_code=status, reason=reason, request_id=request_id)
         payload.clear()
         raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
 

@@ -794,7 +794,7 @@ class _ImmediateVisitReader(_BufferedSocket):
         return value
 
 
-def _parse_immediate_visit_head(raw: bytes) -> Tuple[int, Tuple[Tuple[str, str], ...]]:
+def _parse_immediate_visit_head(raw: bytes, *, retain_payment_headers: bool = False) -> Tuple[int, Tuple[Tuple[str, str], ...]]:
     # Unlike the old body-zero projection this retains header multiplicity
     # until Content-Type and Content-Encoding policy has been checked.
     lines = raw[:-4].split(b"\r\n")
@@ -817,7 +817,7 @@ def _parse_immediate_visit_head(raw: bytes) -> Tuple[int, Tuple[Tuple[str, str],
         if name_text in {
             "content-type", "content-encoding", "content-length",
             "transfer-encoding", "content-range",
-        }:
+        } or (retain_payment_headers and name_text in {"payment-required", "payment-response"}):
             headers.append((name_text, value.strip(b" \t").decode("latin-1")))
     return status, tuple(headers)
 
