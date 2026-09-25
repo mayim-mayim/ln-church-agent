@@ -284,10 +284,17 @@ class _ClaimRequest:
             raise JournalError('JOURNAL_INVALID')
         if saved['state']=='REJECTED':
             error=saved['rejection']
-            if (type(error) is not dict or set(error)!={'code','status'}
+            if (type(error) is not dict or set(error) not in ({'code','status'},{'code','status','reason','request_id'})
                     or type(error['status']) is not int or not 400<=error['status']<500
                     or error['code'] not in c.ERROR_CODES_BY_STATUS.get(error['status'],())):
                 raise JournalError('JOURNAL_INVALID')
+            if 'reason' in error:
+                from .paid_service_trial_transport import _safe_request_id
+                reason=error['reason'];request_id=error['request_id']
+                if ((reason is not None and (error['code']!='unsupported_purchase_terms'
+                        or not isinstance(reason,str) or reason not in c.V2_TERMS_REASONS))
+                        or (request_id is not None and _safe_request_id(request_id)!=request_id)):
+                    raise JournalError('JOURNAL_INVALID')
         elif saved['rejection'] is not None:
             raise JournalError('JOURNAL_INVALID')
         return saved

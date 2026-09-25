@@ -246,14 +246,20 @@ The signer must implement the SDK's existing EOA atomic EIP-3009 signing capabil
 
 ```python
 from pathlib import Path
+import json
 from ln_church_agent import (
     PaidServiceTrialTaskClient, PaidServiceTrialExecutor,
     PaidServiceTrialJournal, PaymentPolicy,
 )
 
-# signer is your configured signer. task_id and claim_key identify your selected
-# Task and one Claim request. Keep the same private directory across restarts.
-state_dir = Path("/your/private/paid-trial-claims")
+# Use your application's existing private job configuration, saved BEFORE the
+# first Claim. Reuse this file/values after restart, including its original key.
+# signer is configured separately through your existing secret-management path.
+job = json.loads(Path("/your/private/existing-job.json").read_text())
+task_id, claim_key = job["task_id"], job["idempotency_key"]
+version, state_dir = job["version"], Path(job["claim_directory"])
+if not state_dir.is_absolute():
+    raise ValueError("Use the original absolute private directory.")
 state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 policy = PaymentPolicy(
     allowed_schemes=["exact"], allowed_assets=["USDC"],
@@ -261,7 +267,7 @@ policy = PaymentPolicy(
     allowed_hosts=["your-selected-seller.example.com"],
     max_spend_per_tx_usd=0.01, max_spend_per_session_usd=0.02,
 )
-with PaidServiceTrialTaskClient(claim_directory=state_dir) as tasks:
+with PaidServiceTrialTaskClient(version=version, claim_directory=state_dir) as tasks:
     task = tasks.get_task(task_id)
     claim = tasks.claim_task(task.task_id, "your-agent-id", signer.address,
                              idempotency_key=claim_key)
@@ -277,14 +283,26 @@ journal are durable. Keep `task_id`, `claim_key`, the selected v1/v2 client
 version and this private directory for the same operation. Recovery makes at
 most one same-key POST per explicit call; it never generates a replacement key.
 
-If `CLAIM_OUTCOME_UNKNOWN` is raised, do not buy or start another Claim. On a
-later explicit attempt, including after a process restart:
+Before the first Claim, keep the original Task ID, Idempotency-Key, selected
+version and absolute private directory in your application's existing durable
+job configuration. Reload those same values after a restart; do not generate a
+replacement key on startup. The SDK saves the exact request before sending it.
+
+If `CLAIM_OUTCOME_UNKNOWN` is raised, do not buy or start another Claim.
+**You do not need an Execution ID, Claim credential or token to recover.**
+On a later explicit attempt, including after a process restart, reload your
+original job configuration and use the saved request:
 
 ```python
-with PaidServiceTrialTaskClient(claim_directory=state_dir) as tasks:
+# In a new process, reload the SAME configuration. No execution ID or token:
+job = json.loads(Path("/your/private/existing-job.json").read_text())
+task_id, claim_key = job["task_id"], job["idempotency_key"]
+version, state_dir = job["version"], Path(job["claim_directory"])
+with PaidServiceTrialTaskClient(version=version, claim_directory=state_dir) as tasks:
     claim = tasks.recover_claim(task_id, idempotency_key=claim_key)
     journal = PaidServiceTrialJournal(state_dir, claim)
-    # Continue the usual executor with the original credential and journal.
+    executor = PaidServiceTrialExecutor(signer=signer, policy=policy, client=tasks)
+    outcome = executor.execute(claim, journal=journal)
 ```
 
 Recovery loads the original request; it needs no new agent/address parameters.
@@ -297,14 +315,70 @@ unknown. Validation/storage failure returns no usable Claim; repeat the original
 `claim_task` after an initial request-save failure, or `recover_claim` once its
 request record exists. Never delete private state to repair a purchase.
 
+`recover_claim` has been available since 1.18.6. A missing caller-side copy of
+the key does not prove that the SDK request record is missing: it contains the
+original Task, version, key and request body. Have the owner check the existing
+private directory and its binding locally; do not publish raw records or keys,
+regenerate records, or delete them. Another UNKNOWN does not itself require
+waiting for lease expiry. Preserve the same request for a later explicit,
+finite recovery attempt, while respecting confirmed rejection and expiry.
+
 Without `claim_directory`, the default is `~/.ln-church-agent/claims` on POSIX
 or `%LOCALAPPDATA%/ln-church-agent/claims` on Windows; use
 `tasks.claim_directory` for the executor journal too. Request records and
 credential files are private, permission-checked and atomically saved. Do not
 print their contents. Ordinary Claim serializers still omit the token.
 
+This is the recovery entry point **before** a credential has been returned.
+After a successful Claim, ordinary execution recovery loads that credential
+and its existing purchase journal; it must not Claim again. Missing or mismatched
+request state raises a journal error without a recovery POST. Preserve the
+private state and original job configuration for diagnosis. A genuinely lost
+original key/request is not repaired by generating a new key or recreating a
+request. Recovery never renews the original deadline; an expired Claim cannot
+authorize a purchase.
+
+### Safe API error details (1.18.7)
+
+```python
+from ln_church_agent.paid_service_trial_transport import (
+    PaidServiceTrialError, PaidServiceTrialAPIError,
+)
+
+with PaidServiceTrialTaskClient(version=version, claim_directory=state_dir) as tasks:
+    try:
+        claim = tasks.claim_task(task_id, "your-agent-id", signer.address,
+                                 idempotency_key=claim_key)
+    except PaidServiceTrialError as error:
+        # Existing base/APIError catches still work. Log only these safe fields.
+        print({
+            "sdk_code": error.code,            # API_ERROR / CLAIM_OUTCOME_UNKNOWN
+            "http_status": error.status_code,  # actual received status, or None
+            "ln_code": error.public_error_code,
+            "reason": error.reason,
+            "request_id": error.request_id,
+        })
+        # Stop this attempt. UNKNOWN uses explicit original-request recovery;
+        # these diagnostic fields do not authorize a retry or a purchase.
+```
+
+Only a validated LN error envelope supplies its API code, finite v2 reason and
+request ID. Request IDs are retained unchanged only for 1–256 visible ASCII
+characters (U+0021–U+007E); otherwise the optional attribute is None and the API
+outcome is unchanged. A missing value is never invented. The SDK exception
+string stays a safe SDK code. Cached rejections retain these details; records
+written by 1.18.6 remain readable with unavailable details set to None.
+
+The standard LN API transport uses a 20-second overall request budget with
+connect/TLS capped at 5 seconds and write at 10 seconds. Reads may use the
+remaining overall budget; each head/body read is capped by the same absolute
+deadline. The ordinary Claim client does not expose a Claim timeout
+override. Seller HTTP has its separate fixed profile/deadlines. Do not treat
+changing a timeout, a new Claim key or a seller adapter as Claim recovery.
+
 Provider Bazaar/discovery metadata is handled by the normal SDK parser in
-1.18.6. No custom HTTP adapter is needed. Economic/domain/timeout/known alias
+1.18.6. Version 1.18.7 retains the payment headers in standard HTTP; no custom
+HTTP adapter is needed. Economic/domain/timeout/known alias
 and fixed-request checks remain in force; metadata is never echoed in accepted
 payment requirements or added to canonical identities.
 

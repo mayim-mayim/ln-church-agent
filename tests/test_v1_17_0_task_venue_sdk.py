@@ -3520,7 +3520,7 @@ def test_transport_httpx_configuration_has_no_ambient_credentials(monkeypatch):
     assert stream_kwargs["headers"]["Accept-Encoding"] == "identity"
     assert (
         stream_kwargs["headers"]["User-Agent"]
-        == "ln-church-agent-task/1.18.6"
+        == "ln-church-agent-task/1.18.7"
     )
     assert "Cookie" not in stream_kwargs["headers"]
     assert "Authorization" not in stream_kwargs["headers"]

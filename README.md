@@ -1063,7 +1063,7 @@ ln-church-agent observe-domain track domain kari.mayim-mayim.com
 * **[Integrations (MCP & LangChain)](docs/05_integrations.md)**
 * **[Monzen Observation Network](docs/06_monzen.md)**
 
-## Paid Service Trial (v1.18.6)
+## Paid Service Trial (v1.18.7)
 
 The native Python `PaidServiceTrialTaskClient()` selects
 `paid_service_trial.v2` / Definition `2.0.0`. Use
@@ -1074,6 +1074,9 @@ the Claim reward address. A successful Claim is required before spending. Versio
 the original Claim request for `recover_claim(task_id, idempotency_key=...)`;
 use one `claim_directory` for the client and executor journal across restarts.
 Unrelated Bazaar metadata no longer blocks a valid purchase.
+Version 1.18.7 retains Payment-Required and Payment-Response in standard HTTP
+and exposes safe API error details. Claim recovery needs the original Task/key,
+version and private directory, not an Execution ID, credential or token.
 
 The worker buys one fixed Base/native-USDC x402-v2 exact EIP-3009 request (1–10,000
 atomic USDC). V2 uses the Task’s immutable GET or POST request; v1 remains GET.

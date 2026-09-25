@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.18.7
+
+- Retain Payment-Required and Payment-Response through standard Paid HTTP,
+  including case variants and duplicate values, without changing other fetchers.
+- Preserve actual received HTTP status and validated LN error code/reason/request
+  ID across safe exceptions and same-request Claim recovery. Read 1.18.6 records.
+- Explain recovery before an Execution ID or credential is returned, using the
+  original Task/key/version/private directory across process restarts.
+- Keep fixed HTTP limits, contract packs, once-only purchases and report identity.
+- Let standard Paid LN API reads use the remaining overall request budget,
+  preserving its finite deadline, connection bounds and zero automatic retries.
+
 ## 1.18.6
 
 - Persist Paid Service Trial Claim requests before sending and provide explicit

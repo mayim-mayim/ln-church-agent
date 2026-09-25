@@ -88,7 +88,8 @@ class PaidServiceTrialTaskClient:
             saved=record.read(body)
             if saved['state']=='REJECTED':
                 error=saved['rejection']
-                raise PaidServiceTrialAPIError(error['code'],status_code=error['status'])
+                raise PaidServiceTrialAPIError(error['code'],status_code=error['status'],
+                    reason=error.get('reason'),request_id=error.get('request_id'))
             if saved['state']=='READY':
                 original=parse_claim(saved['claim'])
                 claim=PaidServiceTrialJournal.load_claim(self.claim_directory,task_id,original.execution_id)
@@ -102,15 +103,20 @@ class PaidServiceTrialTaskClient:
                     raw=self._transport.claim_task(task_id,saved['body'].encode('utf-8'),idempotency_key=key)
                 except PaidServiceTrialAPIError as error:
                     if 400<=error.status_code<500 and error.public_error_code!='invalid_response':
-                        saved.update(state='REJECTED',rejection=dict(code=error.public_error_code,status=error.status_code))
+                        saved.update(state='REJECTED',rejection=dict(code=error.public_error_code,status=error.status_code,
+                            reason=error.reason,request_id=error.request_id))
                         record.save(saved)
                         raise
-                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=True) from None
+                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=True,
+                        status_code=error.status_code,public_error_code=error.public_error_code,
+                        reason=error.reason,request_id=error.request_id) from None
                 except PaidServiceTrialError as error:
                     if error.request_bytes_sent is False and prior=='NOT_SENT':
                         saved['state']='NOT_SENT';record.save(saved)
                         raise
-                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=error.request_bytes_sent) from None
+                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=error.request_bytes_sent,
+                        status_code=error.status_code,public_error_code=error.public_error_code,
+                        reason=error.reason,request_id=error.request_id) from None
                 except Exception:
                     raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN') from None
                 try:
@@ -120,7 +126,8 @@ class PaidServiceTrialTaskClient:
                         raise ValueError
                     self._definition(claim)
                 except Exception:
-                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=True) from None
+                    raise PaidServiceTrialTransportError('CLAIM_OUTCOME_UNKNOWN',request_bytes_sent=True,
+                        status_code=getattr(raw,'_http_status',None)) from None
                 saved.update(state='RECEIVED',claim=claim._private_payload());record.save(saved)
             claim=self._definition(parse_claim(saved['claim']))
             # Do not return a usable credential until both private credential
