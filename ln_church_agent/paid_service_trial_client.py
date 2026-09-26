@@ -1,10 +1,12 @@
 """Explicit fourth-family Task client; status-first bounded same-report recovery."""
 from __future__ import annotations
 
+from .access_quota import AccessQuotaPolicy, AccessQuotaError
+
 import os
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Optional
 
 from . import paid_service_trial_contract as c
 from .paid_service_trial_models import (
@@ -19,9 +21,9 @@ from .paid_service_trial_transport import (
 
 
 class PaidServiceTrialTaskClient:
-    def __init__(self, *, version: str='v2', transport: Any=None, monotonic: Any=time.monotonic, claim_directory: Any=None) -> None:
+    def __init__(self, *, version: str='v2', transport: Any=None, monotonic: Any=time.monotonic, claim_directory: Any=None, access_quota: Optional[AccessQuotaPolicy]=None) -> None:
         self.version=c.validate_version(version)
-        self._transport=transport or PaidServiceTrialTransport(version=version)
+        self._transport=transport or PaidServiceTrialTransport(version=version, access_quota=access_quota)
         if isinstance(self._transport, PaidServiceTrialTransport) and self._transport.version!=version:
             raise ValueError('Incompatible Paid Service Trial transport version.')
         self._monotonic=monotonic
@@ -100,7 +102,18 @@ class PaidServiceTrialTaskClient:
                 prior=saved['state']
                 saved['state']='UNKNOWN';record.save(saved)
                 try:
-                    raw=self._transport.claim_task(task_id,saved['body'].encode('utf-8'),idempotency_key=key)
+                    call = self._transport.claim_task
+                    if (prior == 'UNKNOWN' and hasattr(self._transport, 'recover_claim')
+                            and not self._transport.access_quota.has_operation(
+                                'POST', c.PUBLIC_API_ORIGIN+c.task_claim_path(task_id),
+                                {'Content-Type':'application/json','Idempotency-Key':key},
+                                saved['body'].encode('utf-8'))):
+                        call = self._transport.recover_claim
+                    raw=call(task_id,saved['body'].encode('utf-8'),idempotency_key=key)
+                except AccessQuotaError as error:
+                    if error.origin_not_sent:
+                        saved['state']='NOT_SENT';record.save(saved)
+                    raise
                 except PaidServiceTrialAPIError as error:
                     if 400<=error.status_code<500 and error.public_error_code!='invalid_response':
                         saved.update(state='REJECTED',rejection=dict(code=error.public_error_code,status=error.status_code,

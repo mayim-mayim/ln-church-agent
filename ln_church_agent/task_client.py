@@ -7,6 +7,8 @@ internal-secret behavior.
 
 from __future__ import annotations
 
+from .access_quota import AccessQuotaPolicy, AccessQuotaError
+
 import copy
 from functools import wraps
 import math
@@ -93,6 +95,8 @@ def _public_client_error_boundary(
         clean_error: Optional[TaskError] = None
         try:
             return function(*args, **kwargs)
+        except AccessQuotaError as error:
+            clean_error = error.detached()
         except TaskCheckpointPersistenceError as error:
             clean_error = TaskCheckpointPersistenceError(
                 request_bytes_sent=error.request_bytes_sent
@@ -289,6 +293,7 @@ class AgentTaskClient:
         pool_timeout_seconds: float = 5.0,
         total_operation_timeout_seconds: float = 20.0,
         _transport: Optional[TaskTransport] = None,
+        access_quota: Optional[AccessQuotaPolicy] = None,
         _sleep: Callable[[float], None] = time.sleep,
         _monotonic: Callable[[], float] = time.monotonic,
         _random: Callable[[], float] = random.random,
@@ -309,6 +314,7 @@ class AgentTaskClient:
         else:
             self._transport = TaskTransport(
                 api_origin=api_origin,
+                access_quota=access_quota,
                 connect_timeout_seconds=connect_timeout_seconds,
                 read_timeout_seconds=read_timeout_seconds,
                 write_timeout_seconds=write_timeout_seconds,
@@ -357,7 +363,7 @@ class AgentTaskClient:
             kwargs["_total_timeout_seconds"] = _total_timeout_seconds
         try:
             return self._transport.request(method, path, **kwargs)
-        except TaskError:
+        except (AccessQuotaError, TaskError):
             raise
         except Exception:
             # A package-private injected transport is still not allowed to

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .access_quota import AccessQuotaPolicy, AccessQuotaError
+
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -119,13 +121,14 @@ class AgentTaskV2Client:
         self,
         *,
         transport: Optional[TaskV2Transport] = None,
+        access_quota: Optional[AccessQuotaPolicy] = None,
         utcnow: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if transport is not None and not isinstance(transport, TaskV2Transport):
             raise ValueError("Invalid v2 transport.")
-        self._transport = transport or TaskV2Transport()
+        self._transport = transport or TaskV2Transport(access_quota=access_quota)
         self._owns_transport = transport is None
         self._utcnow = utcnow
         self._monotonic = monotonic

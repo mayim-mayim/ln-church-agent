@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.18.8 (publication candidate)
+
+- Add opt-in Base mainnet access-quota purchases for all four Task families,
+  with a shared access-only budget; automatic spending remains disabled by default.
+- Preserve the original request and payment proof while a purchase is pending,
+  count confirmed payments once, and retain purchased credits after result expiry.
+- Allow a new explicit GET after terminal result recovery and an explicitly
+  selected new purchase after a Paid Claim access purchase definitively fails.
+- Preserve Claim safety, readonly recovery, transport deadlines, and the keyless,
+  inspect-only MCP scope. Access purchase state remains memory-only.
+- Prepare 1.18.8 package/MCP metadata and exclude private evidence and operational
+  material from distributions. Publication and live payment are not asserted.
+- Details: [1.18.8 notes](docs/release_notes/v1.18.8.md) and
+  [access quota usage](docs/access-quota.md).
+
 ## 1.18.7
 
 - Retain Payment-Required and Payment-Response through standard Paid HTTP,

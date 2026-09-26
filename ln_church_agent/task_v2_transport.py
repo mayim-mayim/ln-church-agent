@@ -13,6 +13,9 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 import httpx
 from pydantic import ValidationError
 
+from .access_quota import AccessQuotaError, AccessQuotaPolicy
+from .network_fetch import _resolve_public_addresses
+
 from .task_transport import (
     _WriteTracker,
     _address_is_public_unicast,
@@ -182,6 +185,7 @@ class TaskV2Transport:
         self,
         *,
         exchange: Optional[Exchange] = None,
+        access_quota: Optional[AccessQuotaPolicy] = None,
         resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -193,6 +197,8 @@ class TaskV2Transport:
         self._monotonic = monotonic
         self._sleep = sleep
         self._random_source = random_source
+        self._custom_exchange = exchange
+        self.access_quota = access_quota if access_quota is not None else AccessQuotaPolicy()
         self._exchange = exchange or self._default_exchange
         self._closed = False
 
@@ -214,24 +220,32 @@ class TaskV2Transport:
         query: Optional[str],
         headers: Mapping[str, str],
         body: bytes,
+        timeout_seconds: float = 20.0,
+        _deadline: Optional[float] = None,
     ) -> TaskV2RawResponse:
         tracker = _WriteTracker()
         transport: Optional[httpx.HTTPTransport] = None
+        deadline = self._monotonic() + timeout_seconds
+        if _deadline is not None:
+            deadline = min(deadline, _deadline)
         try:
-            addresses_raw = self._resolver(PUBLIC_API_HOST, 443)
+            addresses_raw = _resolve_public_addresses(PUBLIC_API_HOST, resolver=self._resolver, timeout=min(5.0, timeout_seconds))
             addresses = tuple(sorted(set(str(item) for item in addresses_raw)))
             if not addresses or not all(_address_is_public_unicast(item) for item in addresses):
                 raise TaskV2TransportError(
                     "TASK_V2_DNS_POLICY_REJECTED", request_bytes_sent=False
                 )
-            deadline = self._monotonic() + 20.0
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                raise TaskV2TransportError("TASK_V2_TIMEOUT", request_bytes_sent=False)
             transport = _new_pinned_httpx_transport(
                 addresses[0], tracker, deadline, self._monotonic
             )
             url = PUBLIC_API_ORIGIN + path
             if query is not None:
                 url += "?" + query
-            timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+            timeout = httpx.Timeout(connect=min(5.0, remaining), read=min(10.0, remaining),
+                                    write=min(10.0, remaining), pool=min(5.0, remaining))
             with httpx.Client(
                 transport=transport,
                 trust_env=False,
@@ -333,8 +347,20 @@ class TaskV2Transport:
         if body:
             headers["Content-Type"] = "application/json"
         try:
-            raw = self._exchange(method, path, query, headers, body)
-        except TaskV2Error:
+            deadline = self._monotonic() + 20.0
+            def send(extra, remaining):
+                args = (method, path, query, dict(headers, **extra), body)
+                raw = (self._exchange(*args) if self._custom_exchange is not None
+                       else self._default_exchange(*args, timeout_seconds=remaining, _deadline=deadline))
+                if not isinstance(raw, TaskV2RawResponse):
+                    raise TaskV2TransportError("TASK_V2_RESPONSE_INVALID", request_bytes_sent=True)
+                return raw.status_code, raw.headers, raw.body
+            result = self.access_quota.exchange(method=method,
+                url=PUBLIC_API_ORIGIN + path + (("?" + query) if query is not None else ""),
+                headers=headers, body=body, send=send, deadline=deadline,
+                clock=self._monotonic, maximum_body=TASK_V2_MAXIMUM_JSON_BYTES)
+            raw = TaskV2RawResponse(*result)
+        except (AccessQuotaError, TaskV2Error):
             raise
         except Exception:
             raise TaskV2TransportError(
