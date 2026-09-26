@@ -1,5 +1,21 @@
 # ln-church-agent
 
+For opt-in **Base mainnet Agent API access-quota purchases** in the 1.18.8
+publication candidate, see [access quota usage](docs/access-quota.md). Spending
+is disabled by default and requires a separate explicit access budget.
+
+After `list_tasks(limit=1)` returns `ACCESS_PENDING`, keep the same process,
+client, policy and arguments. Follow the [finite GET continuation example](docs/access-quota.md#pending-get-keep-the-session-and-explicitly-continue):
+a caller-selected ordinary call **outside `read_only`** continues the operation.
+Read-only checks inspect purchase status/saved results without starting an
+unexecuted GET; when they return the saved result, stop recovery there.
+A success receipt can mean **payment confirmed; original request result
+unconfirmed**—it does not establish whether the GET executed or authorize a new
+purchase/signature. Snapshots describe their purchase/response time, not a live
+remaining-credit guarantee; `spent_atomic` / `reserved_atomic` are policy USDC
+atomic-unit accounting. Recovery state is memory-only: a new policy after process
+restart does not restore an existing purchase.
+
 
 **The Value of "Not a Verdict"**
 LN Church read models do not decide for the agent. They preserve **observed memory**: what was seen, what was paid, what failed, what receipt shape appeared, what protocol role was observed, and what verification cost was reported. This is not a recommendation or verdict; it is a **reusable observation record** that helps the local runtime avoid re-verifying everything. Final payment authority remains local.

@@ -12,6 +12,8 @@ import httpx
 
 from . import paid_service_trial_contract as c
 
+from .access_quota import AccessQuotaPolicy, AccessQuotaError
+
 from .task_transport import _WriteTracker, _new_pinned_httpx_transport, _resolve_addresses
 from .network_fetch import _resolve_public_addresses
 from .paid_service_trial_contract import (
@@ -74,6 +76,8 @@ def _public_boundary(function: Any) -> Any:
         detached = None
         try:
             return function(*args, **kwargs)
+        except AccessQuotaError as error:
+            detached = error.detached()
         except PaidServiceTrialAPIError as error:
             detached = PaidServiceTrialAPIError(error.public_error_code, status_code=error.status_code,
                                                reason=error.reason, request_id=error.request_id)
@@ -107,17 +111,19 @@ Exchange = Callable[[str, str, Optional[str], Mapping[str, str], bytes, float], 
 
 
 class PaidServiceTrialTransport:
-    """Every method performs at most one HTTP request, including authenticated status."""
+    """No business retry; a genuine quota challenge permits its bounded access continuation."""
 
     def __init__(self, *, version: str='v2', exchange: Optional[Exchange] = None,
                  resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
-                 monotonic: Callable[[], float] = time.monotonic) -> None:
+                 monotonic: Callable[[], float] = time.monotonic,
+                 access_quota: Optional[AccessQuotaPolicy] = None) -> None:
         if exchange is not None and not callable(exchange):
             raise ValueError("Invalid Paid Service Trial exchange.")
         self.version = c.validate_version(version)
         self._exchange = exchange or self._default_exchange
         self._resolver = resolver
         self._monotonic = monotonic
+        self.access_quota = access_quota if access_quota is not None else AccessQuotaPolicy()
         self._closed = False
 
     def close(self) -> None:
@@ -133,11 +139,13 @@ class PaidServiceTrialTransport:
 
     def _default_exchange(self, method: str, path: str, query: Optional[str],
                           headers: Mapping[str, str], body: bytes,
-                          timeout_seconds: float) -> PaidServiceTrialRawResponse:
+                          timeout_seconds: float, *, _deadline: Optional[float] = None) -> PaidServiceTrialRawResponse:
         tracker = _WriteTracker()
         transport = None
         status = None
         deadline = self._monotonic() + timeout_seconds
+        if _deadline is not None:
+            deadline = min(deadline, _deadline)
         try:
             addresses = _resolve_public_addresses(PUBLIC_API_HOST, resolver=self._resolver,
                                                    timeout=min(5.0, timeout_seconds))
@@ -189,7 +197,7 @@ class PaidServiceTrialTransport:
     def _once(self, method: str, path: str, *, query: Optional[str] = None,
               claim_token: Optional[str] = None, idempotency_key: Optional[str] = None,
               body: bytes = b"", timeout_seconds: float = 20.0,
-              expected_statuses: tuple = (200,), version: Optional[str] = None) -> Dict[str, Any]:
+              readonly: bool = False, expected_statuses: tuple = (200,), version: Optional[str] = None) -> Dict[str, Any]:
         version = self.version if version is None else c.validate_version(version)
         positive_bound(timeout_seconds, "timeout_seconds")
         if self._closed:
@@ -204,8 +212,19 @@ class PaidServiceTrialTransport:
         if body:
             headers["Content-Type"] = "application/json"
         try:
-            raw = self._exchange(method, path, query, headers, body, float(timeout_seconds))
-        except PaidServiceTrialError:
+            deadline = self._monotonic() + float(timeout_seconds)
+            def send(extra, remaining):
+                raw = self._exchange(method, path, query, dict(headers, **extra), body, remaining,
+                    **({"_deadline": deadline} if self._exchange == self._default_exchange else {}))
+                if not isinstance(raw, PaidServiceTrialRawResponse):
+                    raise PaidServiceTrialTransportError("RESPONSE_INVALID", request_bytes_sent=True)
+                return raw.status_code, raw.headers, raw.body
+            result = self.access_quota.exchange(method=method,
+                url=PUBLIC_API_ORIGIN + path + (("?" + query) if query is not None else ""),
+                headers=headers, body=body, send=send, deadline=deadline,
+                clock=self._monotonic, readonly=readonly, maximum_body=MAXIMUM_JSON_BYTES)
+            raw = PaidServiceTrialRawResponse(*result)
+        except (AccessQuotaError, PaidServiceTrialError):
             raise
         except Exception:
             raise PaidServiceTrialTransportError("TRANSPORT_ERROR", request_bytes_sent=None) from None
@@ -258,6 +277,12 @@ class PaidServiceTrialTransport:
                    timeout_seconds: float = 20.0) -> Dict[str, Any]:
         return self._once("POST", task_claim_path(task_id), body=body, idempotency_key=idempotency_key,
                           timeout_seconds=timeout_seconds)
+
+    def recover_claim(self, task_id: str, body: bytes, *, idempotency_key: str,
+                      timeout_seconds: float = 20.0) -> Dict[str, Any]:
+        """Read only the existing server binding; a miss cannot create a Claim."""
+        return self._once("POST", task_claim_path(task_id), body=body,
+                          idempotency_key=idempotency_key, timeout_seconds=timeout_seconds, readonly=True)
 
     def abandon_claim(self, task_id: str, claim_token: str, body: bytes, *, idempotency_key: str,
                       timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:

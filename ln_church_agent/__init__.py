@@ -227,6 +227,7 @@ def __dir__():
 Http402Client = Payment402Client 
 
 __all__ = [
+    "AccessQuotaPolicy", "AccessQuotaError", "AccessQuotaTerms",
     "PaidServiceRequest",
     "PaidServiceTrialTaskV2",
     "PaidServiceTrialClaimV2",
@@ -361,3 +362,5 @@ __all__ = [
     "TaskJournal",
     "JournalError",
 ]
+
+from .access_quota import AccessQuotaPolicy, AccessQuotaError, AccessQuotaTerms

@@ -1,4 +1,4 @@
-"""Dedicated no-payment transport for the public Agent Task API.
+"""Fixed-origin transport with opt-in access quota purchases for the Task API.
 
 The Task lane is intentionally isolated from :class:`LnChurchClient` and its
 payment/navigation machinery.  This module accepts only the fixed public
@@ -32,6 +32,8 @@ from urllib.parse import urlencode
 
 import httpcore
 import httpx
+
+from .access_quota import AccessQuotaError, AccessQuotaPolicy
 
 from .redaction import _inspect_address_is_forbidden
 from .task_contract import (
@@ -245,6 +247,8 @@ def _public_task_error_boundary(function: Callable[..., Any]) -> Callable[..., A
         clean_error: Optional[TaskError] = None
         try:
             return function(*args, **kwargs)
+        except AccessQuotaError as error:
+            clean_error = error.detached()
         except TaskError as error:
             clean_error = _detached_task_error(error)
         except Exception:
@@ -893,7 +897,7 @@ def _normalize_header_subset(
             if name not in {
                 "content-encoding",
                 "content-length",
-                "retry-after",
+                "retry-after", "payment-required", "payment-response", "x-ln-access-quota",
             }:
                 continue
             counts[name] = counts.get(name, 0) + 1
@@ -1161,6 +1165,7 @@ class TaskTransport:
         self,
         api_origin: str = TASK_API_ORIGIN,
         *,
+        access_quota: Optional[AccessQuotaPolicy] = None,
         connect_timeout_seconds: float = 5.0,
         read_timeout_seconds: float = 10.0,
         write_timeout_seconds: float = 10.0,
@@ -1210,6 +1215,7 @@ class TaskTransport:
         self._sleep = _sleep
         self._monotonic = _monotonic
         self._random = _random
+        self.access_quota = access_quota if access_quota is not None else AccessQuotaPolicy()
         self._closed = False
 
     def __enter__(self) -> "TaskTransport":
@@ -1234,6 +1240,7 @@ class TaskTransport:
         address: str,
         deadline: float,
         tracker: _WriteTracker,
+        access_headers: Optional[Mapping[str, str]] = None,
     ) -> Tuple[int, Dict[str, str], bytes]:
         remaining = _remaining(deadline, self._monotonic)
         if self._exchange is not None:
@@ -1249,6 +1256,7 @@ class TaskTransport:
                 address=address,
                 timeout=remaining,
                 tracker=tracker,
+                **({"access_headers": dict(access_headers)} if access_headers else {}),
             )
             if (
                 not isinstance(result, tuple)
@@ -1298,6 +1306,8 @@ class TaskTransport:
             headers["Content-Length"] = str(len(body))
         if claim_token is not None:
             headers[TASK_CLAIM_HEADER] = claim_token
+        if access_headers:
+            headers.update(access_headers)
 
         client = httpx.Client(
             transport=transport,
@@ -1330,7 +1340,7 @@ class TaskTransport:
                     if name not in {
                         "content-encoding",
                         "content-length",
-                        "retry-after",
+                        "retry-after", "payment-required", "payment-response", "x-ln-access-quota",
                     }:
                         continue
                     counts[name] = counts.get(name, 0) + 1
@@ -1500,16 +1510,16 @@ class TaskTransport:
                 )
                 if _exchange_budget is not None:
                     _exchange_budget.consume()
-                status, response_headers, content = self._exchange_once(
-                    method=method,
-                    path=path,
-                    params=normalized_params,
-                    body=body,
-                    claim_token=claim_token,
-                    address=addresses[0],
-                    deadline=deadline,
-                    tracker=tracker,
-                )
+                def send(extra, remaining):
+                    return self._exchange_once(method=method, path=path, params=normalized_params,
+                        body=body, claim_token=claim_token, address=addresses[0], deadline=deadline,
+                        tracker=tracker, access_headers=extra)
+                public_url = str(httpx.URL(TASK_API_ORIGIN + path, params=normalized_params))
+                status, response_headers, content = self.access_quota.exchange(
+                    method=method, url=public_url,
+                    headers={"Content-Type": "application/json"} if body is not None else {},
+                    body=body or b"", send=send, deadline=deadline, clock=self._monotonic,
+                    maximum_body=TASK_MAX_JSON_BYTES)
                 aggregate_request_state = _merge_request_byte_states(
                     aggregate_request_state, True
                 )
@@ -1551,6 +1561,8 @@ class TaskTransport:
                 raise _validate_api_error(
                     operation, status, data, retry_after
                 )
+            except AccessQuotaError:
+                raise
             except TaskError as exc:
                 if exc.request_bytes_sent is None:
                     exc.request_bytes_sent = tracker.request_bytes_sent

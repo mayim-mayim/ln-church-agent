@@ -13,3 +13,10 @@ include ln_church_agent/_vendor/justhtml/compatibility.patch
 include ln_church_agent/_vendor/justhtml/py.typed
 recursive-include ln_church_agent/contracts/v185-paid-service-trial-v2 *
 recursive-include tests/fixtures/v185-paid-service-trial-v2 *
+
+# Distribution content excludes private implementation and operator material.
+exclude AGENTS.md DEVELOPMENT.md
+prune .agents
+prune docs/evidence
+prune scripts/release
+global-exclude __pycache__ *.py[cod]

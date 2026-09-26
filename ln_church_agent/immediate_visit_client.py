@@ -1,6 +1,8 @@
 """Typed immediate visit client with durable, finite completion recovery."""
 from __future__ import annotations
 
+from .access_quota import AccessQuotaPolicy
+
 import math
 import time
 from typing import Any, Callable, Optional
@@ -64,11 +66,12 @@ class AgentImmediateVisitClient:
     """Only Venue API operations; target acquisition belongs to the executor."""
 
     def __init__(self, *, transport: Optional[ImmediateVisitTransport] = None,
+                 access_quota: Optional[AccessQuotaPolicy] = None,
                  monotonic: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep) -> None:
         if transport is not None and not isinstance(transport, ImmediateVisitTransport):
             raise ValueError("Invalid immediate visit transport.")
-        self._transport = transport or ImmediateVisitTransport()
+        self._transport = transport or ImmediateVisitTransport(access_quota=access_quota)
         self._owns_transport = transport is None
         self._monotonic = monotonic
         self._sleep = sleep
@@ -132,6 +135,20 @@ class AgentImmediateVisitClient:
             if error.request_bytes_sent is not False:
                 raise ImmediateVisitTransportError("CLAIM_OUTCOME_UNKNOWN", request_bytes_sent=True) from None
             raise
+
+    @_public_boundary
+    def recover_claim(self, task_id: str, agent_id: str, reward_address: str, *,
+                      idempotency_key: str, timeout_seconds: float = 20.0):
+        self._require_open()
+        task_id = validate_task_id(task_id)
+        address = validate_reward_address(reward_address)
+        body = canonical_report_bytes({"schema_version": CLAIM_REQUEST_SCHEMA_VERSION,
+                                       "agent_id": validate_agent_id(agent_id), "reward_address": address})
+        claim = _model(ImmediateVisitClaimCredential, self._transport.recover_claim(
+            task_id, body, idempotency_key=idempotency_key, timeout_seconds=timeout_seconds))
+        if claim.task_id != task_id or claim.reward_address != address:
+            raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
+        return claim
 
     @_public_boundary
     def abandon_claim(self, claim: ImmediateVisitClaimCredential, *, idempotency_key: str,
