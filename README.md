@@ -1,7 +1,7 @@
 # ln-church-agent
 
-For opt-in **Base mainnet Agent API access-quota purchases** in the 1.18.8
-publication candidate, see [access quota usage](docs/access-quota.md). Spending
+For opt-in **Base mainnet Agent API access-quota purchases** in SDK 1.18.8,
+see [access quota usage](docs/access-quota.md). Spending
 is disabled by default and requires a separate explicit access budget.
 
 After `list_tasks(limit=1)` returns `ACCESS_PENDING`, keep the same process,

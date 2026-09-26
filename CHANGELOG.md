@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.18.8 (publication candidate)
+## 1.18.8
 
 - Add opt-in Base mainnet access-quota purchases for all four Task families,
   with a shared access-only budget; automatic spending remains disabled by default.
@@ -10,8 +10,10 @@
   selected new purchase after a Paid Claim access purchase definitively fails.
 - Preserve Claim safety, readonly recovery, transport deadlines, and the keyless,
   inspect-only MCP scope. Access purchase state remains memory-only.
-- Prepare 1.18.8 package/MCP metadata and exclude private evidence and operational
-  material from distributions. Publication and live payment are not asserted.
+- Include 1.18.8 package/MCP metadata and exclude private evidence and operational
+  material from distributions. The GitHub Release is published; a fresh live-payment
+  retest of the c4 documentation artifacts and independent PyPI/MCP Registry readback
+  are not asserted here.
 - Details: [1.18.8 notes](docs/release_notes/v1.18.8.md) and
   [access quota usage](docs/access-quota.md).
 

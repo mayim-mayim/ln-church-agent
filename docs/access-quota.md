@@ -1,12 +1,13 @@
 # Access quota: opt-in purchase and same-operation recovery
 
-SDK 1.18.8 publication candidate, based on Charter
+SDK 1.18.8, based on Charter
 `563300b09e9d7ae736ea86d904b7c0077da2ce74` (index R5/R6, wire W2/W3/W6).
 Development Control accepted the c3 source. On 2026-09-26 it received, via the
 Human, Release's report of deployed Hondō and OpenClaw's passing live mainnet
 access-purchase/GET-continuation E2E. This is a reported result, not an independent
-verification here. The c4 documentation artifacts have not been live-payment
-retested; publication remains a separate Release step.
+verification here. The c4 documentation artifacts were published in the GitHub
+Release without a separate live-payment retest; publication does not change that
+evidence boundary.
 
 ## Default and explicit permission
 
