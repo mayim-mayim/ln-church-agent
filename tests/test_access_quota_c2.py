@@ -38,7 +38,7 @@ def test_public_get_terminal_then_explicit_normal_get(family, code, tmp_path):
     h.serve = serve
     if family == 'v17': client = AgentTaskClient(_transport=h.transport)
     elif family == 'scheduled': client = AgentTaskV2Client(transport=h.transport)
-    elif family == 'immediate': client = AgentImmediateVisitClient(transport=h.transport)
+    elif family == 'immediate': client = AgentImmediateVisitClient(version='v1', transport=h.transport)
     else: client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
     with pytest.raises(AccessQuotaError) as error: client.list_tasks()
     assert error.value.code == 'ACCESS_' + code.upper() and not error.value.origin_not_sent

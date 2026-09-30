@@ -57,7 +57,7 @@ class Exchange:
 
 def fixture(tmp_path, responses):
     exchange = Exchange(responses)
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     claim = ImmediateVisitClaimCredential.model_validate(claim_wire())
     report = FrozenImmediateVisitReport.from_report(report_wire())
     journal = ImmediateVisitJournal(tmp_path,claim)
@@ -67,7 +67,7 @@ def fixture(tmp_path, responses):
 def test_explicit_new_discovery_one_page_and_cursor():
     page = dict(schema_version="ln_church.agent_task_page.immediate_visit.v1", tasks=[task_wire()], next_cursor="opaque/+==")
     exchange = Exchange([raw(page), raw(dict(page,next_cursor=None))])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     first = client.list_tasks(limit=1)
     second = client.list_tasks(limit=1,cursor=first.next_cursor)
     assert second.next_cursor is None and len(exchange.requests) == 2
@@ -79,7 +79,7 @@ def test_explicit_new_discovery_one_page_and_cursor():
 def test_claim_request_has_no_endpoint_and_normalizes_address_without_local_admission():
     wire = claim_wire()
     exchange = Exchange([raw(wire), raw(dict(wire,execution_id="other_execution"))])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     first = client.claim_task(TASK,"example-agent",ADDRESS.lower(),idempotency_key="claim-one")
     second = client.claim_task(TASK,"example-agent",ADDRESS.upper().replace("0X","0x"),idempotency_key="claim-two")
     assert first.reward_address == second.reward_address
@@ -92,7 +92,7 @@ def test_claim_request_has_no_endpoint_and_normalizes_address_without_local_admi
 
 def test_unknown_claim_response_never_retried_and_hides_secret():
     exchange = Exchange([raw(dict(claim_wire(),private_body="raw-secret-from-response"))])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     with pytest.raises(ImmediateVisitTransportError) as caught:
         client.claim_task(TASK,"example-agent",ADDRESS,idempotency_key="claim-one")
     assert str(caught.value) == "CLAIM_OUTCOME_UNKNOWN"
@@ -247,7 +247,7 @@ def test_time_budget_exhaustion_prevents_next_request(tmp_path):
 
 def test_venue_transport_is_no_retry_and_closes_redirects():
     exchange = Exchange([ImmediateVisitRawResponse(302,{"Location":"http://127.0.0.1/"},b"{}")])
-    transport = ImmediateVisitTransport(exchange=exchange)
+    transport = ImmediateVisitTransport(version="v1", exchange=exchange)
     with pytest.raises(ImmediateVisitTransportError):
         transport.get_task(TASK)
     assert len(exchange.requests) == 1
@@ -265,7 +265,7 @@ def test_malformed_json_and_throwing_exchange_detach_full_error_graph():
     for response in (ImmediateVisitRawResponse(200,{},b'{"private":"secret-response"'),
                      RuntimeError("secret-response")):
         exchange = Exchange([response])
-        client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+        client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
         with pytest.raises(ImmediateVisitTransportError) as caught:
             client.get_task(TASK)
         _assert_detached(caught.value)
@@ -275,14 +275,14 @@ def test_invalid_claim_and_error_envelopes_detach_raw_input_graph():
     values = [raw(dict(claim_wire(),raw_body="secret-response")),
               raw(dict(schema_version="bad",code="not_found",message="secret-response",request_id="secret-response"),404)]
     for response in values:
-        client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=Exchange([response])))
+        client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=Exchange([response])))
         with pytest.raises(ImmediateVisitTransportError) as caught:
             client.claim_task(TASK,"agent",ADDRESS,idempotency_key="claim-one")
         _assert_detached(caught.value)
 
 
 def test_transport_and_model_direct_validation_exceptions_are_detached():
-    transport = ImmediateVisitTransport(exchange=Exchange([ImmediateVisitRawResponse(200,{},b'{"secret-response"')]))
+    transport = ImmediateVisitTransport(version="v1", exchange=Exchange([ImmediateVisitRawResponse(200,{},b'{"secret-response"')]))
     with pytest.raises(ImmediateVisitTransportError) as caught:
         transport.get_task(TASK)
     _assert_detached(caught.value)
@@ -296,7 +296,7 @@ def test_transport_and_model_direct_validation_exceptions_are_detached():
 
 def test_abandon_auth_and_idempotency_preserve_finite_response_observation():
     exchange = Exchange([raw(abandonment_wire())])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     claim = ImmediateVisitClaimCredential.model_validate(claim_wire())
     result = client.abandon_claim(claim,idempotency_key="abandon-one")
     assert result.transport_state == "response_received" and "secret-response" not in repr(result)
@@ -313,7 +313,7 @@ def test_abandon_auth_and_idempotency_preserve_finite_response_observation():
 ])
 def test_unbound_or_malformed_abandonment_stays_unknown_without_new_request(change):
     exchange = Exchange([raw(dict(abandonment_wire(), **change))])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     claim = ImmediateVisitClaimCredential.model_validate(claim_wire())
     result = client.abandon_claim(claim, idempotency_key="abandon-one")
     assert result.transport_state == "unknown" and len(exchange.requests) == 1
@@ -324,7 +324,7 @@ def test_unbound_or_malformed_abandonment_stays_unknown_without_new_request(chan
 def test_unknown_abandonment_can_replay_same_request_without_synthetic_status():
     exchange = Exchange([ImmediateVisitTransportError("TIMEOUT", request_bytes_sent=True),
                          raw(abandonment_wire())])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     claim = ImmediateVisitClaimCredential.model_validate(claim_wire())
     assert client.abandon_claim(claim, idempotency_key="abandon-one").transport_state == "unknown"
     assert len(exchange.requests) == 1
@@ -375,7 +375,7 @@ def test_definitely_unaccepted_correction_reuses_one_target_get(tmp_path,monkeyp
     journal = ImmediateVisitJournal(tmp_path,claim)
     original = ImmediateVisitExecutor(journal=journal).execute(claim,ENDPOINT)
     exchange = Exchange([error("invalid_request",400)])
-    client = AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange))
+    client = AgentImmediateVisitClient(version="v1", transport=ImmediateVisitTransport(version="v1", exchange=exchange))
     assert client.complete_task(claim,original,journal=journal).state == "rejected"
     corrected_wire = original.report.model_dump(mode="json")
     corrected_wire["submission_id"] = "sub_"+"b"*32

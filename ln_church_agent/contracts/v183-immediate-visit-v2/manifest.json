@@ -1,0 +1,184 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "immediate_http_visit.v2",
+  "task_definition_version": "2.0.0",
+  "task_definition_digest": "3ef4d211aa66ef7972e5c4fd861d5afd83219759e2eaebf926694936bd5a532f",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "241abc3f33299d7af19b80242cc5aa072ff76fa2",
+    "basis_tree": "0e51f2372689011807dea1c4bf9e67cc40b45f62",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "0f59fe892c1db0a529ef8c8227f667b3059e7495",
+    "architecture_commit": "11c481075a971034a676a9c06c651144c3edd13d",
+    "task_type": "immediate_http_visit.v2",
+    "task_definition_version": "2.0.0",
+    "profile_id": "immediate_visit_utf8.v2",
+    "source_bundle_entries": [
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/README.md",
+        "mode": "100644",
+        "blob": "5084ff92e95c2cdc43e6561290564e6d24305aec",
+        "sha256": "36e7b690e752f034bcfc8cd3cf6014affda974460b58d05972a5665b8d4b029b"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/html5.mjs",
+        "mode": "100644",
+        "blob": "6c02f1520a9bc9e7a5dbac65446a0b04303bca40",
+        "sha256": "54c946dbbbc25e438abe09b53a3e6f14f05060133784a2ad228f41992c7a999d"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/json-shape.mjs",
+        "mode": "100644",
+        "blob": "e9f43b919f60dfd214db8b850c425ba533fa2c62",
+        "sha256": "7bef62766578e85dd321bf8ad9d5494554c43feffef0813376e8ba1825273d84"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package-lock.json",
+        "mode": "100644",
+        "blob": "8b2a94f3c4fe762fd8d84011d9a16feb0fd6b676",
+        "sha256": "3418967f8535af3e0f4eff5a4b0550697c5a5c4897dcfe0b1d53480c0edd5bed"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package.json",
+        "mode": "100644",
+        "blob": "2b5f77720bf68d8ddbfa65134d4884c302c70108",
+        "sha256": "81fb1b3abe628e5533ec5cce53a63af583946f746f3da849219bd5910c42b7fa"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-profile.mjs",
+        "mode": "100644",
+        "blob": "3eef3e4cb7b182934caa95d9f4e48bd7c9cc1008",
+        "sha256": "d9d78f383105c9f10bbec686ef544f24ae933b4a15213ac30088f4ab49febbf5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "c3c97424fd36999cfdd404fb12f179c41a6eccb5",
+        "sha256": "850c4741abd3a40c33ff0bd1a7ca92279acb95191205867689225d493f514bd6"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/abandon-request.schema.json",
+        "mode": "100644",
+        "blob": "22b29b85ad3ef04ef3e92d3622f0caf7eb69f6a1",
+        "sha256": "6290faeb2d0c3a58c911ad939ecbfd5ca1be7bda459c9711fba70784a6bd3ad3"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/abandon-response.schema.json",
+        "mode": "100644",
+        "blob": "be07f46a609827fc25f7157b71e27f7f83c5ce3c",
+        "sha256": "04fc286df53bf6b9f404c3b1fd0304d99c1319ee20164bd523788a71713ddc80"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/claim-request.schema.json",
+        "mode": "100644",
+        "blob": "22b7a8f710d1a107ae1ff1c53dec18cf75578d4a",
+        "sha256": "ef64d1a14d75c6ce1bae7d9337b87c2cd58dd342d17783369af22c3f12d51b57"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/claim.schema.json",
+        "mode": "100644",
+        "blob": "9e5c4f4c5dd9431c2c9255ccd2965f664a51669a",
+        "sha256": "932fe44b214807427986bf3aca65bb4c8f9b0638240b2ecc4ae3545c9ff1d5f0"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/definition.json",
+        "mode": "100644",
+        "blob": "04501c2d70f8ce76af6668ecc0b0c614ab26c794",
+        "sha256": "e4fb5a13e1bb1bdb9eddf613502a68d62ba76c431962457742caba136233a3f5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/error.schema.json",
+        "mode": "100644",
+        "blob": "5fa6b292118f4cc1a6420c379cad5bdfe050cff5",
+        "sha256": "52a7bbac44135eb080f13746b6e8c7998c2969449cf69dc6562547b3721181c3"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/execution-page.schema.json",
+        "mode": "100644",
+        "blob": "afa65943fd0093b7ad2d580af5510aae5f11d697",
+        "sha256": "c173c36750d1aafe9c4087f3e14e108e4ebdb053a2fe257645b65f8887d2f629"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/observation.schema.json",
+        "mode": "100644",
+        "blob": "903fc4cce6a2c460089ab5c54946415b3323d96f",
+        "sha256": "c9021b83718f28faeafaa9438716920e156bd12b9c94ecf8a2c5e58f12183a18"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/page.schema.json",
+        "mode": "100644",
+        "blob": "19191b658df5371d8ff8f2d2053e813b875b86e7",
+        "sha256": "15ce1c90b3bee368f7c4de78a4ad4db6cdb0c3d51d2830579e49055d35b2d2ea"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/profile-fixtures.json",
+        "mode": "100644",
+        "blob": "10df867b9a81c59bfb9f21ccf44b186e3f599314",
+        "sha256": "f089b0e4d11490c0fa5979a49225cfc0035f83df67ea887fe4d5566a13f2f2c0"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/profile.json",
+        "mode": "100644",
+        "blob": "f253748bd87d473a92e50e5f6b2e399fa9267af9",
+        "sha256": "82b7e7fee02d090c4c833ea6d1c9c49a59a8ec5c2c2fc3fbe9406541d131fc40"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/receipt.schema.json",
+        "mode": "100644",
+        "blob": "b318f68055f1313999ed8ee91bbc632a12ab4edc",
+        "sha256": "cdce5650eddd0a6403cfe1e011bdf4fc1ff600e016ad5f9a884989d920edb4aa"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/registration-result.schema.json",
+        "mode": "100644",
+        "blob": "5cc8a16d2df463683768f4b283fd8b71e8a83de4",
+        "sha256": "34d7c9b9282e0a5d70e7427db816d047ccbebddebba13d9c0a0e1c6978874151"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/registration.schema.json",
+        "mode": "100644",
+        "blob": "c3b1eb8793375f5e6d731920b1cfaaa0032624d3",
+        "sha256": "4902ede5cc789051ed6c062bd21be1bd7d02af0644d0f0c274811ab1ce19e7e3"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/requester-registration/SKILL.md",
+        "mode": "100644",
+        "blob": "0fb41296e68cc3aa2be70db99eece455796e4ae7",
+        "sha256": "2b006fc866b4630e04089ebd20bc3adf92db7203c8777fb31aef2dc7cde09c75"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/result.schema.json",
+        "mode": "100644",
+        "blob": "ae4252ffe32d6811143dbfcbb8dd86a6e7d746c0",
+        "sha256": "13dd6c8ec4a1cd31b0466e1819c31e86b6e832ada26cf9ac99d90ab978822dc0"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/submission.schema.json",
+        "mode": "100644",
+        "blob": "b60bbfd22132bab292cf36c165d4c191e6be1a0c",
+        "sha256": "759eebe7e44329748fbb82963b7c27e121fdd100c7ca4c1971b39f917246ea4a"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/summary.schema.json",
+        "mode": "100644",
+        "blob": "52e1240ee1eb47e3d7b737c5125f380e2f168545",
+        "sha256": "755e63fd8119badfe6759c26a9362a00ae7aa315b86580596880a3d49c1852d7"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/task.schema.json",
+        "mode": "100644",
+        "blob": "1e4cecf21e1145e935ed15be0eada80efa8ca373",
+        "sha256": "e151e6a6065c0c9979348f4694fed68ce7393862a9a1a0c1d29a01fc779752db"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v2/2.0.0/wire-fixtures.json",
+        "mode": "100644",
+        "blob": "1561819b16490bc7d6d0eef4245b84ec47884136",
+        "sha256": "b178074d5e7b3952849c62d5fa14a07b9a2859cc0003bbdfb25435c8676865cb"
+      }
+    ]
+  }
+}

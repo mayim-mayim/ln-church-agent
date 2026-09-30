@@ -1,0 +1,39 @@
+{
+  "schema_version": "ln_church.task_definition.endpoint_choice_reason.v1",
+  "task_type": "endpoint_choice_reason.v1",
+  "task_schema_version": "ln_church.agent_task.endpoint_choice_reason.v1",
+  "task_definition_version": "1.0.0",
+  "plans": {
+    "C5": {
+      "registration_amount_atomic": "1000000",
+      "capacity_total": 5
+    },
+    "C55": {
+      "registration_amount_atomic": "10000000",
+      "capacity_total": 55
+    },
+    "C555": {
+      "registration_amount_atomic": "100000000",
+      "capacity_total": 555
+    }
+  },
+  "listing_seconds": 172800,
+  "claim_seconds": 600,
+  "evaluation_seconds": 1800,
+  "participation": "ONE_ACCEPTED_ANSWER_PER_OFFER_REWARD_ADDRESS",
+  "reward": {
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "correct_amount_atomic": "100000",
+    "incorrect_amount_atomic": "10000",
+    "full_reward_threshold": "0.7",
+    "rounding": "FLOOR_ATOMIC"
+  },
+  "evaluation_profile_id": "endpoint-choice-reason-jev-v1",
+  "publication": "AFTER_ANSWER_ACCEPTANCE_CLOSURE",
+  "description_retention_seconds": 2592000,
+  "description_retention_start": "MAX_ANSWER_CLOSURE_ALL_EVALUATIONS_FINAL",
+  "post_publication_cancellation": false,
+  "unused_capacity_refund": false
+}

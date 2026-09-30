@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import httpx
 
 from .access_quota import AccessQuotaPolicy, AccessQuotaError
+from .immediate_visit_versions import validate_version
 
 from .task_transport import _WriteTracker, _new_pinned_httpx_transport, _resolve_addresses
 from .network_fetch import _resolve_public_addresses
@@ -23,7 +24,7 @@ from .immediate_visit_contract import (
 
 MAXIMUM_JSON_BYTES = 4 * 1024 * 1024  # bounded 100-Task page with ten 2-KiB endpoints each
 MAXIMUM_RESPONSE_HEADER_BYTES = 32768
-USER_AGENT = "ln-church-agent-immediate-visit/1.18.7"
+USER_AGENT = "ln-church-agent-immediate-visit/1.18.9"
 _SAFE_CODES = frozenset({
     "TRANSPORT_CLOSED", "CLIENT_CLOSED", "REQUEST_INVALID", "RESPONSE_INVALID", "TIMEOUT",
     "TRANSPORT_ERROR", "DNS_POLICY_REJECTED", "RESPONSE_TOO_LARGE", "RESPONSE_ENCODING_REJECTED",
@@ -89,9 +90,10 @@ class ImmediateVisitTransport:
     def __init__(self, *, exchange: Optional[Exchange] = None,
                  resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
                  monotonic: Callable[[], float] = time.monotonic,
-                 access_quota: Optional[AccessQuotaPolicy] = None) -> None:
+                 access_quota: Optional[AccessQuotaPolicy] = None, version: str = "v2") -> None:
         if exchange is not None and not callable(exchange):
             raise ValueError("Invalid immediate visit exchange.")
+        self.version = validate_version(version)
         self._exchange = exchange or self._default_exchange
         self._resolver = resolver
         self._monotonic = monotonic
@@ -164,7 +166,7 @@ class ImmediateVisitTransport:
     def _once(self, method: str, path: str, *, query: Optional[str] = None,
               claim_token: Optional[str] = None, idempotency_key: Optional[str] = None,
               body: bytes = b"", timeout_seconds: float = 20.0,
-              readonly: bool = False, expected_statuses: tuple = (200,)) -> Dict[str, Any]:
+              readonly: bool = False, expected_statuses: tuple = (200,), error_version: Optional[str] = None) -> Dict[str, Any]:
         positive_bound(timeout_seconds, "timeout_seconds")
         if self._closed:
             raise ImmediateVisitTransportError("TRANSPORT_CLOSED")
@@ -209,7 +211,7 @@ class ImmediateVisitTransport:
         if 200 <= status <= 299:
             raise ImmediateVisitTransportError("RESPONSE_INVALID", request_bytes_sent=True)
         if (set(payload) == {"schema_version", "code", "message", "request_id"}
-                and payload.get("schema_version") == ERROR_SCHEMA_VERSION
+                and payload.get("schema_version") == self._error_schema(body, path, query, error_version)
                 and payload.get("code") in ERROR_CODES_BY_STATUS.get(status, ())
                 and isinstance(payload.get("message"), str) and isinstance(payload.get("request_id"), str)):
             code = payload["code"]
@@ -218,9 +220,20 @@ class ImmediateVisitTransport:
         payload.clear()
         raise ImmediateVisitTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
 
-    def list_tasks(self, *, limit: int = 25, cursor: Optional[str] = None, timeout_seconds: float = 20.0) -> Dict[str, Any]:
+    def _error_schema(self, body, path, query, explicit=None):
+        version = validate_version(explicit or self.version)
+        if body:
+            request = decode_json_object(body, MAXIMUM_JSON_BYTES)
+            schema = request.get("schema_version", "")
+            version = "v1" if schema == "ln_church.agent_task_claim_request.v1" else schema.rsplit(".", 1)[-1]
+        elif query and "immediate_http_visit.v1" in query:
+            version = "v1"
+        return "ln_church.task_error.immediate_visit." + validate_version(version)
+
+    def list_tasks(self, *, limit: int = 25, cursor: Optional[str] = None, timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         positive_bound(limit, "limit", integer=True, maximum=100)
-        query = {"task_type": TASK_TYPE, "task_schema_version": TASK_SCHEMA_VERSION, "limit": str(limit)}
+        version = validate_version(version or self.version)
+        query = {"task_type": "immediate_http_visit." + version, "task_schema_version": "ln_church.agent_task.immediate_visit." + version, "limit": str(limit)}
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor or len(cursor.encode("utf-8")) > 8192:
                 raise ValueError("Invalid cursor.")
@@ -253,6 +266,6 @@ class ImmediateVisitTransport:
                           timeout_seconds=timeout_seconds, expected_statuses=(200, 202))
 
     def get_submission_status(self, task_id: str, submission_id: str, claim_token: str,
-                              *, timeout_seconds: float = 20.0) -> Dict[str, Any]:
+                              *, timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         return self._once("GET", task_status_path(task_id, submission_id), claim_token=claim_token,
-                          timeout_seconds=timeout_seconds)
+                          timeout_seconds=timeout_seconds, error_version=version)

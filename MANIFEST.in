@@ -20,3 +20,8 @@ prune .agents
 prune docs/evidence
 prune scripts/release
 global-exclude __pycache__ *.py[cod]
+
+recursive-include ln_church_agent/contracts/v189-endpoint-choice-reason *
+recursive-include ln_church_agent/contracts/v183-immediate-visit-v2 *
+
+recursive-include tests/fixtures/v189 *.mjs

@@ -79,8 +79,8 @@ class ImmediateVisitReward(_Frozen):
 
 class _OfferSnapshot(_Frozen):
     task_id: str
-    task_type: Literal["immediate_http_visit.v1"]
-    profile_id: Literal["immediate_visit_utf8.v1"]
+    task_type: Literal["immediate_http_visit.v1", "immediate_http_visit.v2"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
     endpoints: Tuple[ImmediateVisitEndpoint, ...]
     repeat_policy: Literal["allow", "once_per_endpoint"]
     reward: ImmediateVisitReward
@@ -104,14 +104,16 @@ class _OfferSnapshot(_Frozen):
 
     @model_validator(mode="after")
     def _unique(self) -> "_OfferSnapshot":
+        from .immediate_visit_versions import validate_tuple
+        validate_tuple(self)
         if not 1 <= len(self.endpoints) <= 10 or len({e.endpoint_id for e in self.endpoints}) != len(self.endpoints):
             raise ValueError("Invalid endpoints.")
         return self
 
 
 class ImmediateVisitTask(_OfferSnapshot):
-    schema_version: Literal["ln_church.agent_task.immediate_visit.v1"]
-    definition_version: Literal["1.0.0"]
+    schema_version: Literal["ln_church.agent_task.immediate_visit.v1", "ln_church.agent_task.immediate_visit.v2"]
+    definition_version: Literal["1.0.0", "2.0.0"]
     status: Literal["OPEN", "LISTING_ENDED", "CLOSED"]
     published_at: str
     listing_ends_at: str
@@ -140,7 +142,7 @@ class ImmediateVisitTask(_OfferSnapshot):
 
 
 class ImmediateVisitTaskPage(_Frozen):
-    schema_version: Literal["ln_church.agent_task_page.immediate_visit.v1"]
+    schema_version: Literal["ln_church.agent_task_page.immediate_visit.v1", "ln_church.agent_task_page.immediate_visit.v2"]
     tasks: Tuple[ImmediateVisitTask, ...]
     next_cursor: Optional[str]
 
@@ -150,6 +152,13 @@ class ImmediateVisitTaskPage(_Frozen):
         if type(value) not in (list, tuple) or len(value) > 100:
             raise ValueError("Invalid task page.")
         return tuple(value)
+
+    @model_validator(mode="after")
+    def _page_version(self):
+        version = self.schema_version.rsplit(".", 1)[1]
+        if any(t.task_type != "immediate_http_visit." + version for t in self.tasks):
+            raise ValueError("Cross-version page.")
+        return self
 
     @field_validator("next_cursor")
     @classmethod
@@ -161,7 +170,7 @@ class ImmediateVisitTaskPage(_Frozen):
 
 class ImmediateVisitClaimCredential(_OfferSnapshot):
     """Server Claim snapshot; bearer is absent from repr and ordinary serialization."""
-    schema_version: Literal["ln_church.agent_task_claim_response.immediate_visit.v1"]
+    schema_version: Literal["ln_church.agent_task_claim_response.immediate_visit.v1", "ln_church.agent_task_claim_response.immediate_visit.v2"]
     execution_id: str
     claimed_at: str
     report_deadline: str
@@ -299,13 +308,19 @@ ImmediateVisitObservation = Union[ImmediateVisitComparableObservation, Immediate
 
 
 class ImmediateVisitCompletionReport(_Frozen):
-    schema_version: Literal["ln_church.task_completion.immediate_visit.v1"]
+    schema_version: Literal["ln_church.task_completion.immediate_visit.v1", "ln_church.task_completion.immediate_visit.v2"]
     task_id: str
     execution_id: str
     submission_id: str
     endpoint_id: str
-    profile_id: Literal["immediate_visit_utf8.v1"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
     observation: ImmediateVisitObservation = Field(discriminator="outcome", repr=False)
+
+    @model_validator(mode="after")
+    def _report_version(self):
+        if self.schema_version.rsplit(".", 1)[1] != self.profile_id.rsplit(".", 1)[1]:
+            raise ValueError("Cross-version report.")
+        return self
 
     @field_validator("task_id")
     @classmethod
@@ -398,12 +413,14 @@ class _ReceiptIdentity(_Frozen):
     execution_id: str
     submission_id: str
     endpoint_id: str
-    profile_id: Literal["immediate_visit_utf8.v1"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
     report_sha256: str = Field(repr=False)
     received_at: str
 
     @model_validator(mode="after")
     def _identity(self) -> "_ReceiptIdentity":
+        if self.schema_version.rsplit(".", 1)[1] != self.profile_id.rsplit(".", 1)[1]:
+            raise ValueError("Cross-version receipt.")
         validate_task_id(self.task_id)
         validate_opaque_id(self.execution_id, "execution_id")
         validate_submission_id(self.submission_id)
@@ -418,7 +435,7 @@ class _ReceiptIdentity(_Frozen):
 
 
 class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1"]
+    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1", "ln_church.task_completion_receipt.immediate_visit.v2"]
     status_url: str = Field(repr=False)
     receipt_state: Literal["accepted"]
 
@@ -430,7 +447,7 @@ class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
 
 
 class ImmediateVisitSubmissionStatus(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1"]
+    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1", "ln_church.task_submission_status.immediate_visit.v2"]
     evaluation_state: Literal["pending", "repeat_drop", "inconclusive", "mismatch", "base_approved", "base_bonus_approved"]
     decision_at: Optional[str]
     approved_amount_atomic: Literal["0", "7500", "15000"]
@@ -483,7 +500,7 @@ class ImmediateVisitCompletionResult(_Frozen):
 
 class _ImmediateVisitAbandonmentResponse(_Frozen):
     """Validate the accepted Hondō response without adding a public Wire schema."""
-    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1"]
+    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1", "ln_church.agent_task_abandon_response.immediate_visit.v2"]
     task_id: str
     execution_id: str
     state: Literal["abandoned"]

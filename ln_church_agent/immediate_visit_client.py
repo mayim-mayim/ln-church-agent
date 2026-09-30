@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .access_quota import AccessQuotaPolicy
+from .immediate_visit_versions import version_of, validate_version, claim_schema
 
 import math
 import time
@@ -67,11 +68,13 @@ class AgentImmediateVisitClient:
 
     def __init__(self, *, transport: Optional[ImmediateVisitTransport] = None,
                  access_quota: Optional[AccessQuotaPolicy] = None,
+                 version: str = "v2",
                  monotonic: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep) -> None:
         if transport is not None and not isinstance(transport, ImmediateVisitTransport):
             raise ValueError("Invalid immediate visit transport.")
-        self._transport = transport or ImmediateVisitTransport(access_quota=access_quota)
+        self.version = validate_version(version)
+        self._transport = transport or ImmediateVisitTransport(access_quota=access_quota, version=self.version)
         self._owns_transport = transport is None
         self._monotonic = monotonic
         self._sleep = sleep
@@ -94,6 +97,15 @@ class AgentImmediateVisitClient:
         if self._closed:
             raise ImmediateVisitTransportError("CLIENT_CLOSED")
 
+    def registration_client(self):
+        from .offer_registration import OfferRegistrationClient
+        return OfferRegistrationClient(transport=self._transport)
+
+    def prepare_registration(self, *, plan_id, repeat_policy, urls, timeout_seconds=20.0):
+        self._require_open()
+        return self.registration_client().prepare_registration(dict(task_type="immediate_http_visit."+self.version,
+            plan_id=plan_id, repeat_policy=repeat_policy, urls=urls), timeout_seconds=timeout_seconds)
+
     def _remaining(self, deadline: float) -> float:
         remaining = deadline - self._monotonic()
         if not math.isfinite(remaining) or remaining <= 0:
@@ -104,8 +116,11 @@ class AgentImmediateVisitClient:
     def list_tasks(self, limit: int = 25, cursor: Optional[str] = None,
                    *, timeout_seconds: float = 20.0) -> ImmediateVisitTaskPage:
         self._require_open()
-        return _model(ImmediateVisitTaskPage, self._transport.list_tasks(
-            limit=limit, cursor=cursor, timeout_seconds=timeout_seconds))
+        page = _model(ImmediateVisitTaskPage, self._transport.list_tasks(
+            limit=limit, cursor=cursor, timeout_seconds=timeout_seconds, version=self.version))
+        if page.schema_version.rsplit(".", 1)[1] != self.version:
+            raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
+        return page
 
     @_public_boundary
     def get_task(self, task_id: str, *, timeout_seconds: float = 20.0) -> ImmediateVisitTask:
@@ -121,14 +136,17 @@ class AgentImmediateVisitClient:
                    idempotency_key: str, timeout_seconds: float = 20.0) -> ImmediateVisitClaimCredential:
         self._require_open()
         task_id = validate_task_id(task_id)
+        if self.version == "v2":
+            from .immediate_visit_versions import load_v2_pack
+            load_v2_pack()
         address = validate_reward_address(reward_address)
         key = validate_opaque_id(idempotency_key, "idempotency_key")
-        body = canonical_report_bytes({"schema_version": CLAIM_REQUEST_SCHEMA_VERSION,
+        body = canonical_report_bytes({"schema_version": claim_schema(self.version),
                                        "agent_id": validate_agent_id(agent_id), "reward_address": address})
         try:
             claim = _model(ImmediateVisitClaimCredential, self._transport.claim_task(
                 task_id, body, idempotency_key=key, timeout_seconds=timeout_seconds))
-            if claim.task_id != task_id or claim.reward_address != address:
+            if claim.task_id != task_id or claim.reward_address != address or version_of(claim) != self.version:
                 raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
             return claim
         except ImmediateVisitTransportError as error:
@@ -142,11 +160,11 @@ class AgentImmediateVisitClient:
         self._require_open()
         task_id = validate_task_id(task_id)
         address = validate_reward_address(reward_address)
-        body = canonical_report_bytes({"schema_version": CLAIM_REQUEST_SCHEMA_VERSION,
+        body = canonical_report_bytes({"schema_version": claim_schema(self.version),
                                        "agent_id": validate_agent_id(agent_id), "reward_address": address})
         claim = _model(ImmediateVisitClaimCredential, self._transport.recover_claim(
             task_id, body, idempotency_key=idempotency_key, timeout_seconds=timeout_seconds))
-        if claim.task_id != task_id or claim.reward_address != address:
+        if claim.task_id != task_id or claim.reward_address != address or version_of(claim) != self.version:
             raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
         return claim
 
@@ -155,7 +173,7 @@ class AgentImmediateVisitClient:
                       timeout_seconds: float = 20.0) -> ImmediateVisitAbandonmentResult:
         self._require_open()
         claim = _credential(claim)
-        body = canonical_report_bytes({"schema_version": ABANDON_REQUEST_SCHEMA_VERSION,
+        body = canonical_report_bytes({"schema_version": "ln_church.agent_task_abandon_request.immediate_visit." + version_of(claim),
                                        "execution_id": claim.execution_id})
         # The accepted Hondō response supplies a task/execution witness. Check it
         # before exposing transport receipt; do not mutate local Report or rights.
@@ -163,7 +181,8 @@ class AgentImmediateVisitClient:
             payload = self._transport.abandon_claim(claim.task_id, claim._claim_token_value(), body,
                                                    idempotency_key=idempotency_key, timeout_seconds=timeout_seconds)
             response = _model(_ImmediateVisitAbandonmentResponse, payload)
-            if response.task_id != claim.task_id or response.execution_id != claim.execution_id:
+            if (response.task_id != claim.task_id or response.execution_id != claim.execution_id
+                    or response.schema_version.rsplit(".", 1)[1] != version_of(claim)):
                 raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
         except ImmediateVisitAPIError as error:
             return ImmediateVisitAbandonmentResult(transport_state="rejected", task_id=claim.task_id,
@@ -182,7 +201,7 @@ class AgentImmediateVisitClient:
         claim = _credential(claim)
         report = _report(claim, frozen_report)
         payload = self._transport.get_submission_status(claim.task_id, report.submission_id,
-                                                        claim._claim_token_value(), timeout_seconds=timeout_seconds)
+                                                        claim._claim_token_value(), timeout_seconds=timeout_seconds, version=version_of(claim))
         return _bound_response(ImmediateVisitSubmissionStatus, payload, claim, report)
 
     @_public_boundary

@@ -295,3 +295,24 @@ permitted value or the entirety of signature validation.
 The reported live E2E used the accepted c3 SDK source and deployed Hondō source;
 local synthetic example checks below that boundary are not independent proof of
 that live result, nor a live test of the rebuilt c4 artifacts.
+
+## Lost process or policy state
+
+Recovery depends on the original live process, client, policy and call arguments.
+A purchase ID alone cannot restore a new policy's `read_only` operation. A safe
+reconciliation note may retain the existing public-safe error fields, terms and
+snapshot, but it is not a restoration credential. Keep challenge/proof/signature
+and raw internal operation state out of ordinary logs.
+
+A receipt, transaction reference or quota snapshot describes an observation;
+it does not prove current remaining credits, completion of the original GET, or
+that the GET never ran. If unresolved recovery state is lost, stop automatic
+continuation dependent on that purchase. Do not resolve UNKNOWN by creating a
+new policy, nonce, signature or purchase. Independent authorized operations and
+free reads remain possible.
+
+With the original live policy, `read_only` retrieves purchase status or a saved
+result without starting an unexecuted GET. If it returns the result, recovery is
+finished. Otherwise an explicitly selected ordinary call with the same arguments
+continues the original operation. A new Task's durable Claim/answer journal is
+not an access-purchase or shared-budget backup.

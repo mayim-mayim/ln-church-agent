@@ -1,0 +1,58 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "endpoint_choice_reason.v1",
+  "task_definition_version": "1.0.0",
+  "task_definition_digest": "a74586b704dd87eb819780481ad7347ce9fcdfdaa4684726da32e4e1ed9e1d93",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "241abc3f33299d7af19b80242cc5aa072ff76fa2",
+    "basis_tree": "0e51f2372689011807dea1c4bf9e67cc40b45f62",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "10bbdb32d02f98e27e1a89efabbd89a6df9a9e51",
+    "architecture_commit": "3c929022ecb5d5c62886ae688c1ab686ed149de8",
+    "task_type": "endpoint_choice_reason.v1",
+    "task_definition_version": "1.0.0",
+    "profile_id": "endpoint-choice-reason-jev-v1",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "ebad87c74352e6902422ea2cb08ba14890cb69c8",
+        "sha256": "2b86afc2f70bc1ded5f9390a973c4eb02a93f9bc18252788c7a488a40d6c9e16"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/definition.json",
+        "mode": "100644",
+        "blob": "d0aa67e3e6ed56d63fdcf857083690b8e7246c75",
+        "sha256": "42038c72cd1eb1cc99c66f330fb8c20cbd5851dffc98d25e0ac40b0ff2e90d77"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/evaluation-profile.json",
+        "mode": "100644",
+        "blob": "1b3371365a56cf7c43b6684134006b09872d54a8",
+        "sha256": "b65971293afe9287bf3d81de2eb7cc83bf68e0d75f90d16983e85dc03142d2b6"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "012ebfbd1f6f56ca71f0bf6c2ec13a770faba371",
+        "sha256": "f6533f7b9cfb0f69cc8aa6144cd5383567b72696f487de74887e702104a2a7a1"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/semantic-fixtures.json",
+        "mode": "100644",
+        "blob": "b39c26c2deb9effbd440e44c44affab183160df0",
+        "sha256": "46bec4bcf71dbac7897bbb98fcea9e8adb494765389fc7d3caa9c175c0b8673e"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v1/1.0.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "431df7b734e013bf047b30aebb14b50ee6040671",
+        "sha256": "ed465a664f7ecb939ffb64b8be507ca5e300272518282f073d907647ff23b0a2"
+      }
+    ]
+  }
+}

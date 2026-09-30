@@ -26,7 +26,7 @@ from .paid_service_trial_contract import (
 
 MAXIMUM_JSON_BYTES = 4 * 1024 * 1024  # bounded 100-Task page with ten 2-KiB endpoints each
 MAXIMUM_RESPONSE_HEADER_BYTES = 32768
-USER_AGENT = "ln-church-agent-paid-service-trial/1.18.7"
+USER_AGENT = "ln-church-agent-paid-service-trial/1.18.9"
 _SAFE_CODES = frozenset({
     "TRANSPORT_CLOSED", "CLIENT_CLOSED", "REQUEST_INVALID", "RESPONSE_INVALID", "TIMEOUT",
     "TRANSPORT_ERROR", "DNS_POLICY_REJECTED", "RESPONSE_TOO_LARGE", "RESPONSE_ENCODING_REJECTED",

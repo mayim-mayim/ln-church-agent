@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.18.9 — candidate
+
+- URL Choice & Reason strict worker DTOs, private Claim/answer recovery, Requester paid registration/read recovery and result proofs.
+- Immediate v2 role UA dispatch with explicit v1 compatibility.
+- Public positioning, memory-only access recovery and paid POST terms-check explanation.
+- Two byte-identical Hondo packs and isolated new/legacy client conformance.
+- Candidate qualification does not assert Development Control acceptance or public release.
+
 ## 1.18.8
 
 - Add opt-in Base mainnet access-quota purchases for all four Task families,
