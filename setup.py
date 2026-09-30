@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.8",
+    version="1.18.9",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     package_data={
         "ln_church_agent": [
@@ -17,6 +17,9 @@ setup(
             "contracts/v185-paid-service-trial/*",
             "contracts/v185-paid-service-trial-v2/*",
             "contracts/v183-immediate-visit/*",
+            "contracts/v183-immediate-visit-v2/*",
+            "contracts/v183-immediate-visit-v2/requester-registration/SKILL.md",
+            "contracts/v189-endpoint-choice-reason/*",
             "contracts/v183-immediate-visit/requester-registration/SKILL.md",
         ],
         "ln_church_agent._vendor.justhtml": [
@@ -59,14 +62,20 @@ setup(
         ]
     },
     author="LN Church",
-    description="A buyer-side HTTP 402 runtime and agent-commerce surface inspector for x402, L402, MPP, and open-web paid actions.",
+    description="Deterministic runtime for AI agents to inspect HTTP 402 services, complete rewarded tasks, execute bounded paid actions, and recover safely across L402, x402, and MPP.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://kari.mayim-mayim.com/",
     license="MIT",
+    project_urls={
+        "Source": "https://github.com/mayim-mayim/ln-church-agent",
+        "Documentation": "https://github.com/mayim-mayim/ln-church-agent/blob/main/docs/01_quickstart.md",
+        "Issues": "https://github.com/mayim-mayim/ln-church-agent/issues",
+        "Changelog": "https://github.com/mayim-mayim/ln-church-agent/blob/main/CHANGELOG.md",
+    },
+    keywords="ai-agents http-402 x402 l402 mpp agentic-commerce usdc python-sdk mcp lightning-network",
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Operating System :: OS Independent",
     ],
     python_requires=">=3.8.1",
 )

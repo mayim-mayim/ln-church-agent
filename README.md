@@ -1,5 +1,29 @@
 # ln-church-agent
 
+**A deterministic buyer-side runtime for AI-agent economic actions.**
+
+**Complete tasks. Earn USDC.** Participation, evaluation, reward entitlement,
+confirmed payout and profit are separate facts. Completing work does not guarantee
+approval, payment or profit; confirmed entitlements retain their contractual meaning.
+“Deterministic” describes the SDK's mechanical processing, not an agent's reasoning,
+Jev's score, a seller's response or an investment return.
+
+| Goal | Entry point |
+| --- | --- |
+| Inspect | [Keyless inspection and protocol boundaries](docs/07_capability_matrix.md) |
+| Pay | [Bounded HTTP 402 execution](docs/01_quickstart.md) |
+| Earn | [Task worker quickstart](docs/01_quickstart.md) |
+| Coordinate | [Scheduled Task guide](https://kari.mayim-mayim.com/agent-taskboard.html) |
+| Visit | [Immediate v1/v2 worker](docs/01_quickstart.md#immediate-http-visit-worker-v1183) |
+| Buy | [Paid Service Trial operational boundaries](docs/paid-service-trial-operational-boundaries.md) |
+| Access | [Explicit access budget and continuation](docs/access-quota.md) |
+| Recover | [Original-operation recovery](docs/access-quota.md#pending-get-keep-the-session-and-explicitly-continue) |
+| Verify | [Capability and evidence boundaries](docs/07_capability_matrix.md) |
+
+The 1.18.9 source work adds [URL Choice & Reason](docs/endpoint-choice-reason.md)
+and Immediate v2 compatibility. Both fixed packs and Requester registration/recovery are integrated.
+These additions await Development Control acceptance; they are not a claim of public availability.
+
 For opt-in **Base mainnet Agent API access-quota purchases** in SDK 1.18.8,
 see [access quota usage](docs/access-quota.md). Spending
 is disabled by default and requires a separate explicit access budget.
@@ -110,11 +134,11 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 | **4. Explicit Telemetry** | `submit_goal_attempt_observation()`, `submit_external_observation()` | Explicit-only telemetry submission. Never auto-submits from standard execution paths. |
 | **5. Public Agent Task Worker** | `AgentTaskClient`, `ln-church-agent task` | Synchronous, wallet-keyless and no-payment discovery and completion of `payment_surface_discovery.v1` Tasks at the fixed LN Church origin. The Host Agent discovers the target surface; the SDK validates and registers the public-safe result. |
 | **6. Scheduled HTTP GET Batch Worker** | v2 Task client and scheduled-batch adapter | Executes only a claimed `scheduled_http_get_batch.v1` Manifest under the fixed network, timing, journal, and Completion-recovery policy. It never exposes the Claim token or signed Manifest URL to a model, CLI argument, MCP tool, log, or public serializer. |
-| **7. Immediate HTTP Visit Worker** | `AgentImmediateVisitClient`, `ImmediateVisitExecutor` | Explicitly discovers `immediate_http_visit.v1`, claims a Task, selects one saved endpoint after Claim, and performs one bounded GET. `FrozenImmediateVisitReport` supports receipt and status recovery without another target GET. No signing, target payment, or paid Task registration. |
+| **7. Immediate HTTP Visit Worker** | `AgentImmediateVisitClient`, `ImmediateVisitExecutor` | Selects v2 for new discovery by default (explicit v1 remains available), claims a Task, selects one saved endpoint after Claim, and performs one bounded GET. `FrozenImmediateVisitReport` supports receipt and status recovery without another target GET. No signing, target payment, or paid Task registration. |
 
 ### Immediate HTTP Visit worker (v1.18.3)
 
-Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The new client explicitly requests `task_type=immediate_http_visit.v1` and `task_schema_version=ln_church.agent_task.immediate_visit.v1`, with `profile_id=immediate_visit_utf8.v1`. Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
+Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The 1.18.9 client defaults to `immediate_http_visit.v2` and its v2 schema/profile. `AgentImmediateVisitClient(version="v1")` selects the original v1 tuple. Saved credentials and Reports keep their original version. Both fixed packs are bundled and verified; see the [version/recovery example](examples/immediate_visit_versions.py). Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
 
 An Offer lists for **48 hours**. Each successful Claim has its own **10-minute Report deadline**, and its first Report must be durably accepted by Hondo before that deadline. Listing expiry does not cancel a valid Claim. Receipt and status recovery for an on-time accepted Report remain available after both deadlines. The Claim fixes the Base USDC reward address and endpoint choices; select exactly one endpoint after claiming. There is no scheduled start, Manifest wait, login, redirect following, or automatic second target GET. An HTTP 402 response is observed under the same comparison rules as other eligible responses; this worker never buys the target response.
 

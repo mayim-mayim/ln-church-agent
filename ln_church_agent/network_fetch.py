@@ -1113,10 +1113,12 @@ class ControlledHTTPSConnector:
     def fetch_target(self, raw_url: str) -> FetchResponse:
         return self.fetch(raw_url, scope=FetchScope.TARGET)
 
-    def fetch_immediate_visit(self, raw_url: str) -> ImmediateVisitFetchResponse:
+    def fetch_immediate_visit(self, raw_url: str, *, profile_id: str = "immediate_visit_utf8.v1") -> ImmediateVisitFetchResponse:
         """One new-profile GET with fixed budgets and no ambient HTTP state."""
 
         from .immediate_visit_contract import validate_endpoint_url
+        from .immediate_visit_versions import agent_user_agent
+        user_agent = agent_user_agent(profile_id)
 
         status: Optional[int] = None
         phase = "url"
@@ -1170,7 +1172,7 @@ class ControlledHTTPSConnector:
             request = (
                 "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
                 "Accept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
-            ) % (request_target, host, IMMEDIATE_VISIT_USER_AGENT)
+            ) % (request_target, host, user_agent)
             _set_timeout(tls_socket, 12.0, deadline, self._monotonic)
             tls_socket.sendall(request.encode("ascii"))
             _remaining(deadline, self._monotonic)
@@ -1262,9 +1264,10 @@ def fetch_target_once(
 
 
 def fetch_immediate_visit_once(
-    raw_url: str, *, connector: Optional[ControlledHTTPSConnector] = None
+    raw_url: str, *, connector: Optional[ControlledHTTPSConnector] = None,
+    profile_id: str = "immediate_visit_utf8.v1"
 ) -> ImmediateVisitFetchResponse:
-    return (connector or ControlledHTTPSConnector()).fetch_immediate_visit(raw_url)
+    return (connector or ControlledHTTPSConnector()).fetch_immediate_visit(raw_url, profile_id=profile_id)
 
 
 __all__ = [

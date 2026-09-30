@@ -117,6 +117,26 @@ from .capabilities import get_capability_matrix
 # normal explicit import (``from ln_church_agent import AgentTaskV2Client``)
 # resolves and caches exactly the requested public symbol.
 _V18_LAZY_EXPORTS = {
+    'OfferRegistrationClient': ('offer_registration', 'OfferRegistrationClient'),
+    'OfferRegistrationError': ('offer_registration', 'OfferRegistrationError'),
+    'RegistrationQuote': ('offer_registration', 'RegistrationQuote'),
+    'SignedRegistration': ('offer_registration', 'SignedRegistration'),
+    'RegistrationReadChallenge': ('offer_registration', 'RegistrationReadChallenge'),
+    'RegistrationReadProof': ('offer_registration', 'RegistrationReadProof'),
+    'RegistrationReadResult': ('offer_registration', 'RegistrationReadResult'),
+    'AgentEndpointChoiceReasonClient': ('endpoint_choice_reason_client', 'AgentEndpointChoiceReasonClient'),
+    'EndpointChoiceJournal': ('endpoint_choice_reason_journal', 'EndpointChoiceJournal'),
+    'FrozenEndpointChoiceReport': ('endpoint_choice_reason_models', 'FrozenEndpointChoiceReport'),
+    'EndpointChoiceTask': ('endpoint_choice_reason_models', 'EndpointChoiceTask'),
+    'EndpointChoiceClaimCredential': ('endpoint_choice_reason_models', 'EndpointChoiceClaimCredential'),
+    'EndpointChoiceSubmissionStatus': ('endpoint_choice_reason_models', 'EndpointChoiceSubmissionStatus'),
+    'EndpointChoicePublicResults': ('endpoint_choice_reason_models', 'EndpointChoicePublicResults'),
+    'EndpointChoiceRequesterClient': ('endpoint_choice_reason_requester', 'EndpointChoiceRequesterClient'),
+    'OfferResultsChallenge': ('endpoint_choice_reason_requester', 'OfferResultsChallenge'),
+    'OfferResultsProof': ('endpoint_choice_reason_requester', 'OfferResultsProof'),
+    'prepare_registration': ('endpoint_choice_reason_requester', 'prepare_registration'),
+    'registration_operation_ref': ('endpoint_choice_reason_requester', 'registration_operation_ref'),
+
     "PaidServiceRequest": ("paid_service_trial_models", "PaidServiceRequest"),
     "PaidServiceTrialTaskV2": ("paid_service_trial_models", "PaidServiceTrialTaskV2"),
     "PaidServiceTrialClaimV2": ("paid_service_trial_models", "PaidServiceTrialClaimV2"),
@@ -227,6 +247,27 @@ def __dir__():
 Http402Client = Payment402Client 
 
 __all__ = [
+    'OfferRegistrationClient',
+    'OfferRegistrationError',
+    'RegistrationQuote',
+    'SignedRegistration',
+    'RegistrationReadChallenge',
+    'RegistrationReadProof',
+    'RegistrationReadResult',
+
+    'AgentEndpointChoiceReasonClient',
+    'EndpointChoiceJournal',
+    'FrozenEndpointChoiceReport',
+    'EndpointChoiceTask',
+    'EndpointChoiceClaimCredential',
+    'EndpointChoiceSubmissionStatus',
+    'EndpointChoicePublicResults',
+    'EndpointChoiceRequesterClient',
+    'OfferResultsChallenge',
+    'OfferResultsProof',
+    'prepare_registration',
+    'registration_operation_ref',
+
     "AccessQuotaPolicy", "AccessQuotaError", "AccessQuotaTerms",
     "PaidServiceRequest",
     "PaidServiceTrialTaskV2",
@@ -364,3 +405,4 @@ __all__ = [
 ]
 
 from .access_quota import AccessQuotaPolicy, AccessQuotaError, AccessQuotaTerms
+

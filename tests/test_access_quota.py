@@ -328,7 +328,7 @@ def test_public_clients_resume_same_operation_and_return_typed_claim(family,wire
         client=AgentTaskV2Client(transport=h.transport)
         invoke=lambda:client.claim_task(data['task_id'],agent_id='synthetic',reward_address=data['reward_address'])
     elif family=='immediate':
-        client=AgentImmediateVisitClient(transport=h.transport)
+        client=AgentImmediateVisitClient(version='v1', transport=h.transport)
         invoke=lambda:client.claim_task(data['task_id'],'synthetic',data['reward_address'],idempotency_key='original-key')
     else:
         client=PaidServiceTrialTaskClient(transport=h.transport,claim_directory=tmp_path)

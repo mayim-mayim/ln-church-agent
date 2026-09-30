@@ -9,6 +9,7 @@ from typing import Any
 from .immediate_visit_journal import ImmediateVisitJournal
 from .immediate_visit_models import FrozenImmediateVisitReport, ImmediateVisitClaimCredential
 from .immediate_visit_profile import analyze_response
+from .immediate_visit_versions import version_of, agent_user_agent
 from .network_fetch import ImmediateVisitFetchError, fetch_immediate_visit_once
 from .task_journal import JournalError
 
@@ -37,6 +38,8 @@ class ImmediateVisitExecutor:
                 endpoint_id: str) -> FrozenImmediateVisitReport:
         snapshot = ImmediateVisitClaimCredential.model_validate(claim)
         self.journal.require_binding(snapshot)
+        # Validate the exact role profile before any target acquisition.
+        agent_user_agent(snapshot.profile_id)
         endpoint = next((item for item in snapshot.endpoints if item.endpoint_id == endpoint_id), None)
         if endpoint is None:
             raise JournalError("JOURNAL_STATE_CONFLICT")
@@ -53,11 +56,12 @@ class ImmediateVisitExecutor:
                 observation = dict(outcome="inconclusive", reason="fetch_outcome_lost",
                                    status=None, media_family=None, body_bytes=None)
             else:
-                observation = self._fetch(endpoint.url)
+                observation = (self._fetch(endpoint.url) if version_of(snapshot) == "v1"
+                               else self._fetch(endpoint.url, profile_id=snapshot.profile_id))
             observation["fetch_started_at"] = start["fetch_started_at"]
             observation["fetch_finished_at"] = _now()
             frozen = FrozenImmediateVisitReport.from_report({
-                "schema_version": "ln_church.task_completion.immediate_visit.v1",
+                "schema_version": "ln_church.task_completion.immediate_visit." + version_of(snapshot),
                 "task_id": snapshot.task_id,
                 "execution_id": snapshot.execution_id,
                 "submission_id": "sub_" + secrets.token_hex(16),
@@ -69,10 +73,11 @@ class ImmediateVisitExecutor:
             return frozen
 
     @staticmethod
-    def _fetch(url: str) -> Any:
+    def _fetch(url: str, *, profile_id: str = "immediate_visit_utf8.v1") -> Any:
         response = None
         try:
-            response = fetch_immediate_visit_once(url)
+            response = (fetch_immediate_visit_once(url) if profile_id == "immediate_visit_utf8.v1"
+                        else fetch_immediate_visit_once(url, profile_id=profile_id))
             return analyze_response(response.status_code, response.headers, response.body)
         except ImmediateVisitFetchError as error:
             return dict(outcome="inconclusive", reason=error.reason,
