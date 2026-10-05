@@ -17,13 +17,15 @@ from functools import wraps
 from . import endpoint_choice_reason_contract as c
 from .endpoint_choice_reason_requester import prepare_registration, EndpointChoiceRegistrationInput
 from .immediate_visit_transport import ImmediateVisitTransport, ImmediateVisitRawResponse
-from .immediate_visit_versions import load_v2_pack, validate_version
+from .immediate_visit_versions import load_v2_pack, load_pack, validate_version
 from .paid_service_trial_contract import decode_base64_object
 from .crypto.evm import validate_eip3009_payload
 
 PATH = '/api/bazaar/task-offers'
 READ_PATH = '/api/agent/task-offer-registration-recovery/'
-PROFILES = {c.TASK_TYPE: 'V189_ENDPOINT_CHOICE_REASON',
+PROFILES = {'endpoint_choice_reason.v2': 'V189_ENDPOINT_CHOICE_REASON',
+            'immediate_http_visit.v3': 'V183_IMMEDIATE_VISIT',
+            c.TASK_TYPE: 'V189_ENDPOINT_CHOICE_REASON',
             'immediate_http_visit.v1': 'V183_IMMEDIATE_VISIT',
             'immediate_http_visit.v2': 'V183_IMMEDIATE_VISIT'}
 PAYMENT_STATES = {'UNPAID','AUTHORIZATION_BOUND','SETTLING','CONFIRMING',
@@ -72,7 +74,7 @@ def family(task_type):
 
 
 def plan(task_type, plan_id):
-    if task_type == c.TASK_TYPE: return c.PLANS[plan_id]
+    if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'): return c.PLANS[plan_id]
     family(task_type)
     return {'C50':('1000000',50),'C500':('10000000',500),'C5000':('100000000',5000)}[plan_id]
 
@@ -81,10 +83,10 @@ def _request(value):
     if isinstance(value, EndpointChoiceRegistrationInput): value = value._private_payload()
     if type(value) is not dict: raise ValueError('Invalid registration.')
     task_type = value.get('task_type'); family(task_type)
-    if task_type == c.TASK_TYPE:
-        c.load_contract_pack()
+    if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'):
+        c.load_contract_pack(task_type.rsplit('.',1)[-1])
         return prepare_registration(value)._private_payload()
-    if task_type.endswith('.v2'): load_v2_pack()
+    if task_type.endswith(('.v2', '.v3')): load_pack(task_type.rsplit('.',1)[-1])
     if set(value) != {'task_type','plan_id','repeat_policy','urls'} or value['repeat_policy'] not in ('allow','once_per_endpoint'):
         raise ValueError('Invalid registration.')
     plan(task_type,value['plan_id'])
@@ -107,14 +109,14 @@ def _requirements(request, value):
 
 def _resource(task_type):
     return dict(url=c.PUBLIC_API_ORIGIN+PATH, description=('Register a URL Choice & Reason Task'
-                if task_type == c.TASK_TYPE else 'Register an immediate public HTTP visit Task'), mimeType='application/json')
+                if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') else 'Register an immediate public HTTP visit Task'), mimeType='application/json')
 
 
 def _operation_ref(task_type, envelope):
     req, auth = envelope['accepted'], envelope['payload']['authorization']
     if type(auth['nonce']) is not str or re.fullmatch(r'0x[0-9a-fA-F]{64}',auth['nonce']) is None: raise ValueError
     g = c.digest(['ln-church/x402-eip3009/v1','eip155:8453',c.address(req['asset']),c.address(auth['from']),auth['nonce'].lower()])
-    prefix = 'endpoint-choice-reason-registration' if task_type == c.TASK_TYPE else 'immediate-registration'
+    prefix = 'endpoint-choice-reason-registration' if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') else 'immediate-registration'
     s = hashlib.sha256((prefix+'\0'+g).encode()).hexdigest()
     return s[:8]+'-'+s[8:12]+'-4'+s[13:16]+'-8'+s[17:20]+'-'+s[20:32]
 
@@ -197,8 +199,8 @@ class RegistrationReadResult:
 def _success(value, task_type, operation_ref, request=None):
     fields = {'schema_version','registration_intent_id','task_id','task_type','status','task_url','summary_url',
               'results_url','published_at','listing_ends_at','plan_id','registration_amount_atomic','capacity_total'}
-    fields.add('manifest_url' if task_type == c.TASK_TYPE else 'repeat_policy')
-    suffix = 'endpoint_choice_reason.v1' if task_type == c.TASK_TYPE else 'immediate_visit.'+task_type.rsplit('.',1)[1]
+    fields.add('manifest_url' if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') else 'repeat_policy')
+    suffix = task_type if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') else 'immediate_visit.'+task_type.rsplit('.',1)[1]
     if (type(value) is not dict or set(value) != fields or value['schema_version'] != 'ln_church.task_offer_create_response.'+suffix
             or value['registration_intent_id'] != reference(operation_ref) or value['task_type'] != task_type or value['status'] != 'OPEN'):
         raise OfferRegistrationError('RESPONSE_INVALID')
@@ -206,15 +208,15 @@ def _success(value, task_type, operation_ref, request=None):
     amount,capacity = plan(task_type,value['plan_id'])
     if value['registration_amount_atomic'] != amount or type(value['capacity_total']) is not int or value['capacity_total'] != capacity:
         raise OfferRegistrationError('RESPONSE_INVALID')
-    if c.parse_timestamp(value['listing_ends_at'])-c.parse_timestamp(value['published_at']) != timedelta(hours=48): raise ValueError
+    if c.parse_timestamp(value['listing_ends_at'])-c.parse_timestamp(value['published_at']) != timedelta(hours=168 if task_type in ('immediate_http_visit.v3', 'endpoint_choice_reason.v2') else 48): raise ValueError
     links = dict(task_url=c.PUBLIC_API_ORIGIN+c.task_detail_path(task_id),
         summary_url=c.PUBLIC_API_ORIGIN+'/api/agent/task-offers/'+task_id+'/summary',
         results_url=c.PUBLIC_API_ORIGIN+c.task_detail_path(task_id)+'/results')
-    if task_type != c.TASK_TYPE: links['results_url']=c.PUBLIC_API_ORIGIN+'/agent-taskboard.html?task_id='+task_id+'&view=results'
-    if task_type == c.TASK_TYPE: links['manifest_url']=c.PUBLIC_API_ORIGIN+'/agent-task-specs/'+task_type+'/1.0.0/manifest.json'
+    if task_type not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'): links['results_url']=c.PUBLIC_API_ORIGIN+'/agent-taskboard.html?task_id='+task_id+'&view=results'
+    if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'): links['manifest_url']=c.PUBLIC_API_ORIGIN+'/agent-task-specs/'+task_type+'/'+{'v1':'1.0.0','v2':'2.0.0'}[task_type.rsplit('.',1)[-1]]+'/manifest.json'
     if any(value[k] != v for k,v in links.items()): raise OfferRegistrationError('RESPONSE_INVALID')
-    if task_type != c.TASK_TYPE and value['repeat_policy'] not in ('allow','once_per_endpoint'): raise ValueError
-    if request is not None and (value['plan_id'] != request['plan_id'] or (task_type != c.TASK_TYPE and value['repeat_policy'] != request['repeat_policy'])): raise ValueError
+    if task_type not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') and value['repeat_policy'] not in ('allow','once_per_endpoint'): raise ValueError
+    if request is not None and (value['plan_id'] != request['plan_id'] or (task_type not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') and value['repeat_policy'] != request['repeat_policy'])): raise ValueError
     return copy.deepcopy(value)
 
 

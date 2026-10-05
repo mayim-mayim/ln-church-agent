@@ -47,7 +47,7 @@ def test_v1_journal_paths_and_saved_recovery_with_v2_default_client(wire,lane,tm
     assert lane.journal.snapshot()['schema_version']=='ln_church.paid_service_trial_journal.v1'
     assert 'claim' not in lane.journal.snapshot()  # original ordinary format
     saved=PaidServiceTrialJournal.load_claim(tmp_path,wire.claim['task_id'],wire.claim['execution_id'])
-    client=PaidServiceTrialTaskClient(transport=lane.transport)  # default v2
+    client=PaidServiceTrialTaskClient(transport=lane.transport, version='v2')  # default v2
     reply=client.recover_completion(saved,result.report,journal=lane.journal)
     assert reply.schema_version=='ln_church.task_submission_status.paid_service_trial.v1'
     assert lane.http.paid==1
@@ -81,7 +81,7 @@ def test_v2_public_request_does_not_disclose_private_claim(wire_v2):
 
 
 def test_unknown_version_never_falls_back():
-    for version in ('v3',None,1,'2.0.0'):
+    for version in ('v4',None,1,'2.0.0'):
         with pytest.raises(ValueError):PaidServiceTrialTaskClient(version=version)
         with pytest.raises(ValueError):c.load_contract_bundle(version)
 
@@ -136,7 +136,7 @@ def test_formal_pack_execution_and_saved_recovery(wire_v2,tmp_path,monkeypatch,m
     for key in ('request','request_digest','purchase_terms_digest','task_definition_digest','terms_digest'):
         wire.claim[key]=wire.task[key]
     wire.credential=PaidServiceTrialClaimV2.model_validate(wire.claim)
-    client=PaidServiceTrialTaskClient(transport=V2TaskTransport(wire))
+    client=PaidServiceTrialTaskClient(transport=V2TaskTransport(wire), version='v2')
     http=V2HTTP(wire);tmp_path.chmod(0o700)
     journal=PaidServiceTrialJournal(tmp_path,wire.credential)
     executor=PaidServiceTrialExecutor(signer=wire.signer,

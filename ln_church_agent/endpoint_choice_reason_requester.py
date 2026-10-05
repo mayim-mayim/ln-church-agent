@@ -20,7 +20,7 @@ def prepare_registration(value):
         if isinstance(value, bytes): value = c.decode_json_object(value, 65536)
         if type(value) is not dict or set(value) != {'task_type', 'plan_id', 'question', 'candidates', 'correct_candidate_ids', 'reveal_correct_set_after_answer'}:
             raise ValueError
-        if value['task_type'] != c.TASK_TYPE or value['plan_id'] not in c.PLANS or type(value['reveal_correct_set_after_answer']) is not bool:
+        if value['task_type'] not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') or value['plan_id'] not in c.PLANS or type(value['reveal_correct_set_after_answer']) is not bool:
             raise ValueError
         c.text_value(value['question'], 4096)
         if type(value['candidates']) is not list or not 1 <= len(value['candidates']) <= 10:
@@ -170,7 +170,7 @@ class _OwnerCandidate(_Frozen):
 
 
 class _OwnerRegistration(_Frozen):
-    task_type: Literal['endpoint_choice_reason.v1']
+    task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
     plan_id: Literal['C5', 'C55', 'C555']
     question: str
     candidates: Tuple[_OwnerCandidate, ...] = Field(repr=False, exclude=True)

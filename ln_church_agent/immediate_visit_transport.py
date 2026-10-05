@@ -90,7 +90,7 @@ class ImmediateVisitTransport:
     def __init__(self, *, exchange: Optional[Exchange] = None,
                  resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
                  monotonic: Callable[[], float] = time.monotonic,
-                 access_quota: Optional[AccessQuotaPolicy] = None, version: str = "v2") -> None:
+                 access_quota: Optional[AccessQuotaPolicy] = None, version: str = "v3") -> None:
         if exchange is not None and not callable(exchange):
             raise ValueError("Invalid immediate visit exchange.")
         self.version = validate_version(version)

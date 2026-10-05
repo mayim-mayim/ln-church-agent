@@ -1,0 +1,63 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "endpoint_choice_reason.v2",
+  "task_definition_version": "2.0.0",
+  "task_definition_digest": "c777eb006645196e9bbd1c6b6cf410f628a5580cb8e20ee32f2ae4f96afb8de7",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "e771dc4fa07a3a54928681325d738d5604f3a841",
+    "basis_tree": "7619f5b0d26fe2954029c41d10816a182015d6d3",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "architecture_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "task_type": "endpoint_choice_reason.v2",
+    "task_definition_version": "2.0.0",
+    "profile_id": "endpoint-choice-reason-jev-v1",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "807b7293de869d20fd6a3483ed32519963405eb9",
+        "sha256": "420da1763ba2be39f553a12c18ef49871a9e1c6a42515fcebccb2149c8182ed8"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/definition.json",
+        "mode": "100644",
+        "blob": "e18a88b75d4f54239133dce1122797484d3c0459",
+        "sha256": "5d88a6765ee546e9b91adec6b18c777497ed43436b80f3d76009673ea2c9f22f"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/evaluation-profile.json",
+        "mode": "100644",
+        "blob": "1b3371365a56cf7c43b6684134006b09872d54a8",
+        "sha256": "b65971293afe9287bf3d81de2eb7cc83bf68e0d75f90d16983e85dc03142d2b6"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "2fbf7c136584cfaa78159cbcc8a618206081e7ea",
+        "sha256": "08c7280f5525a46f693d249ff3a6bf1a976999fa30744d7ed90497c3e8965aae"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/semantic-fixtures.json",
+        "mode": "100644",
+        "blob": "b39c26c2deb9effbd440e44c44affab183160df0",
+        "sha256": "46bec4bcf71dbac7897bbb98fcea9e8adb494765389fc7d3caa9c175c0b8673e"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.0.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "8402fd1664ffc298c70c293ffb1925153fea223c",
+        "sha256": "18a31131f0e76e4de2f25982668ac559f8458a156996bfdb5567761e314cf0bc"
+      }
+    ]
+  },
+  "provenance": {
+    "status": "implementation_candidate_not_source_accepted",
+    "specification_id": "POST-V1810-L7-PNC-C1",
+    "sdk_copy_source": "Mirror these exact bytes from the fixed Backend candidate supplied by Development Control."
+  }
+}

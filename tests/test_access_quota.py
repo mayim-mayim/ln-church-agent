@@ -84,7 +84,7 @@ class Harness:
                                          _monotonic=lambda:self.now,access_quota=self.policy)
         else:
             cls={'scheduled':TaskV2Transport,'immediate':ImmediateVisitTransport,'paid':PaidServiceTrialTransport}[family]
-            self.transport=cls(exchange=self.call,monotonic=lambda:self.now,access_quota=self.policy)
+            self.transport=cls(exchange=self.call,monotonic=lambda:self.now,access_quota=self.policy, **({'version':'v2'} if family in ('paid','immediate') else {}))
     def serve(self,method,url,headers,body,remaining):
         self.requests.append((method,url,dict(headers),body,remaining))
         self.now+=1
@@ -331,7 +331,7 @@ def test_public_clients_resume_same_operation_and_return_typed_claim(family,wire
         client=AgentImmediateVisitClient(version='v1', transport=h.transport)
         invoke=lambda:client.claim_task(data['task_id'],'synthetic',data['reward_address'],idempotency_key='original-key')
     else:
-        client=PaidServiceTrialTaskClient(transport=h.transport,claim_directory=tmp_path)
+        client=PaidServiceTrialTaskClient(transport=h.transport,claim_directory=tmp_path, version='v2')
         invoke=lambda:client.claim_task(data['task_id'],'synthetic',data['reward_address'],idempotency_key='original-key')
     with pytest.raises(AccessQuotaError) as e:invoke()
     assert e.value.origin_not_sent

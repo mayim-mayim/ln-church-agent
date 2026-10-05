@@ -55,7 +55,7 @@ class PaidServiceTrialJournal:
     @staticmethod
     def _paths(directory: Any, task_id: str, execution_id: str, *, version: str='v1') -> Any:
         c.validate_task_id(task_id); c.validate_opaque_id(execution_id,'execution_id')
-        key = c.digest([c.TASK_TYPE if c.validate_version(version)=='v1' else c.V2_TASK_TYPE,task_id,execution_id])
+        key = c.digest(['paid_service_trial.'+c.validate_version(version),task_id,execution_id])
         root = Path(directory)
         return (_validate_journal_path(root/(key+'.json')),
                 _validate_journal_path(root/(key+'.credential.json')))
@@ -65,7 +65,7 @@ class PaidServiceTrialJournal:
     def load_claim(cls, directory: Any, task_id: str, execution_id: str) -> PaidServiceTrialClaim:
         # Read saved versions, never infer one from today's client default.
         matches = []
-        for version in ('v1', 'v2'):
+        for version in ('v1', 'v2', 'v3'):
             path, credential = cls._paths(directory, task_id, execution_id, version=version)
             if path.exists() or credential.exists():
                 with _StableLock(_validate_journal_path(str(path)+'.lock')):
@@ -83,18 +83,18 @@ class PaidServiceTrialJournal:
         return matches[0]
 
     def _initial(self) -> dict:
-        data = dict(schema_version=_SCHEMA if self._version=='v1' else 'ln_church.paid_service_trial_journal.v2', origin=c.PUBLIC_API_ORIGIN,
+        data = dict(schema_version='ln_church.paid_service_trial_journal.'+self._version, origin=c.PUBLIC_API_ORIGIN,
                     claim_binding=self._binding, operation_id=str(uuid.uuid4()),
                     state='CLAIMED', report=None, report_sha256=None, payload_digest=None,
                     paid_dispatch_reserved=False, http_outcome='NOT_OBSERVED', http_status=None,
                     transaction_hash=None, completion_attempts=0, result=None, rejection=None)
-        if self._version=='v2':
+        if self._version in ('v2', 'v3'):
             data['claim'] = self._claim.model_dump(mode='json')
         return data
 
     def _validate(self, data: dict) -> dict:
         if (set(data)!=set(self._initial()) or data['schema_version']!=self._initial()['schema_version']
-                or (self._version=='v2' and data['claim']!=self._claim.model_dump(mode='json'))
+                or (self._version in ('v2', 'v3') and data['claim']!=self._claim.model_dump(mode='json'))
                 or data['origin']!=c.PUBLIC_API_ORIGIN or data['claim_binding']!=self._binding
                 or data['state'] not in _STATES or str(uuid.UUID(data['operation_id'],version=4))!=data['operation_id']
                 or type(data['paid_dispatch_reserved']) is not bool

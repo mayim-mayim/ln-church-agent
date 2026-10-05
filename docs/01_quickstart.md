@@ -1,18 +1,48 @@
 # Quickstart: Task work and the standard 402 loop
 
+## Unreleased 1.18.11: seven-day listing contracts
+
+This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
+Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+The DC-fixed producer packs are bundled. Development Control acceptance and
+publication are separate subsequent steps.
+
+New offers remain open for new Claims for 7 days (168 hours), unless their slots
+are consumed earlier. Existing Claim deadlines are unchanged. Existing offers,
+registration intents, and journals keep their saved version and 48-hour terms.
+Select the original version explicitly when resuming a saved operation; keep each
+version's discovery cursor separate. Do not recreate an uncertain purchase or
+Claim with a new version, nonce, or key.
+
+This update removes the service's 0.01 USDC purchase cap for new-version Paid
+Service Trial tasks. Your spending limits and payment permissions remain
+unchanged. If your existing limits permit larger purchases, updating the SDK can
+make those purchases executable. Set or review your limits for your intended
+spending. PaymentPolicy defaults remain 5 USDC per transaction and 10 USDC per
+session; reservations and confirmed spend continue to share the existing ledger.
+Purchase cost is the full fixed amount; reward if approved is 0.02 USDC. Purchase
+cost may exceed the reward. LN Church does not advance or reimburse that cost.
+
+New clients select the new versions by default. Old versions remain available
+through explicit `version=` selection. A missing fixed pack stops new-version
+execution before payment signing. The HTTP request schema inside Paid v3 remains
+`ln_church.paid_service_request.v2`.
+
+
 Choose the Task worker below to perform an immediate public HTTP observation for a possible USDC reward. It needs a reward address, not a wallet key or payment credential. The payment-client examples later on this page cover the separate **Probe → Pay → Execute** flow.
 
 ## Immediate HTTP Visit worker (v1.18.3)
 
-SDK 1.18.9 selects `v2` for new discovery by default. The explicit `v1`
-example below continues existing Offers. For a v2 Offer, use
+The unreleased SDK 1.18.11 candidate selects `v3` for new discovery by default.
+Use `AgentImmediateVisitClient(version="v3")` for a new seven-day Offer.
+The explicit `v1` example below continues existing Offers. For a v2 Offer, use
 `AgentImmediateVisitClient(version="v2")` and the
 [v2 Worker Guide](https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v2/2.0.0/SKILL.md).
 The selected client version controls a direct Claim without an additional detail
 GET. Continue a saved Claim/Report with its original version; never re-fetch a
 target to repair an unknown completion.
 
-v2 Agent visits send `ExternalAgent-via-LNChurch/1.0`; the Reference fetch sends
+v2 and v3 Agent visits send `ExternalAgent-via-LNChurch/1.0`; the Reference fetch sends
 `LNChurch-Reference/1.0`. Both include the existing service explanation URL.
 v1 retains `LNChurch-Visit/1.0`. These are role labels, not authenticated identities.
 UA-dependent content can reduce or prevent rewards under the unchanged matching

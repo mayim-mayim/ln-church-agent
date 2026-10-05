@@ -68,7 +68,7 @@ class AgentImmediateVisitClient:
 
     def __init__(self, *, transport: Optional[ImmediateVisitTransport] = None,
                  access_quota: Optional[AccessQuotaPolicy] = None,
-                 version: str = "v2",
+                 version: str = "v3",
                  monotonic: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep) -> None:
         if transport is not None and not isinstance(transport, ImmediateVisitTransport):
@@ -136,9 +136,9 @@ class AgentImmediateVisitClient:
                    idempotency_key: str, timeout_seconds: float = 20.0) -> ImmediateVisitClaimCredential:
         self._require_open()
         task_id = validate_task_id(task_id)
-        if self.version == "v2":
-            from .immediate_visit_versions import load_v2_pack
-            load_v2_pack()
+        if self.version in ("v2", "v3"):
+            from .immediate_visit_versions import load_pack
+            load_pack(self.version)
         address = validate_reward_address(reward_address)
         key = validate_opaque_id(idempotency_key, "idempotency_key")
         body = canonical_report_bytes({"schema_version": claim_schema(self.version),

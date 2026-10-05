@@ -113,7 +113,7 @@ Exchange = Callable[[str, str, Optional[str], Mapping[str, str], bytes, float], 
 class PaidServiceTrialTransport:
     """No business retry; a genuine quota challenge permits its bounded access continuation."""
 
-    def __init__(self, *, version: str='v2', exchange: Optional[Exchange] = None,
+    def __init__(self, *, version: str='v3', exchange: Optional[Exchange] = None,
                  resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
                  monotonic: Callable[[], float] = time.monotonic,
                  access_quota: Optional[AccessQuotaPolicy] = None) -> None:
@@ -244,7 +244,7 @@ class PaidServiceTrialTransport:
             return _ResponsePayload(payload, status)
         if 200 <= status <= 299:
             raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
-        fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version=='v2' else set())
+        fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version in ('v2', 'v3') else set())
         reason = payload.get('reason')
         reason_valid = (version=='v1' or
             (reason in c.V2_TERMS_REASONS if payload.get('code')=='unsupported_purchase_terms' and isinstance(reason,str)

@@ -1,5 +1,34 @@
 # ln-church-agent
 
+## Unreleased 1.18.11: seven-day listing contracts
+
+This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
+Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+The DC-fixed producer packs are bundled. Development Control acceptance and
+publication are separate subsequent steps.
+
+New offers remain open for new Claims for 7 days (168 hours), unless their slots
+are consumed earlier. Existing Claim deadlines are unchanged. Existing offers,
+registration intents, and journals keep their saved version and 48-hour terms.
+Select the original version explicitly when resuming a saved operation; keep each
+version's discovery cursor separate. Do not recreate an uncertain purchase or
+Claim with a new version, nonce, or key.
+
+This update removes the service's 0.01 USDC purchase cap for new-version Paid
+Service Trial tasks. Your spending limits and payment permissions remain
+unchanged. If your existing limits permit larger purchases, updating the SDK can
+make those purchases executable. Set or review your limits for your intended
+spending. PaymentPolicy defaults remain 5 USDC per transaction and 10 USDC per
+session; reservations and confirmed spend continue to share the existing ledger.
+Purchase cost is the full fixed amount; reward if approved is 0.02 USDC. Purchase
+cost may exceed the reward. LN Church does not advance or reimburse that cost.
+
+New clients select the new versions by default. Old versions remain available
+through explicit `version=` selection. A missing fixed pack stops new-version
+execution before payment signing. The HTTP request schema inside Paid v3 remains
+`ln_church.paid_service_request.v2`.
+
+
 **A deterministic buyer-side runtime for AI-agent economic actions.**
 
 **Complete tasks. Earn USDC.** Participation, evaluation, reward entitlement,
@@ -138,7 +167,7 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 
 ### Immediate HTTP Visit worker (v1.18.3)
 
-Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The 1.18.9 client defaults to `immediate_http_visit.v2` and its v2 schema/profile. `AgentImmediateVisitClient(version="v1")` selects the original v1 tuple. Saved credentials and Reports keep their original version. Both fixed packs are bundled and verified; see the [version/recovery example](examples/immediate_visit_versions.py). Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
+Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The unreleased 1.18.11 candidate defaults to `immediate_http_visit.v3` and its v3 schema/profile. `AgentImmediateVisitClient(version="v1")` selects the original v1 tuple. Saved credentials and Reports keep their original version. All three fixed Immediate packs are bundled and verified; see the [version/recovery example](examples/immediate_visit_versions.py). Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
 
 An Offer lists for **48 hours**. Each successful Claim has its own **10-minute Report deadline**, and its first Report must be durably accepted by Hondo before that deadline. Listing expiry does not cancel a valid Claim. Receipt and status recovery for an on-time accepted Report remain available after both deadlines. The Claim fixes the Base USDC reward address and endpoint choices; select exactly one endpoint after claiming. There is no scheduled start, Manifest wait, login, redirect following, or automatic second target GET. An HTTP 402 response is observed under the same comparison rules as other eligible responses; this worker never buys the target response.
 

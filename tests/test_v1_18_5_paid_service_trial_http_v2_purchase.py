@@ -49,7 +49,7 @@ def lane_v2(wire_v2,tmp_path):
     wire=wire_v2;tmp_path.chmod(0o700)
     journal=PaidServiceTrialJournal(tmp_path,wire.credential)
     http=V2HTTP(wire);transport=V2TaskTransport(wire)
-    client=PaidServiceTrialTaskClient(transport=transport)
+    client=PaidServiceTrialTaskClient(transport=transport, version='v2')
     guard=SimpleNamespace(ready=lambda value:True)
     policy=PaymentPolicy(max_spend_per_tx_usd=.001,max_spend_per_session_usd=.001,allowed_hosts=['seller.example.com'])
     executor=PaidServiceTrialExecutor(signer=wire.signer,policy=policy,client=client,http=http,block_guard=guard,wall_time=lambda:wire.now)
@@ -194,14 +194,14 @@ def test_post_upload_consumes_absolute_deadline():
 
 def test_v2_import_no_io_uuid_optional_identity_parity(wire_v2):
     request_id='123e4567-e89b-42d3-a456-426614174000'
-    result=export_purchase_import_descriptor(wire_v2.request,'0x'+'ef'*32,wire_v2.terms,import_request_id=request_id)
+    result=export_purchase_import_descriptor(wire_v2.request,'0x'+'ef'*32,wire_v2.terms,import_request_id=request_id, version='v2')
     assert set(result)=={'schema_version','import_request_id','request','request_digest','purchase_terms','purchase_terms_digest','transaction_hash'}
     assert result['schema_version']=='ln_church.paid_service_trial_sample_import_request.v2'
     assert result['request']==wire_v2.request and result['import_request_id']==request_id
     assert result['purchase_terms_digest']==wire_v2.claim['purchase_terms_digest']
-    assert result==export_purchase_import_descriptor(wire_v2.request,'0x'+'ef'*32,wire_v2.terms,import_request_id=request_id)
+    assert result==export_purchase_import_descriptor(wire_v2.request,'0x'+'ef'*32,wire_v2.terms,import_request_id=request_id, version='v2')
     assert 'purchase' not in result
-    with pytest.raises(ValueError):export_purchase_import_descriptor(wire_v2.request['url'],'0x'+'ef'*32,wire_v2.terms)
+    with pytest.raises(ValueError):export_purchase_import_descriptor(wire_v2.request['url'],'0x'+'ef'*32,wire_v2.terms, version='v2')
 
 
 @pytest.mark.parametrize('boundary',['wallet','host','budget','sealed_block','missing_pack'])

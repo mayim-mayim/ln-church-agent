@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import paid_service_trial_contract as c
-from .paid_service_trial_models import PaidServiceTrialClaim, PurchaseIdentity, FrozenPaidServiceTrialReport, parse_claim
+from .paid_service_trial_models import PaidServiceTrialClaim, PurchaseIdentity, FrozenPaidServiceTrialReport, parse_claim, purchase_terms_model, purchase_identity_model
 from .paid_service_trial_network import PaidServiceTrialHTTPS, BaseSealedBlockGuard, _current_terms_context, _current_v2_terms_context, PaidServiceTrialTermsError
 from .models import PaymentPolicy, _PaymentOperation
 from .crypto.evm import derive_eip3009_requirement_nonce, validate_eip3009_payload
@@ -91,7 +91,7 @@ class PaidServiceTrialExecutor:
                 request=c.target_request(claim)
                 response=self._http.fetch(request)
                 current=(_current_terms_context(response,claim.purchase_terms) if version=='v1'
-                         else _current_v2_terms_context(response,claim.purchase_terms,request))
+                         else _current_v2_terms_context(response,claim.purchase_terms,request,version=version))
                 terms=current.terms
                 if not self._guard.ready(claim.purchase_block_timestamp_exclusive_min):
                     return PaidServiceTrialExecution('NO_DISPATCH','sealed_block_unavailable')
@@ -114,7 +114,7 @@ class PaidServiceTrialExecutor:
                     auth=payload['authorization']
                     if auth['validBefore']!=str(expiry):
                         raise ValueError('Invalid signed validity.')
-                    purchase=PurchaseIdentity(network=c.NETWORK,asset=c.ASSET,payer=c.address(auth['from']),
+                    purchase=purchase_identity_model(version)(network=c.NETWORK,asset=c.ASSET,payer=c.address(auth['from']),
                         authorization_nonce=c.hash32(auth['nonce']),payTo=c.address(auth['to']),amount=auth['value'],
                         validAfter=auth['validAfter'],validBefore=auth['validBefore'])
                     accepted=dict(req.wire(),asset=current.asset,payTo=current.pay_to)
@@ -124,7 +124,7 @@ class PaidServiceTrialExecutor:
                     if len(encoded)>16384:
                         raise ValueError('Payment header too large.')
                     core={k:getattr(claim,k) for k in ('task_id','task_type','task_definition_version','task_definition_digest','terms_digest','execution_id')}
-                    if version=='v2':
+                    if version in ('v2', 'v3'):
                         core.update(request_digest=claim.request_digest,purchase_terms_digest=claim.purchase_terms_digest)
                     core.update(schema_version='ln_church.task_completion.paid_service_trial.'+version,
                                 submission_id='sub_'+uuid.uuid4().hex,purchase=purchase.model_dump(mode='json'))
@@ -132,10 +132,10 @@ class PaidServiceTrialExecutor:
                     try:
                         if int(self._wall_time()*1000)>=c.instant_ms(claim.report_deadline) or int(self._wall_time())>=expiry:
                             return PaidServiceTrialExecution('NO_DISPATCH','report_deadline')
-                        if version=='v2':
+                        if version in ('v2', 'v3'):
                             # Same frozen R and selected conditions after signing.
                             # Only the final seller spelling changes the envelope.
-                            current=_current_v2_terms_context(self._http.fetch(request),terms,request)
+                            current=_current_v2_terms_context(self._http.fetch(request),terms,request,version=version)
                             accepted.update(asset=current.asset,payTo=current.pay_to)
                             journal.require_binding(claim)
                             if int(self._wall_time())>=expiry or int(self._wall_time()*1000)>=c.instant_ms(claim.report_deadline):
@@ -175,7 +175,7 @@ class PaidServiceTrialExecutor:
 
 
 def export_purchase_import_descriptor(endpoint: Any, transaction_hash: str, purchase_terms: Any,
-                                      purchase: Any=None, *, import_request_id: Any=None, version: str='v2') -> dict:
+                                      purchase: Any=None, *, import_request_id: Any=None, version: str='v3') -> dict:
     """Explicit nonsecret import request; performs no I/O, signing or purchase.
 
     Persist this descriptor before submitting it to the Requester import flow.
@@ -184,7 +184,7 @@ def export_purchase_import_descriptor(endpoint: Any, transaction_hash: str, purc
     """
     from .paid_service_trial_models import PurchaseTerms
     c.validate_version(version)
-    selected=PurchaseTerms.model_validate(purchase_terms)
+    selected=purchase_terms_model(version).model_validate(purchase_terms)
     request_id=str(uuid.uuid4()) if import_request_id is None else import_request_id
     if type(request_id) is not str or str(uuid.UUID(request_id,version=4))!=request_id:
         raise ValueError('Invalid import request ID.')
@@ -194,12 +194,12 @@ def export_purchase_import_descriptor(endpoint: Any, transaction_hash: str, purc
                     purchase_terms_digest=c.digest(selected.requirements.wire()),transaction_hash=c.hash32(transaction_hash))
     else:
         request=c.validate_request(endpoint)
-        result=dict(schema_version='ln_church.paid_service_trial_sample_import_request.v2',
+        result=dict(schema_version='ln_church.paid_service_trial_sample_import_request.'+version,
                     import_request_id=request_id,request=request,request_digest=c.v2_digest(request),
-                    purchase_terms=selected.wire(),purchase_terms_digest=c.purchase_terms_digest(request,selected),
+                    purchase_terms=selected.wire(),purchase_terms_digest=c.purchase_terms_digest(request,selected,version),
                     transaction_hash=c.hash32(transaction_hash))
     if purchase is not None:
-        identity=PurchaseIdentity.model_validate(purchase)
+        identity=purchase_identity_model(version).model_validate(purchase)
         req=selected.requirements
         if identity.payTo!=req.payTo or identity.amount!=req.amount:
             raise ValueError('Purchase identity does not match selected terms.')

@@ -79,14 +79,15 @@ const evaluation=createChoiceEvaluationService({store,clock:()=>now,adapter:asyn
 const runtime={store,execution,results,ownerRead,evaluation};
 function event(x){return {rawPath:x.path,rawQueryString:x.query??'',headers:x.headers,httpMethod:x.method,body:x.body,requestContext:{http:{method:x.method},requestId:'sdk-isolated'}};}
 async function run(x){
+ now=Math.max(now,Date.now());
  if(x.control==='counts')return {settles,verifies,reads,now};
  if(x.control==='configure'){if(x.confirmed!==undefined)confirmed=x.confirmed;if(x.advance)now+=x.advance;if(x.contractCode!==undefined)contractCode=x.contractCode;if(x.contractValid!==undefined)contractValid=x.contractValid;if(x.rpcFails!==undefined)rpcFails=x.rpcFails;return {now};}
- if(x.control==='reconcile')return {state:(await (x.type==='endpoint_choice_reason.v1'?choice:immediate).reconcile(x.ref)).business_commit_state};
+ if(x.control==='reconcile')return {state:(await (x.type?.startsWith('endpoint_choice_reason.')?choice:immediate).reconcile(x.ref)).business_commit_state};
  if(x.control==='evaluate'){evaluationQ=x.q??'0';await evaluation.run({task_id:x.task,execution_id:x.execution});return {};}
  if(x.control==='delete-descriptions'){return {deleted:await results.deleteDescriptions(x.task)};}
  const body=x.body?JSON.parse(x.body):null;
  if(x.path==='/api/bazaar/task-offers'){
-  const h=body.task_type==='endpoint_choice_reason.v1'?handlers.choice:handlers.immediate;
+  const h=body.task_type?.startsWith('endpoint_choice_reason.')?handlers.choice:handlers.immediate;
   const headers=Object.fromEntries(Object.entries(x.headers).map(([k,v])=>[k.toLowerCase(),v]));
   const ctx={get:n=>['choiceRequest','immediateVisitRequest'].includes(n)?body:undefined,req:{header:n=>headers[n.toLowerCase()],method:'POST',path:'/bazaar/task-offers'},json:(body,status,headers)=>({status,body,headers:headers??{}})};
   return withRegistrationTiming({budgetValid:true,deadline:Date.now()+120000},()=>h(ctx));

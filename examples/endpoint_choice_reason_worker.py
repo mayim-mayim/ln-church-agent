@@ -1,6 +1,6 @@
-"""Explicit Python calls for the 1.18.9 worker.
+"""Explicit Python calls for Choice v2, with saved v1 recovery.
 
-Uses the bundled DC-fixed contract pack. Importing this file performs no
+The new pack must be received from DC before v2 execution. Importing this file performs no
 network operation. The caller supplies a private directory and retains the same
 Task, agent, reward address and high-entropy Claim key across restarts. No payment
 signer is needed for free access; keep any explicitly approved AccessQuotaPolicy
@@ -11,10 +11,10 @@ after intake closes and is sent through Cloudflare/TypeSafe for evaluation.
 from ln_church_agent import EndpointChoiceJournal
 
 
-def open_claim_journal(directory, *, task_id, agent_id, reward_address, claim_key):
+def open_claim_journal(directory, *, task_id, agent_id, reward_address, claim_key, version="v2"):
     """The directory must already exist with private permissions (0700 on Linux)."""
     return EndpointChoiceJournal(directory, task_id=task_id, agent_id=agent_id,
-                                 reward_address=reward_address, idempotency_key=claim_key)
+                                 reward_address=reward_address, idempotency_key=claim_key, version=version)
 
 
 def claim(client, journal):

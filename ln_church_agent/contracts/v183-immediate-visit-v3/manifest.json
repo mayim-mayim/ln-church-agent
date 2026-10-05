@@ -1,0 +1,189 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "immediate_http_visit.v3",
+  "task_definition_version": "3.0.0",
+  "task_definition_digest": "070780402e97d8b2840ecc91ce66bc42aa1ef529aebfbbb2a0ab7845f24b9a41",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "e771dc4fa07a3a54928681325d738d5604f3a841",
+    "basis_tree": "7619f5b0d26fe2954029c41d10816a182015d6d3",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "architecture_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "task_type": "immediate_http_visit.v3",
+    "task_definition_version": "3.0.0",
+    "profile_id": "immediate_visit_utf8.v3",
+    "source_bundle_entries": [
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/README.md",
+        "mode": "100644",
+        "blob": "5084ff92e95c2cdc43e6561290564e6d24305aec",
+        "sha256": "36e7b690e752f034bcfc8cd3cf6014affda974460b58d05972a5665b8d4b029b"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/html5.mjs",
+        "mode": "100644",
+        "blob": "6c02f1520a9bc9e7a5dbac65446a0b04303bca40",
+        "sha256": "54c946dbbbc25e438abe09b53a3e6f14f05060133784a2ad228f41992c7a999d"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/json-shape.mjs",
+        "mode": "100644",
+        "blob": "e9f43b919f60dfd214db8b850c425ba533fa2c62",
+        "sha256": "7bef62766578e85dd321bf8ad9d5494554c43feffef0813376e8ba1825273d84"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package-lock.json",
+        "mode": "100644",
+        "blob": "8b2a94f3c4fe762fd8d84011d9a16feb0fd6b676",
+        "sha256": "3418967f8535af3e0f4eff5a4b0550697c5a5c4897dcfe0b1d53480c0edd5bed"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-parser/package.json",
+        "mode": "100644",
+        "blob": "2b5f77720bf68d8ddbfa65134d4884c302c70108",
+        "sha256": "81fb1b3abe628e5533ec5cce53a63af583946f746f3da849219bd5910c42b7fa"
+      },
+      {
+        "path": "backend/shared/task-venue/immediate-visit-profile.mjs",
+        "mode": "100644",
+        "blob": "3eef3e4cb7b182934caa95d9f4e48bd7c9cc1008",
+        "sha256": "d9d78f383105c9f10bbec686ef544f24ae933b4a15213ac30088f4ab49febbf5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "1d56dc6cfd9e15385a13688a948f8378f6b1c9ac",
+        "sha256": "b136f2f9b597285f3b9478ef02a72df9ab9d620c747c220450fa0725e48b939f"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/abandon-request.schema.json",
+        "mode": "100644",
+        "blob": "8ca872cdb603e26c38d60bffd6946115f6d900c9",
+        "sha256": "ebe360f48228a4b6a80c07ec1eabf852f683eec30b1434aa45688268e75ab279"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/abandon-response.schema.json",
+        "mode": "100644",
+        "blob": "cdbb5f8e1abfeddc720565e106aaebf920e43a68",
+        "sha256": "883ad6b64b395604ea92cf915dbf11657e9c60a32faa0c859b69a328ef358aac"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/claim-request.schema.json",
+        "mode": "100644",
+        "blob": "446d4e4f043f3c47c78b6e4b2834d26f5ed31adc",
+        "sha256": "2533eb726304c7f835ee53948b13a4a376a9c005cdc94b670058e4fd14417cd0"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/claim.schema.json",
+        "mode": "100644",
+        "blob": "f425e9ab5cd4f580fef2a90d3e2baf655aabe5f4",
+        "sha256": "699fdea367bdd2706d5d6006c1fe5010d6f03b39da6f93f33a9e05037e0d3fa5"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/definition.json",
+        "mode": "100644",
+        "blob": "4e116d57af6f7069713c4735abd730a772086f47",
+        "sha256": "3a3c8f18591c0a83b1fd15cb62e6928a86822d4d1d5c137efacd2f92249efc91"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/error.schema.json",
+        "mode": "100644",
+        "blob": "d7e2f8116339f2540c055875d08a849696c468e6",
+        "sha256": "1214e0b79dbeb97346742a1fbb987322049aaee67b46d281c1c3437cb896f424"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/execution-page.schema.json",
+        "mode": "100644",
+        "blob": "852efa36a42e37d121bb920bf4833901790336f7",
+        "sha256": "694625133ae9bbaca3a14aa614c3a38e3243943ce3adcf273ba89654ec5f81ca"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/observation.schema.json",
+        "mode": "100644",
+        "blob": "f21cc3e5ea0547e84677a495911e26ee99ae6fba",
+        "sha256": "32c22e00d9e91487d20b1d4ef48cef3c26fcda76e43d99e25c4847748092cb64"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/page.schema.json",
+        "mode": "100644",
+        "blob": "07b7b382eb027cc2bef2a0f5ad720c09f4bbc71f",
+        "sha256": "8aff4cbebd038d28f27be09b4d461c7e1e57091660494dba79d432768a7c0a36"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/profile-fixtures.json",
+        "mode": "100644",
+        "blob": "f211d4639a5957dda5f37f9424466b8dd2468947",
+        "sha256": "8f76be41390c751df0008dec8722197af026a3169675b58d453ed489bae551a7"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/profile.json",
+        "mode": "100644",
+        "blob": "74924ad7d91e9f54b89a3429f5ff07f86ba130ca",
+        "sha256": "68a06d75c6bf275494872a193fa8a5e6046ac5d1daec0575b3f84ff14e411919"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/receipt.schema.json",
+        "mode": "100644",
+        "blob": "5aa5b110b281107c7bea0f6be92c3406fe25e8e5",
+        "sha256": "bf7bc478051ed479a57f3e13fb57f237e4b03564b987540cbeff098e8f38a0e2"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/registration-result.schema.json",
+        "mode": "100644",
+        "blob": "e736bd12815b61b90c519df86a4d32f90b9dde6a",
+        "sha256": "fb1b6f8489476518562c758a2c0de556a5223ecbdec891e7176637feb79afb55"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/registration.schema.json",
+        "mode": "100644",
+        "blob": "f1d322141f2e997d698a104e7d5b4f8bb72b5dee",
+        "sha256": "e0702f59bde8ad37fea02fb23406a7b0a2deae7b7c39908a83aa80bc7255af16"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/requester-registration/SKILL.md",
+        "mode": "100644",
+        "blob": "8d32d0e3c286627f9545211529e5d44c681013f9",
+        "sha256": "ec669f9e6d4de23e045a33471b7804c35715c88397dd451248129ab1c2ac4ed8"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/result.schema.json",
+        "mode": "100644",
+        "blob": "459b3acc6a23dc29f5e01306cab2b76ed89b4bff",
+        "sha256": "d1af58c98d6f2466d1425931a7b3d5369f1b9a9fdb79fbcc1fc3973854002048"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/submission.schema.json",
+        "mode": "100644",
+        "blob": "196a4ef6557dde28587275c92734ef01dfc246ea",
+        "sha256": "758463460a14e4223719d7deea95967d616756bf18cac0340752be5e9f83b267"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/summary.schema.json",
+        "mode": "100644",
+        "blob": "4b5fa704633952f65906027f7bb609d31c82e835",
+        "sha256": "d0f88260ccf1423bbccb3efcd9a2de1126c4b95f59a8f8afedfa7aaf8b1fb255"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/task.schema.json",
+        "mode": "100644",
+        "blob": "c55b8f6c3114645bb0c4cfebe4428d8844cee405",
+        "sha256": "9f08fb64d1dd8710d179595c0185683e9a6db484eadea822b458cd2ada401cea"
+      },
+      {
+        "path": "frontend/agent-task-specs/immediate_http_visit.v3/3.0.0/wire-fixtures.json",
+        "mode": "100644",
+        "blob": "f6ec18e1e0d68ef3d478723590b11a064e421de3",
+        "sha256": "bb38adbf498c85e612c976f2c7bfe12ebe3d60030b9a9ac00760800f2844f15f"
+      }
+    ]
+  },
+  "provenance": {
+    "status": "implementation_candidate_not_source_accepted",
+    "specification_id": "POST-V1810-L7-PNC-C1",
+    "sdk_copy_source": "Mirror these exact bytes from the fixed Backend candidate supplied by Development Control."
+  }
+}

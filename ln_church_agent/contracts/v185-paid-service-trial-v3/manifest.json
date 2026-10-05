@@ -1,0 +1,81 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "paid_service_trial.v3",
+  "task_definition_version": "3.0.0",
+  "task_definition_digest": "5ada2a522eb7d3eb500c1e893c8e7387814882a334930d48ca5ae2bebdc2a6e5",
+  "task_definition_digest_algorithm": "sha256-rfc8785-jcs-descriptor-lowercase-hex-v1",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "basis_commit": "e771dc4fa07a3a54928681325d738d5604f3a841",
+    "basis_tree": "7619f5b0d26fe2954029c41d10816a182015d6d3",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "architecture_commit": "9cd4a658bc09e8036e2e83ebfe32a2462170f2d9",
+    "task_type": "paid_service_trial.v3",
+    "task_definition_version": "3.0.0",
+    "profile_id": "paid_service_trial_base_usdc_eip3009.v3",
+    "fixture_blob": "23a6dfd084d916b9a826d4d60fb59ea39157a45e",
+    "fixture_sha256": "a919b7f4d277fec3f8c95bfd1f8f436ea8d9b57cb3a89fdd3ec0bd7f9b154853",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/SKILL.md",
+        "mode": "100644",
+        "blob": "d7ca3fd4d0205b2f00819f9ed3d832f1190711c6",
+        "sha256": "9ea1641c2cc52f64de50a8725af725f47f3eb77f836f29548c03ffc8a83b7020"
+      },
+      {
+        "path": "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/definition.json",
+        "mode": "100644",
+        "blob": "23167ab130d4818b563ecfa0ab398ff09a74a706",
+        "sha256": "348a5935a81b8b1526a664515f3b61b34c37eb43133f0df32e8c84f49e457aaf"
+      },
+      {
+        "path": "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "f4828620525f3c4dd052e6cf3cba942160ee9633",
+        "sha256": "c87e3963f7b38ef3dfe475582773fd28ec2c74b60fbb66e5dfcaf000adb7feb6"
+      },
+      {
+        "path": "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/v18-5-paid-service-trial-contract-v3.json",
+        "mode": "100644",
+        "blob": "23a6dfd084d916b9a826d4d60fb59ea39157a45e",
+        "sha256": "a919b7f4d277fec3f8c95bfd1f8f436ea8d9b57cb3a89fdd3ec0bd7f9b154853"
+      },
+      {
+        "path": "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "64a33fa7453f5936372921074f989490f6951e1b",
+        "sha256": "406b8ecbcd96ff3c163ff160c2473e5523ce55d2aa8486d892074ada4e63c7d2"
+      }
+    ]
+  },
+  "components": {
+    "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/SKILL.md": {
+      "media_type": "text/markdown; charset=utf-8",
+      "sha256": "9ea1641c2cc52f64de50a8725af725f47f3eb77f836f29548c03ffc8a83b7020"
+    },
+    "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/definition.json": {
+      "media_type": "application/json",
+      "sha256": "348a5935a81b8b1526a664515f3b61b34c37eb43133f0df32e8c84f49e457aaf"
+    },
+    "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/requester-guide.md": {
+      "media_type": "text/markdown; charset=utf-8",
+      "sha256": "c87e3963f7b38ef3dfe475582773fd28ec2c74b60fbb66e5dfcaf000adb7feb6"
+    },
+    "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/v18-5-paid-service-trial-contract-v3.json": {
+      "media_type": "application/json",
+      "sha256": "a919b7f4d277fec3f8c95bfd1f8f436ea8d9b57cb3a89fdd3ec0bd7f9b154853"
+    },
+    "frontend/agent-task-specs/paid_service_trial.v3/3.0.0/wire-contract.json": {
+      "media_type": "application/json",
+      "sha256": "406b8ecbcd96ff3c163ff160c2473e5523ce55d2aa8486d892074ada4e63c7d2"
+    }
+  },
+  "provenance": {
+    "status": "implementation_candidate_not_source_accepted",
+    "specification_id": "POST-V1810-L7-PNC-C1",
+    "sdk_copy_source": "Mirror these exact bytes from the fixed Backend candidate supplied by Development Control."
+  }
+}

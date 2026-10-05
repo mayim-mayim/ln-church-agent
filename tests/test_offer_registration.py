@@ -23,7 +23,7 @@ from ln_church_agent.immediate_visit_transport import ImmediateVisitTransport,Im
 SEED='17'*32
 
 def request(kind='endpoint_choice_reason.v1'):
-    if kind==c.TASK_TYPE:return dict(task_type=kind,plan_id='C5',question='Which API fits?',
+    if kind.startswith('endpoint_choice_reason.'):return dict(task_type=kind,plan_id='C5',question='Which API fits?',
         candidates=[dict(candidate_id='a',url='https://example.com/',evaluator_description='PRIVATE_SYNTHETIC_CONTEXT')],
         correct_candidate_ids=['a'],reveal_correct_set_after_answer=False)
     return dict(task_type=kind,plan_id='C50',repeat_policy='allow',urls=['https://example.com/'])
@@ -66,7 +66,7 @@ def bridge():
 
 
 def client(bridge):
-    return OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=bridge),wall_time=lambda:bridge.send({'control':'counts'})['now']/1000)
+    return OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=bridge, version='v2'),wall_time=lambda:bridge.send({'control':'counts'})['now']/1000)
 
 
 def signed(cli,kind=c.TASK_TYPE):
@@ -75,7 +75,7 @@ def signed(cli,kind=c.TASK_TYPE):
     return operation
 
 
-@pytest.mark.parametrize('kind',[c.TASK_TYPE,'immediate_http_visit.v1','immediate_http_visit.v2'])
+@pytest.mark.parametrize('kind',[c.TASK_TYPE,'endpoint_choice_reason.v2','immediate_http_visit.v1','immediate_http_visit.v2','immediate_http_visit.v3'])
 def test_real_registration_and_saved_response_read(kind,bridge):
     cli=client(bridge);op=signed(cli,kind)
     assert len(bridge.calls)==1 and not any(k.lower()=='payment-signature' for k in bridge.calls[0][3])
@@ -97,7 +97,7 @@ def test_real_registration_and_saved_response_read(kind,bridge):
         with pytest.raises(TypeError):pickle.dumps(private)
 
 
-@pytest.mark.parametrize('kind',[c.TASK_TYPE,'immediate_http_visit.v1','immediate_http_visit.v2'])
+@pytest.mark.parametrize('kind',[c.TASK_TYPE,'endpoint_choice_reason.v2','immediate_http_visit.v1','immediate_http_visit.v2','immediate_http_visit.v3'])
 def test_response_lost_recovers_by_ref_and_replay_is_exact(kind,bridge):
     cli=client(bridge);op=signed(cli,kind);original=bridge.__call__
     def lose(*args,**kwargs):
@@ -156,7 +156,7 @@ def test_wrong_payer_bad_proof_erc1271_and_unavailable(bridge):
     {'candidates':[dict(candidate_id='a',url='http://example.com/')]}, {'plan_id':'C50'}])
 def test_invalid_input_precedes_payment_and_network(delta):
     def no_send(*a,**k):pytest.fail('Invalid registration must not reach network')
-    cli=client_no_clock=OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=no_send))
+    cli=client_no_clock=OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=no_send, version='v2'))
     with pytest.raises(OfferRegistrationError):cli.prepare_registration(dict(request(),**delta))
 
 
@@ -166,25 +166,25 @@ def test_payment_terms_rejected_before_sign(field,value):
     req[field]=value
     body=dict(x402Version=2,resource=_resource(c.TASK_TYPE),accepts=[req])
     raw=ImmediateVisitRawResponse(402,{'PAYMENT-REQUIRED':base64.b64encode(json.dumps(body).encode()).decode()},json.dumps(body).encode())
-    cli=OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=lambda *a,**k:raw))
+    cli=OfferRegistrationClient(transport=ImmediateVisitTransport(exchange=lambda *a,**k:raw, version='v2'))
     with pytest.raises(OfferRegistrationError):cli.prepare_registration(request())
 
 
-@pytest.mark.parametrize('version',['v1','v2'])
+@pytest.mark.parametrize('version',['v1','v2','v3'])
 def test_immediate_convenience_uses_selected_version(version,bridge):
-    cli=AgentImmediateVisitClient(version=version,transport=ImmediateVisitTransport(exchange=bridge))
+    cli=AgentImmediateVisitClient(version=version,transport=ImmediateVisitTransport(exchange=bridge, version='v2'))
     quote=cli.prepare_registration(plan_id='C50',repeat_policy='allow',urls=['https://example.com/'])
     op=quote.sign(LocalKeyAdapter(SEED))
     assert op.task_type=='immediate_http_visit.'+version
     assert cli.registration_client().submit_registration(op)['task_type']==op.task_type
 
-@pytest.mark.parametrize('version',['v1','v2'])
+@pytest.mark.parametrize('version',['v1','v2','v3'])
 def test_actual_immediate_worker_preserves_original_version_and_report(version,bridge,tmp_path,monkeypatch):
     from ln_church_agent.immediate_visit_models import FrozenImmediateVisitReport
     from ln_church_agent.immediate_visit_journal import ImmediateVisitJournal
     from ln_church_agent.immediate_visit import ImmediateVisitExecutor
     cli=client(bridge);op=signed(cli,'immediate_http_visit.'+version);registered=cli.submit_registration(op)
-    worker=AgentImmediateVisitClient(version=version,transport=ImmediateVisitTransport(exchange=bridge))
+    worker=AgentImmediateVisitClient(version=version,transport=ImmediateVisitTransport(exchange=bridge, version='v2'))
     task=worker.get_task(registered['task_id']);claim=worker.claim_task(task.task_id,'fixture',op.payer,idempotency_key='worker')
     tmp_path.chmod(0o700);journal=ImmediateVisitJournal(tmp_path,claim)
     report=FrozenImmediateVisitReport.from_report(dict(schema_version='ln_church.task_completion.immediate_visit.'+version,
@@ -199,7 +199,7 @@ def test_actual_immediate_worker_preserves_original_version_and_report(version,b
     monkeypatch.setattr(ImmediateVisitExecutor,'_fetch',lambda *a,**k:pytest.fail('Saved report must not refetch target'))
     assert ImmediateVisitExecutor(journal=reopened).execute(fresh_claim,claim.endpoints[0].endpoint_id).canonical_bytes==report.canonical_bytes
     # Current default client must read the original credential version.
-    current=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=bridge))
+    current=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=bridge, version='v2'), version='v2')
     recovered=current.recover_completion(fresh_claim,report,journal=reopened)
     assert recovered.status.schema_version.endswith('.'+version)
 
