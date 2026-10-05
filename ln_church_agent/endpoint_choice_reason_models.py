@@ -14,6 +14,19 @@ from . import endpoint_choice_reason_contract as c
 class _Frozen(BaseModel):
     model_config = ConfigDict(strict=True, extra='forbid', frozen=True, hide_input_in_errors=True)
 
+    @model_validator(mode='after')
+    def _version_tuple(self):
+        schema = getattr(self, 'schema_version', '')
+        if '.endpoint_choice_reason.' in schema:
+            version = c.validate_version(schema.rsplit('.', 1)[-1])
+            if hasattr(self, 'task_type') and c.version_of(self) != version:
+                raise ValueError('Mixed endpoint choice schema.')
+            if hasattr(self, 'task_definition_version') and self.task_definition_version != {'v1':'1.0.0', 'v2':'2.0.0'}[version]:
+                raise ValueError('Mixed endpoint choice definition.')
+            if hasattr(self, 'tasks') and any(c.version_of(t) != version for t in self.tasks):
+                raise ValueError('Mixed endpoint choice page.')
+        return self
+
     def __init__(self, **data):
         failed = False
         try:
@@ -74,8 +87,8 @@ class EndpointChoiceReward(_Frozen):
 
 class _Snapshot(_Frozen):
     task_id: str
-    task_type: Literal['endpoint_choice_reason.v1']
-    task_definition_version: Literal['1.0.0']
+    task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
+    task_definition_version: Literal['1.0.0', '2.0.0']
     task_definition_digest: str
     terms_digest: str
     question: str
@@ -94,7 +107,7 @@ class _Snapshot(_Frozen):
     @model_validator(mode='after')
     def _snapshot(self):
         c.validate_task_id(self.task_id)
-        c.require_definition(self.task_definition_digest)
+        c.require_definition(self.task_definition_digest, c.version_of(self))
         c.validate_sha256(self.terms_digest)
         c.text_value(self.question, 4096)
         if (not 1 <= len(self.candidates) <= 10
@@ -105,7 +118,7 @@ class _Snapshot(_Frozen):
 
 
 class EndpointChoiceTask(_Snapshot):
-    schema_version: Literal['ln_church.agent_task.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.agent_task.endpoint_choice_reason.v1', 'ln_church.agent_task.endpoint_choice_reason.v2']
     plan_id: Literal['C5', 'C55', 'C555']
     registration_amount_atomic: str
     capacity_total: int = Field(ge=0, le=9007199254740991)
@@ -132,7 +145,7 @@ class EndpointChoiceTask(_Snapshot):
         payload = self.model_dump(mode='json')
         if c.digest({k: payload[k] for k in c.TERMS_FIELDS}) != self.terms_digest:
             raise ValueError('Invalid terms digest.')
-        if c.parse_timestamp(self.listing_ends_at) - c.parse_timestamp(self.published_at) != timedelta(hours=48):
+        if c.parse_timestamp(self.listing_ends_at) - c.parse_timestamp(self.published_at) != timedelta(hours=168 if c.version_of(self) == "v2" else 48):
             raise ValueError('Invalid listing window.')
         if (self.status == 'CLOSED') != (self.answer_acceptance_closed_at is not None):
             raise ValueError('Invalid closure.')
@@ -141,13 +154,15 @@ class EndpointChoiceTask(_Snapshot):
         for value in (self.definition_url, self.summary_url, self.results_url):
             if not value.startswith(c.PUBLIC_API_ORIGIN + '/'):
                 raise ValueError('Invalid public URL.')
+        if c.version_of(self) == 'v2' and self.definition_url != c.PUBLIC_API_ORIGIN + '/agent-task-specs/endpoint_choice_reason.v2/2.0.0/SKILL.md':
+            raise ValueError('Invalid Choice v2 definition URL.')
         if self.results_url != c.PUBLIC_API_ORIGIN + c.task_detail_path(self.task_id) + '/results':
             raise ValueError('Invalid results URL.')
         return self
 
 
 class EndpointChoiceTaskPage(_Frozen):
-    schema_version: Literal['ln_church.agent_task_page.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.agent_task_page.endpoint_choice_reason.v1', 'ln_church.agent_task_page.endpoint_choice_reason.v2']
     tasks: Tuple[EndpointChoiceTask, ...]
     next_cursor: Optional[str]
 
@@ -165,7 +180,7 @@ class EndpointChoiceTaskPage(_Frozen):
 
 
 class EndpointChoiceClaimCredential(_Snapshot):
-    schema_version: Literal['ln_church.agent_task_claim_response.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.agent_task_claim_response.endpoint_choice_reason.v1', 'ln_church.agent_task_claim_response.endpoint_choice_reason.v2']
     execution_id: str
     reward_address: str = Field(repr=False, exclude=True)
     reward_address_control_verified: Literal[False]
@@ -216,10 +231,10 @@ class EndpointChoiceClaimCredential(_Snapshot):
 
 
 class EndpointChoiceCompletionReport(_Frozen):
-    schema_version: Literal['ln_church.task_completion.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.task_completion.endpoint_choice_reason.v1', 'ln_church.task_completion.endpoint_choice_reason.v2']
     task_id: str
-    task_type: Literal['endpoint_choice_reason.v1']
-    task_definition_version: Literal['1.0.0']
+    task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
+    task_definition_version: Literal['1.0.0', '2.0.0']
     task_definition_digest: str
     terms_digest: str
     execution_id: str
@@ -241,7 +256,7 @@ class EndpointChoiceCompletionReport(_Frozen):
         c.validate_task_id(self.task_id)
         c.execution_id(self.execution_id)
         c.validate_submission_id(self.submission_id)
-        c.require_definition(self.task_definition_digest)
+        c.require_definition(self.task_definition_digest, c.version_of(self))
         c.validate_sha256(self.terms_digest)
         c.candidate_id(self.selected_candidate_id)
         c.text_value(self.answer_reason, 8192)
@@ -374,12 +389,12 @@ class _ReceiptIdentity(_Frozen):
 
     def matches(self, frozen):
         report = frozen.report
-        return (all(getattr(self, k) == getattr(report, k) for k in ('task_id', 'execution_id', 'submission_id', 'terms_digest'))
+        return (self.schema_version.rsplit('.', 1)[-1] == c.version_of(report) and all(getattr(self, k) == getattr(report, k) for k in ('task_id', 'execution_id', 'submission_id', 'terms_digest'))
                 and self.report_sha256 == frozen.report_sha256)
 
 
 class EndpointChoiceCompletionReceipt(_ReceiptIdentity):
-    schema_version: Literal['ln_church.task_completion_receipt.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.task_completion_receipt.endpoint_choice_reason.v1', 'ln_church.task_completion_receipt.endpoint_choice_reason.v2']
     receipt_state: Literal['accepted']
     status_url: str
 
@@ -392,7 +407,7 @@ class EndpointChoiceCompletionReceipt(_ReceiptIdentity):
 
 
 class EndpointChoiceSubmissionStatus(_ReceiptIdentity):
-    schema_version: Literal['ln_church.task_submission_status.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.task_submission_status.endpoint_choice_reason.v1', 'ln_church.task_submission_status.endpoint_choice_reason.v2']
     selected_candidate_id: str
     answer_reason: str = Field(repr=False, exclude=True)
     evaluation: EndpointChoiceEvaluation
@@ -450,9 +465,9 @@ class EndpointChoiceCounts(_Frozen):
 
 
 class EndpointChoicePublicResults(_Frozen):
-    schema_version: Literal['ln_church.task_results.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.task_results.endpoint_choice_reason.v1', 'ln_church.task_results.endpoint_choice_reason.v2']
     task_id: str
-    task_type: Literal['endpoint_choice_reason.v1']
+    task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
     answer_acceptance_closed_at: Optional[str]
     visibility: Literal['WITHHELD_UNTIL_ANSWER_CLOSURE', 'PUBLIC']
     counts: EndpointChoiceCounts
@@ -482,7 +497,7 @@ class EndpointChoicePublicResults(_Frozen):
 
 
 class EndpointChoiceAbandonment(_Frozen):
-    schema_version: Literal['ln_church.agent_task_abandon_response.endpoint_choice_reason.v1']
+    schema_version: Literal['ln_church.agent_task_abandon_response.endpoint_choice_reason.v1', 'ln_church.agent_task_abandon_response.endpoint_choice_reason.v2']
     task_id: str
     execution_id: str
     state: Literal['abandoned']

@@ -39,7 +39,7 @@ def test_public_get_terminal_then_explicit_normal_get(family, code, tmp_path):
     if family == 'v17': client = AgentTaskClient(_transport=h.transport)
     elif family == 'scheduled': client = AgentTaskV2Client(transport=h.transport)
     elif family == 'immediate': client = AgentImmediateVisitClient(version='v1', transport=h.transport)
-    else: client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
+    else: client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path, version='v2')
     with pytest.raises(AccessQuotaError) as error: client.list_tasks()
     assert error.value.code == 'ACCESS_' + code.upper() and not error.value.origin_not_sent
     assert len(h.requests) == 2  # no hidden latest GET after terminal error
@@ -77,7 +77,7 @@ def test_paid_public_failed_final_explicit_new_purchase_same_request(wire_v2, tm
                                                freeRemaining=0, paidRemaining=99))
         return result
     h.serve = serve
-    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
+    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path, version='v2')
     def invoke(agent='synthetic'):
         return client.claim_task(data['task_id'], agent, data['reward_address'], idempotency_key='original-key')
     with pytest.raises(AccessQuotaError) as error: invoke()
@@ -99,7 +99,7 @@ def test_paid_public_failed_final_explicit_new_purchase_same_request(wire_v2, tm
     assert h.requests[1][2]['PAYMENT-SIGNATURE'] != h.requests[3][2]['PAYMENT-SIGNATURE']
     assert p.snapshot(new_pid)['quota']['paidRemaining'] == 99
     assert invoke().execution_id == claim.execution_id and len(h.requests) == 4
-    restored = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
+    restored = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path, version='v2')
     assert restored.recover_claim(data['task_id'], idempotency_key='original-key').execution_id == claim.execution_id
     assert len(h.requests) == 4
 
@@ -109,7 +109,7 @@ def test_paid_public_unresolved_or_paid_cannot_select_replacement(paid, wire_v2,
     p = approved(20000)
     response = status('result_unavailable', 'PAID', 410) if paid else status()
     h = Harness('paid', p, [response, status('failed_final', 'FAILED_FINAL', 409) if paid else status()])
-    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
+    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path, version='v2')
     data = wire_v2.claim
     def invoke():
         return client.claim_task(data['task_id'], 'synthetic', data['reward_address'], idempotency_key='original-key')
@@ -133,7 +133,7 @@ def test_paid_public_unknown_readonly_miss_never_creates_purchase(wire_v2, tmp_p
         assert headers.get('X-LN-Claim-Recovery') == '1'
         return challenge(method, url, headers, body)  # readonly miss cannot buy
     h.serve = serve
-    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path)
+    client = PaidServiceTrialTaskClient(transport=h.transport, claim_directory=tmp_path, version='v2')
     data = wire_v2.claim
     def invoke():
         return client.claim_task(data['task_id'], 'synthetic', data['reward_address'], idempotency_key='original-key')

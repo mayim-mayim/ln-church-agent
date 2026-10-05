@@ -1,0 +1,66 @@
+{
+  "guides": {
+    "requester": "requester-guide.md",
+    "worker": "SKILL.md"
+  },
+  "listing_duration_ms": 604800000,
+  "plans": [
+    {
+      "capacity_total": 40,
+      "plan_id": "C40",
+      "registration_amount_atomic": "1000000"
+    },
+    {
+      "capacity_total": 400,
+      "plan_id": "C400",
+      "registration_amount_atomic": "10000000"
+    },
+    {
+      "capacity_total": 4000,
+      "plan_id": "C4000",
+      "registration_amount_atomic": "100000000"
+    }
+  ],
+  "purchase_profile": {
+    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "authorization_method": "EIP-3009",
+    "http_methods": [
+      "GET",
+      "POST"
+    ],
+    "maximum_amount_atomic": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    "minimum_amount_atomic": "1",
+    "network": "eip155:8453",
+    "request_constraints": {
+      "canonicalization": "RFC8785",
+      "max_canonical_body_bytes": 16384,
+      "max_container_depth": 64,
+      "max_envelope_bytes": 65536,
+      "max_input_body_bytes": 16384,
+      "maximum_safe_integer": 9007199254740991,
+      "minimum_safe_integer": -9007199254740991,
+      "post_content_type": "application/json"
+    },
+    "request_schema": "ln_church.paid_service_request.v2",
+    "scheme": "exact",
+    "x402_version": 2,
+    "maximum_kind": "UINT256_REPRESENTATION_BOUND_NOT_SERVICE_CAP"
+  },
+  "repeat_policies": [
+    "ALLOW_REPEAT",
+    "ONCE_PER_OFFER_REWARD_ADDRESS"
+  ],
+  "report_window_ms": 600000,
+  "reward": {
+    "amount_atomic": "20000",
+    "asset": "USDC",
+    "asset_address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "network": "eip155:8453"
+  },
+  "schema_version": "ln_church.agent_task_definition.paid_service_trial.v3",
+  "semantic_contract_sha256": "a919b7f4d277fec3f8c95bfd1f8f436ea8d9b57cb3a89fdd3ec0bd7f9b154853",
+  "task_definition_version": "3.0.0",
+  "task_type": "paid_service_trial.v3",
+  "verification_window_ms": 3600000,
+  "wire_contract_sha256": "406b8ecbcd96ff3c163ff160c2473e5523ce55d2aa8486d892074ada4e63c7d2"
+}

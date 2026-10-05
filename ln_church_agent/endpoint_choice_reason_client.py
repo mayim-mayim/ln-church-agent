@@ -23,10 +23,11 @@ def _model(cls, payload):
 
 
 class AgentEndpointChoiceReasonClient:
-    def __init__(self, *, transport=None, access_quota=None, monotonic=time.monotonic):
+    def __init__(self, *, version="v2", transport=None, access_quota=None, monotonic=time.monotonic):
+        self.version = c.validate_version(version)
         if transport is not None and not isinstance(transport, EndpointChoiceTransport):
             raise ValueError('Invalid endpoint choice transport.')
-        self._transport = transport or EndpointChoiceTransport(access_quota=access_quota)
+        self._transport = transport or EndpointChoiceTransport(version=version, access_quota=access_quota)
         self._owns_transport = transport is None
         self._clock = monotonic
         self._closed = False
@@ -48,12 +49,17 @@ class AgentEndpointChoiceReasonClient:
         self._open()
         if not isinstance(value, EndpointChoiceJournal):
             raise ValueError('A private endpoint choice journal is required.')
+        if value.version != self.version:
+            raise ValueError("Client and saved journal versions differ.")
         return value
 
     @public_boundary
     def list_tasks(self, limit=25, cursor=None, *, timeout_seconds=20.0):
         self._open()
-        return _model(EndpointChoiceTaskPage, self._transport.list_tasks(limit=limit, cursor=cursor, timeout_seconds=timeout_seconds))
+        page = _model(EndpointChoiceTaskPage, self._transport.list_tasks(limit=limit, cursor=cursor, timeout_seconds=timeout_seconds, version=self.version))
+        if page.schema_version != c.schema('agent_task_page', self.version):
+            raise EndpointChoiceError('RESPONSE_BINDING_INVALID', request_bytes_sent=True)
+        return page
 
     @public_boundary
     def get_task(self, task_id, *, timeout_seconds=20.0):
@@ -66,7 +72,7 @@ class AgentEndpointChoiceReasonClient:
     def claim_task(self, *, journal, timeout_seconds=20.0):
         journal = self._journal(journal)
         # No new-family mutation until the fixed definition is installed.
-        c.load_contract_pack()
+        c.load_contract_pack(journal.version)
         with journal.operation_guard():
             old = journal.load_claim()
             if old is not None: return old
@@ -108,7 +114,7 @@ class AgentEndpointChoiceReasonClient:
             if claim is None: raise ValueError('Missing saved Claim.')
             report = {k: getattr(claim, k) for k in ('task_id', 'task_type', 'task_definition_version',
                       'task_definition_digest', 'terms_digest', 'execution_id')}
-            report.update(schema_version=c.schema('task_completion'), submission_id=submission_id or 'sub_' + secrets.token_hex(16),
+            report.update(schema_version=c.schema('task_completion', c.version_of(claim)), submission_id=submission_id or 'sub_' + secrets.token_hex(16),
                           selected_candidate_id=selected_candidate_id, answer_reason=answer_reason)
             return journal.prepare_report(FrozenEndpointChoiceReport.from_report(report), correction=correction)
 
@@ -119,10 +125,10 @@ class AgentEndpointChoiceReasonClient:
             claim = journal.load_claim()
             if claim is None: raise ValueError('Missing saved Claim.')
             key = journal.abandon_key(idempotency_key)
-            body = c.canonical_bytes(dict(schema_version=c.schema('agent_task_abandon_request'), execution_id=claim.execution_id))
+            body = c.canonical_bytes(dict(schema_version=c.schema('agent_task_abandon_request', c.version_of(claim)), execution_id=claim.execution_id))
             result = _model(EndpointChoiceAbandonment, self._transport.abandon_claim(claim.task_id,
                 claim._claim_token_value(), body, idempotency_key=key, timeout_seconds=timeout_seconds))
-            if result.task_id != claim.task_id or result.execution_id != claim.execution_id:
+            if result.schema_version != c.schema('agent_task_abandon_response', c.version_of(claim)) or result.task_id != claim.task_id or result.execution_id != claim.execution_id:
                 raise EndpointChoiceError('RESPONSE_BINDING_INVALID', request_bytes_sent=True)
             return result
 

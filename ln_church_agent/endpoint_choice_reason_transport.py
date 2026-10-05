@@ -52,6 +52,10 @@ def public_boundary(function):
 class EndpointChoiceTransport(ImmediateVisitTransport):
     """No target fetch, implicit signing, business retry or new quota eligibility."""
 
+    def __init__(self, *, version="v2", **kwargs):
+        c.validate_version(version)
+        super().__init__(version=version, **kwargs)
+
     @public_boundary
     def _once(self, method, path, *, query=None, claim_token=None, idempotency_key=None,
               body=b'', timeout_seconds=20.0, readonly=False, expected_statuses=(200,), owner=False):
@@ -98,7 +102,7 @@ class EndpointChoiceTransport(ImmediateVisitTransport):
         if status in expected_statuses:
             return payload
         codes = c.OWNER_ERRORS if owner else c.ERROR_CODES
-        error_schema = 'ln_church.offer_results_error.v1' if owner else c.schema('task_error')
+        error_schema = 'ln_church.offer_results_error.v1' if owner else c.schema('task_error', self.version)
         if (set(payload) == {'schema_version', 'code', 'message', 'request_id'}
                 and payload['schema_version'] == error_schema and payload['code'] in codes.get(status, set())
                 and type(payload['message']) is str and type(payload['request_id']) is str):
@@ -109,9 +113,10 @@ class EndpointChoiceTransport(ImmediateVisitTransport):
             raise EndpointChoiceAPIError(code, status_code=status)
         raise EndpointChoiceError('RESPONSE_INVALID', status_code=status, request_bytes_sent=True)
 
-    def list_tasks(self, *, limit=25, cursor=None, timeout_seconds=20.0):
+    def list_tasks(self, *, limit=25, cursor=None, timeout_seconds=20.0, version="v2"):
+        c.validate_version(version)
         c.positive_bound(limit, 'limit', integer=True, maximum=100)
-        params = dict(task_type=c.TASK_TYPE, task_schema_version=c.TASK_SCHEMA_VERSION, limit=str(limit))
+        params = dict(task_type="endpoint_choice_reason."+version, task_schema_version=c.schema("agent_task", version), limit=str(limit))
         if cursor is not None:
             params['cursor'] = c.cursor(cursor)
         return self._once('GET', '/api/agent/tasks', query=urlencode(params), timeout_seconds=timeout_seconds)

@@ -67,8 +67,8 @@ def prepare_url(value):
     raise ValueError('Invalid endpoint choice URL.')
 
 
-def schema(kind):
-    return 'ln_church.' + kind + '.endpoint_choice_reason.v1'
+def schema(kind, version='v1'):
+    return 'ln_church.' + kind + '.endpoint_choice_reason.' + validate_version(version)
 
 
 def canonical_bytes(value, maximum=MAX_REPORT_BYTES):
@@ -125,7 +125,9 @@ def cursor(value):
     return value
 
 
-def load_contract_pack():
+def load_contract_pack(version='v1'):
+    if validate_version(version) == 'v2':
+        return _load_v2_pack()
     if not PACK_SHA256:
         raise ValueError('Fixed endpoint choice contract pack has not been received.')
     root = Path(__file__).parent / 'contracts' / 'v189-endpoint-choice-reason'
@@ -147,8 +149,46 @@ def load_contract_pack():
     return dict(manifest=manifest, resources=resources)
 
 
-def require_definition(value):
+def require_definition(value, version="v1"):
     validate_sha256(value)
-    if value != load_contract_pack()['manifest']['task_definition_digest']:
+    if value != load_contract_pack(version)['manifest']['task_definition_digest']:
         raise ValueError('Unsupported endpoint choice definition.')
     return value
+
+
+def validate_version(version):
+    if version not in ('v1', 'v2'):
+        raise ValueError('Unsupported endpoint choice version.')
+    return version
+
+def version_of(value):
+    kind = value.get('task_type') if isinstance(value, dict) else getattr(value, 'task_type', None)
+    if kind not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'):
+        raise ValueError('Unsupported endpoint choice tuple.')
+    return kind.rsplit('.', 1)[-1]
+
+# Filled from the fixed Hondo intake only.
+V2_PACK_SHA256 = {'SKILL.md': '420da1763ba2be39f553a12c18ef49871a9e1c6a42515fcebccb2149c8182ed8',
+ 'definition.json': '5d88a6765ee546e9b91adec6b18c777497ed43436b80f3d76009673ea2c9f22f',
+ 'evaluation-profile.json': 'b65971293afe9287bf3d81de2eb7cc83bf68e0d75f90d16983e85dc03142d2b6',
+ 'manifest.json': 'b4c7884e2fcf43528b06c5d6ce4921d66d00316be9f0047c9cabad23a545c2e1',
+ 'requester-guide.md': '08c7280f5525a46f693d249ff3a6bf1a976999fa30744d7ed90497c3e8965aae',
+ 'semantic-fixtures.json': '46bec4bcf71dbac7897bbb98fcea9e8adb494765389fc7d3caa9c175c0b8673e',
+ 'wire-contract.json': '18a31131f0e76e4de2f25982668ac559f8458a156996bfdb5567761e314cf0bc'}
+
+def _load_v2_pack():
+    if not V2_PACK_SHA256:
+        raise ValueError('Fixed endpoint choice v2 pack has not been received.')
+    root = Path(__file__).parent / 'contracts' / 'v189-endpoint-choice-reason-v2'
+    if {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} != set(V2_PACK_SHA256):
+        raise ValueError('Invalid endpoint choice v2 pack.')
+    resources = {name: (root / name).read_bytes() for name in V2_PACK_SHA256}
+    if any(hashlib.sha256(raw).hexdigest() != V2_PACK_SHA256[name] for name, raw in resources.items()):
+        raise ValueError('Invalid endpoint choice v2 pack.')
+    manifest = decode_json_object(resources['manifest.json'], 2097152)
+    if (manifest['task_type'] != 'endpoint_choice_reason.v2'
+            or manifest['task_definition_version'] != '2.0.0'
+            or manifest['task_definition_digest'] != digest(manifest['descriptor'])
+            or hashlib.sha256(resources['evaluation-profile.json']).hexdigest() != PACK_SHA256['evaluation-profile.json']):
+        raise ValueError('Invalid endpoint choice v2 definition/profile.')
+    return dict(manifest=manifest, resources=resources)

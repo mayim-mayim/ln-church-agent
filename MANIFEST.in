@@ -25,3 +25,8 @@ recursive-include ln_church_agent/contracts/v189-endpoint-choice-reason *
 recursive-include ln_church_agent/contracts/v183-immediate-visit-v2 *
 
 recursive-include tests/fixtures/v189 *.mjs
+
+recursive-include ln_church_agent/contracts/v185-paid-service-trial-v3 *
+recursive-include ln_church_agent/contracts/v183-immediate-visit-v3 *
+recursive-include ln_church_agent/contracts/v189-endpoint-choice-reason-v2 *
+recursive-include tests/fixtures/post-v1810 *.mjs

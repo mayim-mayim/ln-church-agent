@@ -50,7 +50,7 @@ def test_186_rejection_remains_readable_without_post(wire_v2,tmp_path):
     record=j._ClaimRequest(tmp_path,'v2',wire_v2.claim['task_id'],'original')
     data=record.read(body);data.update(state='REJECTED',rejection=dict(code='unsupported_purchase_terms',status=400));record.save(data)
     calls=[]
-    client=PaidServiceTrialTaskClient(claim_directory=tmp_path,transport=t.PaidServiceTrialTransport(exchange=lambda *a:calls.append(a)))
+    client=PaidServiceTrialTaskClient(claim_directory=tmp_path,transport=t.PaidServiceTrialTransport(version='v2',exchange=lambda *a:calls.append(a)), version='v2')
     with pytest.raises(t.PaidServiceTrialAPIError) as error:client.recover_claim(wire_v2.claim['task_id'],idempotency_key='original')
     assert error.value.public_error_code=='unsupported_purchase_terms' and error.value.status_code==400
     assert error.value.reason is None and error.value.request_id is None and not calls
@@ -86,7 +86,7 @@ def test_actual_default_api_received_status_survives_unknown(wire_v2,tmp_path,mo
         return httpx.MockTransport(handle)
     monkeypatch.setattr(t,'_new_pinned_httpx_transport',pinned)
     def client():return PaidServiceTrialTaskClient(claim_directory=tmp_path,
-        transport=t.PaidServiceTrialTransport(resolver=lambda *a:['8.8.8.8']))
+        transport=t.PaidServiceTrialTransport(version='v2',resolver=lambda *a:['8.8.8.8']), version='v2')
     with pytest.raises(t.PaidServiceTrialTransportError) as error:
         client().claim_task(wire_v2.claim['task_id'],'synthetic-agent',wire_v2.claim['reward_address'],idempotency_key='original')
     e=error.value
@@ -104,7 +104,7 @@ def test_actual_default_api_received_status_survives_unknown(wire_v2,tmp_path,mo
 def test_custom_dict_without_http_metadata_does_not_invent_200(wire_v2,tmp_path):
     class Adapter:
         def claim_task(self,*a,**kw):return {'unexpected':'SYNTHETIC_PRIVATE'}
-    client=PaidServiceTrialTaskClient(claim_directory=tmp_path,transport=Adapter())
+    client=PaidServiceTrialTaskClient(claim_directory=tmp_path,transport=Adapter(), version='v2')
     with pytest.raises(t.PaidServiceTrialTransportError) as error:
         client.claim_task(wire_v2.claim['task_id'],'synthetic-agent',wire_v2.claim['reward_address'],idempotency_key='original')
     assert error.value.status_code is None and error.value.request_id is None

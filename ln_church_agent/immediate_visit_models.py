@@ -79,8 +79,8 @@ class ImmediateVisitReward(_Frozen):
 
 class _OfferSnapshot(_Frozen):
     task_id: str
-    task_type: Literal["immediate_http_visit.v1", "immediate_http_visit.v2"]
-    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
+    task_type: Literal["immediate_http_visit.v1", "immediate_http_visit.v2", "immediate_http_visit.v3"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2", "immediate_visit_utf8.v3"]
     endpoints: Tuple[ImmediateVisitEndpoint, ...]
     repeat_policy: Literal["allow", "once_per_endpoint"]
     reward: ImmediateVisitReward
@@ -112,8 +112,8 @@ class _OfferSnapshot(_Frozen):
 
 
 class ImmediateVisitTask(_OfferSnapshot):
-    schema_version: Literal["ln_church.agent_task.immediate_visit.v1", "ln_church.agent_task.immediate_visit.v2"]
-    definition_version: Literal["1.0.0", "2.0.0"]
+    schema_version: Literal["ln_church.agent_task.immediate_visit.v1", "ln_church.agent_task.immediate_visit.v2", "ln_church.agent_task.immediate_visit.v3"]
+    definition_version: Literal["1.0.0", "2.0.0", "3.0.0"]
     status: Literal["OPEN", "LISTING_ENDED", "CLOSED"]
     published_at: str
     listing_ends_at: str
@@ -141,8 +141,21 @@ class ImmediateVisitTask(_OfferSnapshot):
         return value
 
 
+    @model_validator(mode="after")
+    def _listing_version(self):
+        from datetime import timedelta
+        from .immediate_visit_contract import parse_timestamp
+        from .immediate_visit_versions import version_of
+        version = version_of(self)
+        if parse_timestamp(self.listing_ends_at) - parse_timestamp(self.published_at) != timedelta(hours=168 if version == "v3" else 48):
+            raise ValueError("Invalid listing duration.")
+        if version == "v3" and self.definition_url != PUBLIC_API_ORIGIN + "/agent-task-specs/immediate_http_visit.v3/3.0.0/SKILL.md":
+            raise ValueError("Invalid Immediate v3 definition URL.")
+        return self
+
+
 class ImmediateVisitTaskPage(_Frozen):
-    schema_version: Literal["ln_church.agent_task_page.immediate_visit.v1", "ln_church.agent_task_page.immediate_visit.v2"]
+    schema_version: Literal["ln_church.agent_task_page.immediate_visit.v1", "ln_church.agent_task_page.immediate_visit.v2", "ln_church.agent_task_page.immediate_visit.v3"]
     tasks: Tuple[ImmediateVisitTask, ...]
     next_cursor: Optional[str]
 
@@ -170,7 +183,7 @@ class ImmediateVisitTaskPage(_Frozen):
 
 class ImmediateVisitClaimCredential(_OfferSnapshot):
     """Server Claim snapshot; bearer is absent from repr and ordinary serialization."""
-    schema_version: Literal["ln_church.agent_task_claim_response.immediate_visit.v1", "ln_church.agent_task_claim_response.immediate_visit.v2"]
+    schema_version: Literal["ln_church.agent_task_claim_response.immediate_visit.v1", "ln_church.agent_task_claim_response.immediate_visit.v2", "ln_church.agent_task_claim_response.immediate_visit.v3"]
     execution_id: str
     claimed_at: str
     report_deadline: str
@@ -308,12 +321,12 @@ ImmediateVisitObservation = Union[ImmediateVisitComparableObservation, Immediate
 
 
 class ImmediateVisitCompletionReport(_Frozen):
-    schema_version: Literal["ln_church.task_completion.immediate_visit.v1", "ln_church.task_completion.immediate_visit.v2"]
+    schema_version: Literal["ln_church.task_completion.immediate_visit.v1", "ln_church.task_completion.immediate_visit.v2", "ln_church.task_completion.immediate_visit.v3"]
     task_id: str
     execution_id: str
     submission_id: str
     endpoint_id: str
-    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2", "immediate_visit_utf8.v3"]
     observation: ImmediateVisitObservation = Field(discriminator="outcome", repr=False)
 
     @model_validator(mode="after")
@@ -413,7 +426,7 @@ class _ReceiptIdentity(_Frozen):
     execution_id: str
     submission_id: str
     endpoint_id: str
-    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2"]
+    profile_id: Literal["immediate_visit_utf8.v1", "immediate_visit_utf8.v2", "immediate_visit_utf8.v3"]
     report_sha256: str = Field(repr=False)
     received_at: str
 
@@ -435,7 +448,7 @@ class _ReceiptIdentity(_Frozen):
 
 
 class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1", "ln_church.task_completion_receipt.immediate_visit.v2"]
+    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1", "ln_church.task_completion_receipt.immediate_visit.v2", "ln_church.task_completion_receipt.immediate_visit.v3"]
     status_url: str = Field(repr=False)
     receipt_state: Literal["accepted"]
 
@@ -447,7 +460,7 @@ class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
 
 
 class ImmediateVisitSubmissionStatus(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1", "ln_church.task_submission_status.immediate_visit.v2"]
+    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1", "ln_church.task_submission_status.immediate_visit.v2", "ln_church.task_submission_status.immediate_visit.v3"]
     evaluation_state: Literal["pending", "repeat_drop", "inconclusive", "mismatch", "base_approved", "base_bonus_approved"]
     decision_at: Optional[str]
     approved_amount_atomic: Literal["0", "7500", "15000"]
@@ -500,7 +513,7 @@ class ImmediateVisitCompletionResult(_Frozen):
 
 class _ImmediateVisitAbandonmentResponse(_Frozen):
     """Validate the accepted Hondō response without adding a public Wire schema."""
-    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1", "ln_church.agent_task_abandon_response.immediate_visit.v2"]
+    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1", "ln_church.agent_task_abandon_response.immediate_visit.v2", "ln_church.agent_task_abandon_response.immediate_visit.v3"]
     task_id: str
     execution_id: str
     state: Literal["abandoned"]

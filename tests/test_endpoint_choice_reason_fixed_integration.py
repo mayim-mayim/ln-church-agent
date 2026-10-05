@@ -11,14 +11,15 @@ from ln_church_agent.endpoint_choice_reason_requester import EndpointChoiceReque
 from ln_church_agent.offer_registration import OfferRegistrationClient
 
 
-def test_fixed_pack_worker_requester_round_trip_zero_and_retention(tmp_path,bridge):
-    req=client(bridge);op=signed(req);registration=req.submit_registration(op);task_id=registration['task_id']
-    worker=AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=bridge))
+@pytest.mark.parametrize('version',['v1','v2'])
+def test_fixed_pack_worker_requester_round_trip_zero_and_retention(tmp_path,bridge,version):
+    req=client(bridge);op=signed(req,"endpoint_choice_reason."+version);registration=req.submit_registration(op);task_id=registration['task_id']
+    worker=AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=bridge, version=version), version=version)
     task=worker.get_task(task_id)
-    assert task.task_definition_digest==c.load_contract_pack()['manifest']['task_definition_digest']
+    assert task.task_definition_digest==c.load_contract_pack(version)['manifest']['task_definition_digest']
     assert task.successful_claims_lifetime==0 and task.pending_result_count==0
     tmp_path.chmod(0o700)
-    j=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='worker-claim')
+    j=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='worker-claim', version=version)
     credential=worker.claim_task(journal=j)
     report=worker.prepare_answer(journal=j,selected_candidate_id='a',answer_reason='  It fits the stated API need.\n日本語 preserved  ',submission_id='sub_'+'c'*32)
     receipt=worker.complete_task(journal=j)
@@ -30,15 +31,15 @@ def test_fixed_pack_worker_requester_round_trip_zero_and_retention(tmp_path,brid
     assert saved.evaluation.q=='0' and saved.evaluation.applied_coefficient=='0'
     assert saved.payout.state=='not_applicable' and saved.payout.confirmed_paid_amount_atomic=='0'
     assert saved.correct_candidate_ids is None
-    reopened=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='worker-claim')
+    reopened=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='worker-claim', version=version)
     calls=len(bridge.calls);worker.recover_completion(journal=reopened)
     assert all(call[0]=='GET' for call in bridge.calls[calls:])
-    owner=EndpointChoiceRequesterClient(transport=EndpointChoiceTransport(exchange=bridge),wall_time=lambda:bridge.send({'control':'counts'})['now']/1000)
+    owner=EndpointChoiceRequesterClient(transport=EndpointChoiceTransport(exchange=bridge, version=version),wall_time=lambda:bridge.send({'control':'counts'})['now']/1000)
     proof=owner.get_results_challenge(task_id,op.payer).sign(signature)
     view=owner.read_results(proof)
     assert view.registration.candidates[0].description_state=='RETAINED'
     assert not worker.get_public_results(task_id).rows
-    bridge.send({'control':'configure','advance':172800001})
+    bridge.send({'control':'configure','advance':604800001 if version=='v2' else 172800001})
     public=worker.get_public_results(task_id)
     assert public.answer_acceptance_closed_at is not None and len(public.rows)==1 and public.rows[0].evaluation.q=='0'
     bridge.send({'control':'configure','advance':2592000001})
@@ -51,7 +52,7 @@ def test_fixed_pack_worker_requester_round_trip_zero_and_retention(tmp_path,brid
     assert req.read_registration(proof).result==registration
     assert bridge.send({'control':'counts'})['settles']==1
     # Check actual SDK requests against the fixed normative wire, not synthetic replacements.
-    wire=json.loads(c.load_contract_pack()['resources']['wire-contract.json'])
+    wire=json.loads(c.load_contract_pack(version)['resources']['wire-contract.json'])
     names={'/claim':'claim_request','/completion':'completion','/challenge':'owner_challenge_request','/read':'owner_read_request'}
     for method,path,_,headers,body in bridge.calls:
         if method!='POST' or 'registration-recovery' in path:continue
@@ -69,9 +70,9 @@ def test_normative_reward_vectors_from_fixed_backend(tmp_path,bridge,vector,corr
     body=request();body['candidates'].append(dict(candidate_id='b',url='https://example.org/',evaluator_description='Other synthetic candidate'))
     req=client(bridge);op=req.prepare_registration(body).sign(LocalKeyAdapter(SEED))
     task_id=req.submit_registration(op)['task_id']
-    worker=AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=bridge))
+    worker=AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=bridge, version='v1'), version='v1')
     tmp_path.chmod(0o700)
-    journal=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='vector-claim')
+    journal=EndpointChoiceJournal(tmp_path,task_id=task_id,agent_id='fixture',reward_address=op.payer,idempotency_key='vector-claim', version='v1')
     credential=worker.claim_task(journal=journal)
     worker.prepare_answer(journal=journal,selected_candidate_id='a' if correct else 'b',answer_reason='Synthetic reason.',submission_id='sub_'+'d'*32)
     worker.complete_task(journal=journal)

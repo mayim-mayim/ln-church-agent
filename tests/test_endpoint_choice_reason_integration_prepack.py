@@ -35,7 +35,7 @@ class QuotaExchange:
 
 def quota_client(exchange, policy):
     return AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(
-        exchange=exchange, access_quota=policy))
+        exchange=exchange, access_quota=policy, version='v1'), version='v1')
 
 
 def test_explicit_access_purchase_continues_same_claim_after_default_stop(tmp_path, synthetic_pack):
@@ -109,7 +109,7 @@ def test_discovery_and_detail_use_explicit_shared_access_policy(operation, synth
 def test_results_completion_and_recovery_never_buy_access(operation):
     policy = AccessQuotaPolicy(allow=True, signer=Signer(), budget_atomic=10000, wall_time=lambda: NOW)
     exchange = QuotaExchange([])
-    transport = EndpointChoiceTransport(exchange=exchange, access_quota=policy)
+    transport = EndpointChoiceTransport(exchange=exchange, access_quota=policy, version='v1')
     operations = {
         'completion': lambda: transport.post_completion_bytes(TASK, TOKEN, SUB, b'{}'),
         'status': lambda: transport.get_submission_status(TASK, SUB, TOKEN),
@@ -142,7 +142,7 @@ def test_worker_example_calls_real_client_and_preserves_reason(tmp_path, synthet
     worker = example('endpoint_choice_reason_worker')
     tmp_path.chmod(0o700)
     saved = worker.open_claim_journal(tmp_path, task_id=TASK, agent_id='test',
-                                     reward_address=ADDRESS, claim_key='same-claim-key')
+                                     reward_address=ADDRESS, claim_key='same-claim-key', version='v1')
     sdk = client(Exchange([raw(claim())]))
     worker.claim(sdk, saved)
     def accept(*args):
@@ -186,7 +186,7 @@ def test_requester_example_reuses_proof_and_explicit_refresh_keeps_cursor(monkey
     monkeypatch.setattr(requester, 'time', SimpleNamespace(time=lambda: 1001))
     exchange = Exchange([raw(challenge()), raw(owner_page('page2')), raw(owner_page()),
                          raw(challenge()), raw(owner_page(deleted=True))])
-    sdk = EndpointChoiceRequesterClient(transport=EndpointChoiceTransport(exchange=exchange), wall_time=lambda: 1001)
+    sdk = EndpointChoiceRequesterClient(transport=EndpointChoiceTransport(exchange=exchange, version='v1'), wall_time=lambda: 1001)
     signed = []
     signer = lambda typed: signed.append(typed) or '0x1234'
     proof, page = module.begin_results(sdk, task_id=TASK, payer=ADDRESS, signer=signer)

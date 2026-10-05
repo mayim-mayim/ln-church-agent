@@ -152,6 +152,7 @@ class ImmediateVisitJournal:
     @_private_boundary
     def __init__(self, directory: Any, claim: ImmediateVisitClaimCredential) -> None:
         snapshot = _checked_claim(claim)
+        self._journal_schema = "ln_church.immediate_visit_journal.v3" if snapshot.task_type == "immediate_http_visit.v3" else _SCHEMA
         self.task_id = snapshot.task_id
         self.execution_id = snapshot.execution_id
         self._claim_binding = hashlib.sha256(jcs_bytes(snapshot.model_dump(mode="json"))).hexdigest()
@@ -205,7 +206,7 @@ class ImmediateVisitJournal:
             raise JournalError("JOURNAL_STATE_CONFLICT")
 
     def _initial(self) -> Dict[str, Any]:
-        return dict(schema_version=_SCHEMA, task_id=self.task_id,
+        return dict(schema_version=self._journal_schema, task_id=self.task_id,
                     execution_id=self.execution_id, claim_sha256=self._claim_binding,
                     endpoint_id=None, fetch_started_at=None, observation=None,
                     report=None, report_sha256=None, dispatch_started=False,

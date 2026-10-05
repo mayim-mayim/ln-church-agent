@@ -23,18 +23,18 @@ def synthetic_pack(monkeypatch):
     monkeypatch.setattr(v,'load_v2_pack',lambda:{'profile.json':json.dumps(dict(profile_id='immediate_visit_utf8.v2',task_type='immediate_http_visit.v2',request_headers={'Accept':'*/*','Accept-Encoding':'identity'},user_agents={'agent':UA,'reference':REF})).encode()})
 
 
-def test_default_v2_and_explicit_v1_discovery_are_separate():
+def test_explicit_v2_and_v1_discovery_are_separate():
     for version in ['v1','v2']:
         value=task_wire() if version=='v1' else v2(task_wire())
         ex=Exchange([raw(dict(schema_version='ln_church.agent_task_page.immediate_visit.'+version,tasks=[value],next_cursor=None))])
-        client=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=ex),**({'version':'v1'} if version=='v1' else {}))
+        client=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=ex, version='v2'),version=version)
         assert client.list_tasks().tasks[0].task_type=='immediate_http_visit.'+version
         assert 'task_type=immediate_http_visit.'+version in ex.requests[0][2]
 
 
 def test_v2_dedicated_claim_has_no_preceding_detail_get(synthetic_pack):
     ex=Exchange([raw(v2(claim_wire()))])
-    cli=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=ex))
+    cli=AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=ex, version='v2'), version='v2')
     result=cli.claim_task(TASK,'agent',ADDRESS,idempotency_key='key')
     assert len(ex.requests)==1 and ex.requests[0][0]=='POST'
     assert json.loads(ex.requests[0][4])['schema_version']=='ln_church.agent_task_claim_request.immediate_visit.v2'
@@ -43,7 +43,7 @@ def test_v2_dedicated_claim_has_no_preceding_detail_get(synthetic_pack):
 
 def test_unsupported_old_claim_is_definite_rejection_without_fallback():
     ex=Exchange([raw(dict(schema_version='ln_church.task_error.immediate_visit.v1',code='unsupported_task_profile',message='no',request_id='r'),400)])
-    cli=AgentImmediateVisitClient(version='v1',transport=ImmediateVisitTransport(exchange=ex))
+    cli=AgentImmediateVisitClient(version='v1',transport=ImmediateVisitTransport(exchange=ex, version='v2'))
     with pytest.raises(ImmediateVisitAPIError) as caught:cli.claim_task(TASK,'agent',ADDRESS,idempotency_key='key')
     assert caught.value.public_error_code=='unsupported_task_profile' and len(ex.requests)==1
 
@@ -100,7 +100,7 @@ def test_version_example_reopens_and_reads_saved_status(tmp_path,monkeypatch,syn
     selected = []
     def client(**kwargs):
         selected.append(kwargs['version'])
-        return AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange), **kwargs)
+        return AgentImmediateVisitClient(transport=ImmediateVisitTransport(exchange=exchange, version='v2'), **kwargs)
     monkeypatch.setattr(module, 'AgentImmediateVisitClient', client)
     monkeypatch.setattr(ImmediateVisitExecutor, '_fetch', lambda *a,**k:pytest.fail('target refetch'))
     result = module.resume_saved_report(tmp_path, task_id=TASK, execution_id=EXECUTION)

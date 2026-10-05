@@ -21,7 +21,7 @@ from .paid_service_trial_transport import (
 
 
 class PaidServiceTrialTaskClient:
-    def __init__(self, *, version: str='v2', transport: Any=None, monotonic: Any=time.monotonic, claim_directory: Any=None, access_quota: Optional[AccessQuotaPolicy]=None) -> None:
+    def __init__(self, *, version: str='v3', transport: Any=None, monotonic: Any=time.monotonic, claim_directory: Any=None, access_quota: Optional[AccessQuotaPolicy]=None) -> None:
         self.version=c.validate_version(version)
         self._transport=transport or PaidServiceTrialTransport(version=version, access_quota=access_quota)
         if isinstance(self._transport, PaidServiceTrialTransport) and self._transport.version!=version:
@@ -69,6 +69,7 @@ class PaidServiceTrialTaskClient:
 
     @_public_boundary
     def claim_task(self,task_id: str,agent_id: str,reward_address: str,*,idempotency_key: str) -> PaidServiceTrialClaim:
+        c.load_contract_bundle(self.version)
         c.validate_task_id(task_id);c.validate_opaque_id(idempotency_key,'idempotency_key')
         body=c.canonical_bytes(dict(schema_version='ln_church.agent_task_claim_request.v1',
                                     agent_id=c.validate_agent_id(agent_id),reward_address=c.address(reward_address)))

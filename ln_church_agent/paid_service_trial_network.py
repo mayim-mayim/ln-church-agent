@@ -413,9 +413,10 @@ def _condition_identity(value: dict) -> str:
     return c.v2_digest(value)
 
 
-def _current_v2_terms(response: PaidTrialHTTPResponse, selected: PurchaseTerms, request: dict) -> _CurrentTerms:
+def _current_v2_terms(response: PaidTrialHTTPResponse, selected: PurchaseTerms, request: dict, *, version='v2') -> _CurrentTerms:
     request = c.validate_request(request)
-    selected = PurchaseTerms.model_validate(selected)
+    from .paid_service_trial_models import purchase_terms_model
+    selected = purchase_terms_model(version).model_validate(selected)
     if response.status_code != 402:
         raise PaidServiceTrialTermsError('expected_402')
     if not response.complete or type(response.body) is not bytes or len(response.body)>c.MAX_BODY_BYTES:
@@ -470,9 +471,9 @@ def _current_v2_terms(response: PaidTrialHTTPResponse, selected: PurchaseTerms, 
     return _CurrentTerms(selected,*options[identity])
 
 
-def _current_v2_terms_context(response: PaidTrialHTTPResponse, selected: PurchaseTerms, request: dict) -> _CurrentTerms:
+def _current_v2_terms_context(response: PaidTrialHTTPResponse, selected: PurchaseTerms, request: dict, *, version='v2') -> _CurrentTerms:
     try:
-        return _current_v2_terms(response, selected, request)
+        return _current_v2_terms(response, selected, request, version=version)
     except PaidServiceTrialTermsError as error:
         reason = error.reason
     except Exception:

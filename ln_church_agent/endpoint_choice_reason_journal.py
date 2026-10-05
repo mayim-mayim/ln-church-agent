@@ -17,7 +17,8 @@ class EndpointChoiceJournal:
     artifact or an AccessQuotaPolicy checkpoint.
     """
     @_private_boundary
-    def __init__(self, directory, *, task_id, agent_id, reward_address, idempotency_key):
+    def __init__(self, directory, *, task_id, agent_id, reward_address, idempotency_key, version="v2"):
+        self.version = c.validate_version(version)
         self.task_id = c.validate_task_id(task_id)
         self.key = c.validate_opaque_id(idempotency_key, 'idempotency_key')
         self._body = c.canonical_bytes(dict(schema_version='ln_church.agent_task_claim_request.v1',
@@ -37,7 +38,7 @@ class EndpointChoiceJournal:
         return 'EndpointChoiceJournal(<private>)'
 
     def _initial(self):
-        return dict(schema_version='ln_church.endpoint_choice_reason_journal.v1', task_id=self.task_id,
+        return dict(schema_version='ln_church.endpoint_choice_reason_journal.'+self.version, task_id=self.task_id,
                     claim_key=self.key, claim_body=self._body.decode(), claim_started=False,
                     credential=None, report=None, report_sha256=None, completion_started=False,
                     completion_unknown=False, accepted=False, rejection=None, abandon_key=None)
@@ -51,7 +52,7 @@ class EndpointChoiceJournal:
         claim = None
         if data['credential'] is not None:
             claim = EndpointChoiceClaimCredential.model_validate(data['credential'])
-            if claim.task_id != self.task_id or claim.reward_address != c.decode_json_object(self._body, c.MAX_REPORT_BYTES)['reward_address']:
+            if c.version_of(claim) != self.version or claim.task_id != self.task_id or claim.reward_address != c.decode_json_object(self._body, c.MAX_REPORT_BYTES)['reward_address']:
                 raise JournalError('JOURNAL_STATE_CONFLICT')
         if data['report'] is not None:
             if claim is None:
@@ -91,7 +92,7 @@ class EndpointChoiceJournal:
         claim = EndpointChoiceClaimCredential.model_validate(value)
         with _StableLock(self.lock_path):
             d = self._load()
-            if claim.task_id != self.task_id or claim.reward_address != c.decode_json_object(self._body, c.MAX_REPORT_BYTES)['reward_address']:
+            if c.version_of(claim) != self.version or claim.task_id != self.task_id or claim.reward_address != c.decode_json_object(self._body, c.MAX_REPORT_BYTES)['reward_address']:
                 raise JournalError('JOURNAL_STATE_CONFLICT')
             if d['credential'] is not None and c.digest(d['credential']) != c.digest(claim._private_payload()):
                 raise JournalError('JOURNAL_STATE_CONFLICT')

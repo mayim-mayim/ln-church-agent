@@ -160,7 +160,7 @@ def test_default_v2_and_shared_claim_request(wire_v2,tmp_path):
         if path.endswith('/claim'):value=wire.claim
         if path=='/api/agent/tasks':value={'schema_version':'ln_church.agent_task_page.paid_service_trial.v2','tasks':[wire.task],'next_cursor':None}
         return PaidServiceTrialRawResponse(200,{},json.dumps(value).encode())
-    client=PaidServiceTrialTaskClient(transport=PaidServiceTrialTransport(exchange=exchange),claim_directory=tmp_path)
+    client=PaidServiceTrialTaskClient(transport=PaidServiceTrialTransport(exchange=exchange, version='v2'),claim_directory=tmp_path, version='v2')
     assert client.version=='v2'
     client.list_tasks();client.get_task(wire.task['task_id']);claim=client.claim_task(wire.task['task_id'],'agent',wire.signer.address,idempotency_key='claim')
     assert seen[0][2]=='task_type=paid_service_trial.v2&task_schema_version=ln_church.agent_task.paid_service_trial.v2&limit=25'
@@ -187,7 +187,7 @@ def test_request_rejects_noncanonical_or_changed_body(wire_v2):
 def test_v2_finite_error(reason):
     value=dict(schema_version='ln_church.task_error.paid_service_trial.v2',code='unsupported_purchase_terms',
         message='raw provider text must not escape',request_id='id',reason=reason)
-    transport=PaidServiceTrialTransport(exchange=lambda *args:PaidServiceTrialRawResponse(400,{},json.dumps(value).encode()))
+    transport=PaidServiceTrialTransport(exchange=lambda *args:PaidServiceTrialRawResponse(400,{},json.dumps(value).encode()), version='v2')
     with pytest.raises(PaidServiceTrialAPIError) as caught:transport.list_tasks()
     assert caught.value.reason==reason and 'raw provider' not in str(caught.value)
 
@@ -195,7 +195,7 @@ def test_v2_finite_error(reason):
 def test_error_reason_closed():
     for code,reason in [('unsupported_purchase_terms',None),('unsupported_purchase_terms','provider says secret'),('invalid_request','expected_402')]:
         value=dict(schema_version='ln_church.task_error.paid_service_trial.v2',code=code,message='x',request_id='id',reason=reason)
-        transport=PaidServiceTrialTransport(exchange=lambda *args:PaidServiceTrialRawResponse(400,{},json.dumps(value).encode()))
+        transport=PaidServiceTrialTransport(exchange=lambda *args:PaidServiceTrialRawResponse(400,{},json.dumps(value).encode()), version='v2')
         with pytest.raises(PaidServiceTrialTransportError):transport.list_tasks()
 
 

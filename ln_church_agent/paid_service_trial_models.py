@@ -483,7 +483,7 @@ class _OfferV2(_DefinitionBinding):
     def _request_binding(self) -> Any:
         request = self.request.model_dump(mode='json')
         if (c.v2_digest(request) != self.request_digest
-                or c.purchase_terms_digest(request, self.purchase_terms) != self.purchase_terms_digest):
+                or c.purchase_terms_digest(request, self.purchase_terms, c.version_of(self)) != self.purchase_terms_digest):
             raise ValueError
         c.v2_canonical_bytes(self.model_dump(mode='json'))
         return self
@@ -513,8 +513,8 @@ class PaidServiceTrialTaskV2(_OfferV2):
         path = '/api/agent/task-offers/' + self.task_id
         if (self.capacity_total != n or int(self.registration_amount_atomic) != n*25000
                 or self.capacity_available != n-self.capacity_reserved-self.capacity_consumed
-                or c.instant_ms(self.listing_ends_at)-c.instant_ms(self.published_at) != 172800000
-                or self.definition_url != c.V2_DEFINITION_URL
+                or c.instant_ms(self.listing_ends_at)-c.instant_ms(self.published_at) != (604800000 if c.version_of(self) == "v3" else 172800000)
+                or self.definition_url != c.PUBLIC_API_ORIGIN + "/agent-task-specs/" + self.task_type + "/" + self.task_definition_version + "/manifest.json"
                 or self.summary_url != c.PUBLIC_API_ORIGIN+path+'/summary'
                 or self.results_url != c.PUBLIC_API_ORIGIN+path+'/execution-summaries'
                 or c.v2_digest(self.public_terms()) != self.terms_digest):
@@ -630,6 +630,64 @@ class PaidServiceTrialSubmissionStatusV2(PaidServiceTrialSubmissionStatus):
     schema_version: Literal['ln_church.task_submission_status.paid_service_trial.v2']
 
 
+
+class PaymentRequirementsV3(PaymentRequirements):
+    _amount = field_validator('amount')(lambda value: c.amount_for_version(value, 'v3'))
+
+
+class PurchaseTermsV3(PurchaseTerms):
+    requirements: PaymentRequirementsV3
+
+
+class PurchaseIdentityV3(PurchaseIdentity):
+    _amount = field_validator('amount')(lambda value: c.amount_for_version(value, 'v3'))
+
+
+def purchase_terms_model(version):
+    return PurchaseTermsV3 if c.validate_version(version) == 'v3' else PurchaseTerms
+
+
+def purchase_identity_model(version):
+    return PurchaseIdentityV3 if c.validate_version(version) == 'v3' else PurchaseIdentity
+
+
+class PaidServiceTrialTaskV3(PaidServiceTrialTaskV2):
+    schema_version: Literal['ln_church.agent_task.paid_service_trial.v3']
+    task_type: Literal['paid_service_trial.v3']
+    task_definition_version: Literal['3.0.0']
+    purchase_terms: PurchaseTermsV3
+
+
+class PaidServiceTrialTaskPageV3(PaidServiceTrialTaskPageV2):
+    schema_version: Literal['ln_church.agent_task_page.paid_service_trial.v3']
+    tasks: Tuple[PaidServiceTrialTaskV3, ...]
+
+
+class PaidServiceTrialClaimV3(PaidServiceTrialClaimV2):
+    schema_version: Literal['ln_church.agent_task_claim_response.paid_service_trial.v3']
+    task_type: Literal['paid_service_trial.v3']
+    task_definition_version: Literal['3.0.0']
+    purchase_terms: PurchaseTermsV3
+
+
+class PaidServiceTrialReportV3(PaidServiceTrialReportV2):
+    schema_version: Literal['ln_church.task_completion.paid_service_trial.v3']
+    task_type: Literal['paid_service_trial.v3']
+    task_definition_version: Literal['3.0.0']
+    purchase: PurchaseIdentityV3
+
+
+class PaidServiceTrialAbandonmentV3(PaidServiceTrialAbandonmentV2):
+    schema_version: Literal['ln_church.agent_task_abandon_response.paid_service_trial.v3']
+
+
+class PaidServiceTrialCompletionReceiptV3(PaidServiceTrialCompletionReceiptV2):
+    schema_version: Literal['ln_church.task_completion_receipt.paid_service_trial.v3']
+
+
+class PaidServiceTrialSubmissionStatusV3(PaidServiceTrialSubmissionStatusV2):
+    schema_version: Literal['ln_church.task_submission_status.paid_service_trial.v3']
+
 def model_for(surface: str, version: str) -> Any:
     c.validate_version(version)
     return _MODELS[version][surface]
@@ -640,6 +698,10 @@ def parse_claim(value: Any) -> Any:
 
 
 _MODELS = {
+    'v3': dict(task=PaidServiceTrialTaskV3, page=PaidServiceTrialTaskPageV3,
+        claim=PaidServiceTrialClaimV3, report=PaidServiceTrialReportV3,
+        receipt=PaidServiceTrialCompletionReceiptV3, status=PaidServiceTrialSubmissionStatusV3,
+        abandon=PaidServiceTrialAbandonmentV3),
     'v1': dict(task=PaidServiceTrialTask, page=PaidServiceTrialTaskPage,
         claim=PaidServiceTrialClaim, report=PaidServiceTrialReport,
         receipt=PaidServiceTrialCompletionReceipt, status=PaidServiceTrialSubmissionStatus,

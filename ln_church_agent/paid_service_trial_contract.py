@@ -76,8 +76,12 @@ def uint(value: Any) -> str:
 
 
 def amount(value: Any) -> str:
+    return amount_for_version(value, 'v1')
+
+
+def amount_for_version(value: Any, version: str) -> str:
     value = uint(value)
-    if not 1 <= int(value) <= 10000:
+    if not 1 <= int(value) <= (2 ** 256 - 1 if validate_version(version) == 'v3' else 10000):
         raise ValueError("Invalid purchase amount.")
     return value
 
@@ -230,11 +234,13 @@ def version_of(value: Any) -> str:
         return 'v1'
     if kind == V2_TASK_TYPE:
         return 'v2'
+    if kind == 'paid_service_trial.v3':
+        return 'v3'
     raise ValueError('Invalid Paid Service Trial version.')
 
 
 def validate_version(version: str) -> str:
-    if version not in ('v1', 'v2'):
+    if version not in ('v1', 'v2', 'v3'):
         raise ValueError('Invalid Paid Service Trial version.')
     return version
 
@@ -424,11 +430,14 @@ def validate_request(value: Any) -> dict:
     return expected
 
 
-def purchase_terms_digest(request: dict, terms: Any) -> str:
-    from .paid_service_trial_models import PurchaseTerms
+def purchase_terms_digest(request: dict, terms: Any, version: str = 'v2') -> str:
+    from .paid_service_trial_models import purchase_terms_model
+    validate_version(version)
+    if version == "v1":
+        raise ValueError("HTTP request binding requires v2 or v3.")
     request = validate_request(request)
-    selected = PurchaseTerms.model_validate(terms)
-    return v2_digest(dict(schema_version='ln_church.paid_service_purchase_binding.v2',
+    selected = purchase_terms_model(version).model_validate(terms)
+    return v2_digest(dict(schema_version='ln_church.paid_service_purchase_binding.' + version,
         request_digest=v2_digest(request), resource_url=request['url'], x402_version=2,
         authorization_method='EIP-3009', requirements=selected.requirements.wire()))
 
@@ -444,7 +453,7 @@ def target_url(claim: Any) -> str:
 def load_contract_bundle(version: str = 'v1') -> dict:
     if validate_version(version) == 'v1':
         return _load_v1_contract_bundle()
-    return _load_v2_contract_bundle()
+    return _load_v2_contract_bundle() if version == "v2" else _load_v3_contract_bundle()
 
 
 # Fixed Backend c1 intake; retain these bytes independently of manifest claims.
@@ -529,3 +538,32 @@ def _load_v2_contract_bundle() -> dict:
     except Exception:
         pass
     raise ValueError('Paid trial v2 contract bundle unavailable or invalid.')
+
+
+# Populated only from a DC-readback fixed Hondo candidate, never a local pack.
+V3_PACK_SHA256 = {'SKILL.md': '9ea1641c2cc52f64de50a8725af725f47f3eb77f836f29548c03ffc8a83b7020',
+ 'definition.json': '348a5935a81b8b1526a664515f3b61b34c37eb43133f0df32e8c84f49e457aaf',
+ 'manifest.json': '517e0becd6da94ca8c92778d5b86625caad64ae84a1517625fb6f6ca1cd0e0a4',
+ 'requester-guide.md': 'c87e3963f7b38ef3dfe475582773fd28ec2c74b60fbb66e5dfcaf000adb7feb6',
+ 'v18-5-paid-service-trial-contract-v3.json': 'a919b7f4d277fec3f8c95bfd1f8f436ea8d9b57cb3a89fdd3ec0bd7f9b154853',
+ 'wire-contract.json': '406b8ecbcd96ff3c163ff160c2473e5523ce55d2aa8486d892074ada4e63c7d2'}
+
+def _load_v3_contract_bundle():
+    if not V3_PACK_SHA256:
+        raise ValueError('Fixed Paid v3 contract pack has not been received.')
+    root = Path(__file__).parent / 'contracts' / 'v185-paid-service-trial-v3'
+    if {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} != set(V3_PACK_SHA256):
+        raise ValueError('Invalid Paid v3 contract pack.')
+    resources = {name: (root / name).read_bytes() for name in V3_PACK_SHA256}
+    if any(hashlib.sha256(raw).hexdigest() != V3_PACK_SHA256[name] for name, raw in resources.items()):
+        raise ValueError('Invalid Paid v3 contract pack.')
+    manifest = decode_json_object(resources['manifest.json'], MAX_BODY_BYTES)
+    definition = decode_json_object(resources['definition.json'], MAX_BODY_BYTES)
+    if (manifest['task_type'] != 'paid_service_trial.v3'
+            or manifest['task_definition_version'] != '3.0.0'
+            or manifest['task_definition_digest'] != v2_digest(manifest['descriptor'])
+            or definition['task_type'] != 'paid_service_trial.v3'
+            or definition['task_definition_version'] != '3.0.0'
+            or definition['listing_duration_ms'] != 604800000):
+        raise ValueError('Invalid Paid v3 definition.')
+    return dict(manifest=manifest, definition=definition, resources=resources)

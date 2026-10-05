@@ -30,7 +30,7 @@ V2_PACK_SHA256 = {'SKILL.md': '850c4741abd3a40c33ff0bd1a7ca92279acb9519120586768
 
 
 def validate_version(value):
-    if value not in ("v1", "v2"):
+    if value not in ("v1", "v2", "v3"):
         raise ValueError("Unsupported immediate visit version.")
     return value
 
@@ -41,7 +41,7 @@ def version_of(value):
 
 def claim_schema(version):
     return ("ln_church.agent_task_claim_request.v1" if validate_version(version) == "v1"
-            else "ln_church.agent_task_claim_request.immediate_visit.v2")
+            else "ln_church.agent_task_claim_request.immediate_visit." + version)
 
 
 def validate_tuple(value):
@@ -50,7 +50,7 @@ def validate_tuple(value):
         raise ValueError("Cross-version immediate visit tuple.")
     if value.schema_version.rsplit(".", 1)[-1] != version:
         raise ValueError("Cross-version immediate visit schema.")
-    if hasattr(value, "definition_version") and value.definition_version != {"v1": "1.0.0", "v2": "2.0.0"}[version]:
+    if hasattr(value, "definition_version") and value.definition_version != {"v1": "1.0.0", "v2": "2.0.0", "v3": "3.0.0"}[version]:
         raise ValueError("Cross-version immediate visit definition.")
 
 
@@ -78,11 +78,57 @@ def agent_user_agent(profile_id):
     if profile_id == "immediate_visit_utf8.v1":
         from .network_fetch import IMMEDIATE_VISIT_USER_AGENT
         return IMMEDIATE_VISIT_USER_AGENT
-    if profile_id != "immediate_visit_utf8.v2":
+    if profile_id not in ("immediate_visit_utf8.v2", "immediate_visit_utf8.v3"):
         raise ValueError("Unsupported immediate visit profile.")
-    profile = decode_json_object(load_v2_pack()["profile.json"], 2097152)
-    if (profile["profile_id"] != profile_id or profile["task_type"] != "immediate_http_visit.v2"
+    version = profile_id.rsplit(".", 1)[-1]
+    profile = decode_json_object(load_pack(version)["profile.json"], 2097152)
+    if (profile["profile_id"] != profile_id or profile["task_type"] != "immediate_http_visit." + version
             or profile["request_headers"] != {"Accept": "*/*", "Accept-Encoding": "identity"}
             or set(profile["user_agents"]) != {"agent", "reference"}):
         raise ValueError("Invalid Immediate v2 role profile.")
     return profile["user_agents"]["agent"]
+
+
+# Pinned to Hondo 90b06a6c58ec76b09f7adb9b430ce34f6d2a0b71.
+V3_PACK_SHA256 = {'SKILL.md': 'b136f2f9b597285f3b9478ef02a72df9ab9d620c747c220450fa0725e48b939f',
+ 'abandon-request.schema.json': 'ebe360f48228a4b6a80c07ec1eabf852f683eec30b1434aa45688268e75ab279',
+ 'abandon-response.schema.json': '883ad6b64b395604ea92cf915dbf11657e9c60a32faa0c859b69a328ef358aac',
+ 'claim-request.schema.json': '2533eb726304c7f835ee53948b13a4a376a9c005cdc94b670058e4fd14417cd0',
+ 'claim.schema.json': '699fdea367bdd2706d5d6006c1fe5010d6f03b39da6f93f33a9e05037e0d3fa5',
+ 'definition.json': '3a3c8f18591c0a83b1fd15cb62e6928a86822d4d1d5c137efacd2f92249efc91',
+ 'error.schema.json': '1214e0b79dbeb97346742a1fbb987322049aaee67b46d281c1c3437cb896f424',
+ 'execution-page.schema.json': '694625133ae9bbaca3a14aa614c3a38e3243943ce3adcf273ba89654ec5f81ca',
+ 'manifest.json': 'e7642e2bc6540d137bfa3e27a9339f02ba460a8a9254c8572b3ac2f91bdcda4c',
+ 'observation.schema.json': '32c22e00d9e91487d20b1d4ef48cef3c26fcda76e43d99e25c4847748092cb64',
+ 'page.schema.json': '8aff4cbebd038d28f27be09b4d461c7e1e57091660494dba79d432768a7c0a36',
+ 'profile-fixtures.json': '8f76be41390c751df0008dec8722197af026a3169675b58d453ed489bae551a7',
+ 'profile.json': '68a06d75c6bf275494872a193fa8a5e6046ac5d1daec0575b3f84ff14e411919',
+ 'receipt.schema.json': 'bf7bc478051ed479a57f3e13fb57f237e4b03564b987540cbeff098e8f38a0e2',
+ 'registration-result.schema.json': 'fb1b6f8489476518562c758a2c0de556a5223ecbdec891e7176637feb79afb55',
+ 'registration.schema.json': 'e0702f59bde8ad37fea02fb23406a7b0a2deae7b7c39908a83aa80bc7255af16',
+ 'requester-registration/SKILL.md': 'ec669f9e6d4de23e045a33471b7804c35715c88397dd451248129ab1c2ac4ed8',
+ 'result.schema.json': 'd1af58c98d6f2466d1425931a7b3d5369f1b9a9fdb79fbcc1fc3973854002048',
+ 'submission.schema.json': '758463460a14e4223719d7deea95967d616756bf18cac0340752be5e9f83b267',
+ 'summary.schema.json': 'd0f88260ccf1423bbccb3efcd9a2de1126c4b95f59a8f8afedfa7aaf8b1fb255',
+ 'task.schema.json': '9f08fb64d1dd8710d179595c0185683e9a6db484eadea822b458cd2ada401cea',
+ 'wire-fixtures.json': 'bb38adbf498c85e612c976f2c7bfe12ebe3d60030b9a9ac00760800f2844f15f'}
+
+def load_pack(version):
+    validate_version(version)
+    if version == 'v2':
+        return load_v2_pack()
+    if version != 'v3' or not V3_PACK_SHA256:
+        raise ValueError('Fixed Immediate v3 contract pack has not been received.')
+    root = Path(__file__).parent / 'contracts' / 'v183-immediate-visit-v3'
+    if {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} != set(V3_PACK_SHA256):
+        raise ValueError('Invalid Immediate v3 contract pack.')
+    resources = {name: (root / name).read_bytes() for name in V3_PACK_SHA256}
+    if any(hashlib.sha256(raw).hexdigest() != V3_PACK_SHA256[name] for name, raw in resources.items()):
+        raise ValueError('Invalid Immediate v3 contract pack.')
+    from .immediate_visit_profile import jcs_bytes
+    manifest = decode_json_object(resources['manifest.json'], 2097152)
+    if (manifest['task_type'] != 'immediate_http_visit.v3'
+            or manifest['task_definition_version'] != '3.0.0'
+            or manifest['task_definition_digest'] != hashlib.sha256(jcs_bytes(manifest['descriptor'])).hexdigest()):
+        raise ValueError('Invalid Immediate v3 descriptor.')
+    return resources

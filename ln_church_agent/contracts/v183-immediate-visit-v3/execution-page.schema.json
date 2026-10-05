@@ -1,0 +1,516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-specs/immediate_http_visit.v3/3.0.0/execution-page.schema.json",
+  "title": "Immediate Visit public Execution Summaries page v2",
+  "description": "Free, bounded, saved public projection of durably accepted Submissions. This page does not authorize or perform Claim, evaluation, payment or retry. See SKILL.md for source authority, Task and endpoint binding, cursor, stable ordering and projection readiness rules.",
+  "$comment": "Task binding, endpoint membership, canonical calendar validity, uniqueness by submission_id, received_at DESC / submission_id DESC order, timestamp provenance and cursor authority require runtime validation. A schema-valid page is not evidence of payment confirmation or complete projection coverage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_type",
+    "task_id",
+    "projection_state",
+    "summaries",
+    "next_cursor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_execution_summary_page.immediate_visit.v3"
+    },
+    "task_type": {
+      "const": "immediate_http_visit.v3"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "projection_state": {
+      "enum": [
+        "building",
+        "ready"
+      ]
+    },
+    "summaries": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/summary"
+      }
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "not": {
+            "pattern": "[^A-Za-z0-9_-]"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 24,
+      "maxLength": 24,
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+    },
+    "nullableTimestamp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "submission_id",
+        "endpoint_id",
+        "received_at",
+        "evaluation_state",
+        "approved_amount_atomic",
+        "base_amount_atomic",
+        "bonus_amount_atomic",
+        "asset",
+        "network",
+        "asset_address",
+        "evaluated_at",
+        "payment_state",
+        "reward_tx_hash",
+        "rewarded_at",
+        "reason_code",
+        "updated_at"
+      ],
+      "properties": {
+        "submission_id": {
+          "type": "string",
+          "pattern": "^sub_[a-f0-9]{32}$",
+          "minLength": 36,
+          "maxLength": 36
+        },
+        "endpoint_id": {
+          "type": "string",
+          "pattern": "^ep_[a-f0-9]{64}$",
+          "minLength": 67,
+          "maxLength": 67
+        },
+        "received_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "evaluation_state": {
+          "enum": [
+            "pending",
+            "repeat_drop",
+            "inconclusive",
+            "mismatch",
+            "base_approved",
+            "base_bonus_approved"
+          ]
+        },
+        "approved_amount_atomic": {
+          "enum": [
+            null,
+            "0",
+            "7500",
+            "15000"
+          ]
+        },
+        "base_amount_atomic": {
+          "enum": [
+            null,
+            "0",
+            "7500"
+          ]
+        },
+        "bonus_amount_atomic": {
+          "enum": [
+            null,
+            "0",
+            "7500"
+          ]
+        },
+        "asset": {
+          "const": "USDC"
+        },
+        "network": {
+          "const": "eip155:8453"
+        },
+        "asset_address": {
+          "const": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        },
+        "evaluated_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "payment_state": {
+          "enum": [
+            "not_applicable",
+            "pending",
+            "ambiguous",
+            "paid_confirmed",
+            "failed"
+          ]
+        },
+        "reward_tx_hash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "minLength": 66,
+              "maxLength": 66
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rewarded_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "reason_code": {
+          "enum": [
+            null,
+            "repeat_drop",
+            "inconclusive",
+            "mismatch",
+            "payment_ambiguous",
+            "payment_failed"
+          ]
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": null
+              },
+              "base_amount_atomic": {
+                "const": null
+              },
+              "bonus_amount_atomic": {
+                "const": null
+              },
+              "evaluated_at": {
+                "const": null
+              },
+              "payment_state": {
+                "const": "not_applicable"
+              },
+              "reward_tx_hash": {
+                "const": null
+              },
+              "rewarded_at": {
+                "const": null
+              },
+              "reason_code": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "repeat_drop"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": "0"
+              },
+              "base_amount_atomic": {
+                "const": "0"
+              },
+              "bonus_amount_atomic": {
+                "const": "0"
+              },
+              "payment_state": {
+                "const": "not_applicable"
+              },
+              "reward_tx_hash": {
+                "const": null
+              },
+              "rewarded_at": {
+                "const": null
+              },
+              "reason_code": {
+                "const": "repeat_drop"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "inconclusive"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": "0"
+              },
+              "base_amount_atomic": {
+                "const": "0"
+              },
+              "bonus_amount_atomic": {
+                "const": "0"
+              },
+              "payment_state": {
+                "const": "not_applicable"
+              },
+              "reward_tx_hash": {
+                "const": null
+              },
+              "rewarded_at": {
+                "const": null
+              },
+              "reason_code": {
+                "const": "inconclusive"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "mismatch"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": "0"
+              },
+              "base_amount_atomic": {
+                "const": "0"
+              },
+              "bonus_amount_atomic": {
+                "const": "0"
+              },
+              "payment_state": {
+                "const": "not_applicable"
+              },
+              "reward_tx_hash": {
+                "const": null
+              },
+              "rewarded_at": {
+                "const": null
+              },
+              "reason_code": {
+                "const": "mismatch"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "base_approved"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": "7500"
+              },
+              "base_amount_atomic": {
+                "const": "7500"
+              },
+              "bonus_amount_atomic": {
+                "const": "0"
+              },
+              "payment_state": {
+                "enum": [
+                  "pending",
+                  "ambiguous",
+                  "paid_confirmed",
+                  "failed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "evaluation_state": {
+                "const": "base_bonus_approved"
+              }
+            },
+            "required": [
+              "evaluation_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "approved_amount_atomic": {
+                "const": "15000"
+              },
+              "base_amount_atomic": {
+                "const": "7500"
+              },
+              "bonus_amount_atomic": {
+                "const": "7500"
+              },
+              "payment_state": {
+                "enum": [
+                  "pending",
+                  "ambiguous",
+                  "paid_confirmed",
+                  "failed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payment_state": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "payment_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_code": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payment_state": {
+                "const": "ambiguous"
+              }
+            },
+            "required": [
+              "payment_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_code": {
+                "const": "payment_ambiguous"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payment_state": {
+                "const": "paid_confirmed"
+              }
+            },
+            "required": [
+              "payment_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_code": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payment_state": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "payment_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason_code": {
+                "const": "payment_failed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "payment_state": {
+                "not": {
+                  "const": "paid_confirmed"
+                }
+              }
+            },
+            "required": [
+              "payment_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rewarded_at": {
+                "const": null
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

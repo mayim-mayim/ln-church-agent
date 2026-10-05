@@ -28,7 +28,7 @@ REWARD=dict(network='eip155:8453', asset='USDC', asset_address=c.ASSET, correct_
 @pytest.fixture
 def synthetic_pack(monkeypatch):
     # Solely adapter/model tests: final pack bytes/digest must come from DC.
-    monkeypatch.setattr(c,'load_contract_pack',lambda:dict(manifest={'task_definition_digest':DEF}))
+    monkeypatch.setattr(c,'load_contract_pack',lambda version='v1':dict(manifest={'task_definition_digest':DEF}))
 
 
 def task():
@@ -82,7 +82,7 @@ def error(code, status=400):
 
 def journal(tmp_path):
     tmp_path.chmod(0o700)
-    return EndpointChoiceJournal(tmp_path,task_id=TASK,agent_id='test',reward_address=ADDRESS.upper().replace('0X','0x'),idempotency_key='same-claim-key')
+    return EndpointChoiceJournal(tmp_path,task_id=TASK,agent_id='test',reward_address=ADDRESS.upper().replace('0X','0x'),idempotency_key='same-claim-key', version='v1')
 
 
 class Exchange:
@@ -94,7 +94,7 @@ class Exchange:
         return result
 
 
-def client(ex):return AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=ex))
+def client(ex):return AgentEndpointChoiceReasonClient(transport=EndpointChoiceTransport(exchange=ex, version='v1'), version='v1')
 
 
 def setup_answer(tmp_path):
@@ -140,7 +140,7 @@ def test_durable_claim_before_dispatch_and_restart_recovery(tmp_path,synthetic_p
 def test_changed_claim_body_same_key_rejected_before_network(tmp_path,synthetic_pack):
     journal(tmp_path)
     with pytest.raises(JournalError):
-        EndpointChoiceJournal(tmp_path,task_id=TASK,agent_id='other',reward_address=ADDRESS,idempotency_key='same-claim-key')
+        EndpointChoiceJournal(tmp_path,task_id=TASK,agent_id='other',reward_address=ADDRESS,idempotency_key='same-claim-key', version='v1')
 
 
 def test_answer_saved_exactly_before_post_and_receipt_not_reward(tmp_path,synthetic_pack):
