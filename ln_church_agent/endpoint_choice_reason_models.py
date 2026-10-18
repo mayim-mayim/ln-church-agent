@@ -21,7 +21,7 @@ class _Frozen(BaseModel):
             version = c.validate_version(schema.rsplit('.', 1)[-1])
             if hasattr(self, 'task_type') and c.version_of(self) != version:
                 raise ValueError('Mixed endpoint choice schema.')
-            if hasattr(self, 'task_definition_version') and self.task_definition_version != {'v1':'1.0.0', 'v2':'2.0.0'}[version]:
+            if hasattr(self, 'task_definition_version') and self.task_definition_version != {'v1':'1.0.0', 'v2':'2.0.0', 'v2_1':'2.1.0'}[version]:
                 raise ValueError('Mixed endpoint choice definition.')
             if hasattr(self, 'tasks') and any(c.version_of(t) != version for t in self.tasks):
                 raise ValueError('Mixed endpoint choice page.')
@@ -43,6 +43,8 @@ class _Frozen(BaseModel):
             return cls(**value.model_dump(mode='python'))
         if not isinstance(value, dict):
             raise ValueError('Invalid endpoint choice wire value.')
+        if value.get('schema_version', '').endswith('.v2_1'):
+            cls = globals().get('_V21_MODELS', {}).get(cls, cls)
         return cls(**dict(value))
 
     @classmethod
@@ -88,13 +90,13 @@ class EndpointChoiceReward(_Frozen):
 class _Snapshot(_Frozen):
     task_id: str
     task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
-    task_definition_version: Literal['1.0.0', '2.0.0']
+    task_definition_version: Literal['1.0.0', '2.0.0', '2.1.0']
     task_definition_digest: str
     terms_digest: str
     question: str
     candidates: Tuple[EndpointChoiceCandidate, ...]
     reveal_correct_set_after_answer: bool
-    evaluation_profile_id: Literal['endpoint-choice-reason-jev-v1']
+    evaluation_profile_id: str
     reward: EndpointChoiceReward
 
     @field_validator('candidates', mode='before')
@@ -110,6 +112,8 @@ class _Snapshot(_Frozen):
         c.require_definition(self.task_definition_digest, c.version_of(self))
         c.validate_sha256(self.terms_digest)
         c.text_value(self.question, 4096)
+        if self.evaluation_profile_id != c.evaluation_profile(c.version_of(self)):
+            raise ValueError('Invalid evaluation profile.')
         if (not 1 <= len(self.candidates) <= 10
                 or len({x.candidate_id for x in self.candidates}) != len(self.candidates)
                 or len({x.url for x in self.candidates}) != len(self.candidates)):
@@ -118,7 +122,7 @@ class _Snapshot(_Frozen):
 
 
 class EndpointChoiceTask(_Snapshot):
-    schema_version: Literal['ln_church.agent_task.endpoint_choice_reason.v1', 'ln_church.agent_task.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.agent_task.endpoint_choice_reason.v1', 'ln_church.agent_task.endpoint_choice_reason.v2', 'ln_church.agent_task.endpoint_choice_reason.v2_1']
     plan_id: Literal['C5', 'C55', 'C555']
     registration_amount_atomic: str
     capacity_total: int = Field(ge=0, le=9007199254740991)
@@ -140,12 +144,13 @@ class EndpointChoiceTask(_Snapshot):
     def _terms(self):
         if (self.registration_amount_atomic, self.capacity_total) != c.PLANS[self.plan_id]:
             raise ValueError('Invalid plan.')
-        if self.capacity_total != self.capacity_reserved + self.capacity_consumed + self.capacity_available:
+        pending = getattr(self, 'capacity_quality_pending', 0) if c.version_of(self) == 'v2_1' else 0
+        if self.capacity_total != self.capacity_reserved + self.capacity_consumed + self.capacity_available + pending:
             raise ValueError('Invalid capacity.')
         payload = self.model_dump(mode='json')
-        if c.digest({k: payload[k] for k in c.TERMS_FIELDS}) != self.terms_digest:
+        if c.digest({k: payload[k] for k in c.terms_fields(c.version_of(self))}) != self.terms_digest:
             raise ValueError('Invalid terms digest.')
-        if c.parse_timestamp(self.listing_ends_at) - c.parse_timestamp(self.published_at) != timedelta(hours=168 if c.version_of(self) == "v2" else 48):
+        if c.parse_timestamp(self.listing_ends_at) - c.parse_timestamp(self.published_at) != timedelta(hours=168 if c.version_of(self) in ("v2", "v2_1") else 48):
             raise ValueError('Invalid listing window.')
         if (self.status == 'CLOSED') != (self.answer_acceptance_closed_at is not None):
             raise ValueError('Invalid closure.')
@@ -154,6 +159,8 @@ class EndpointChoiceTask(_Snapshot):
         for value in (self.definition_url, self.summary_url, self.results_url):
             if not value.startswith(c.PUBLIC_API_ORIGIN + '/'):
                 raise ValueError('Invalid public URL.')
+        if c.version_of(self) == 'v2_1' and self.definition_url != c.PUBLIC_API_ORIGIN + '/agent-task-specs/endpoint_choice_reason.v2/2.1.0/SKILL.md':
+            raise ValueError('Invalid Choice 2.1.0 definition URL.')
         if c.version_of(self) == 'v2' and self.definition_url != c.PUBLIC_API_ORIGIN + '/agent-task-specs/endpoint_choice_reason.v2/2.0.0/SKILL.md':
             raise ValueError('Invalid Choice v2 definition URL.')
         if self.results_url != c.PUBLIC_API_ORIGIN + c.task_detail_path(self.task_id) + '/results':
@@ -162,7 +169,7 @@ class EndpointChoiceTask(_Snapshot):
 
 
 class EndpointChoiceTaskPage(_Frozen):
-    schema_version: Literal['ln_church.agent_task_page.endpoint_choice_reason.v1', 'ln_church.agent_task_page.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.agent_task_page.endpoint_choice_reason.v1', 'ln_church.agent_task_page.endpoint_choice_reason.v2', 'ln_church.agent_task_page.endpoint_choice_reason.v2_1']
     tasks: Tuple[EndpointChoiceTask, ...]
     next_cursor: Optional[str]
 
@@ -180,7 +187,7 @@ class EndpointChoiceTaskPage(_Frozen):
 
 
 class EndpointChoiceClaimCredential(_Snapshot):
-    schema_version: Literal['ln_church.agent_task_claim_response.endpoint_choice_reason.v1', 'ln_church.agent_task_claim_response.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.agent_task_claim_response.endpoint_choice_reason.v1', 'ln_church.agent_task_claim_response.endpoint_choice_reason.v2', 'ln_church.agent_task_claim_response.endpoint_choice_reason.v2_1']
     execution_id: str
     reward_address: str = Field(repr=False, exclude=True)
     reward_address_control_verified: Literal[False]
@@ -231,10 +238,10 @@ class EndpointChoiceClaimCredential(_Snapshot):
 
 
 class EndpointChoiceCompletionReport(_Frozen):
-    schema_version: Literal['ln_church.task_completion.endpoint_choice_reason.v1', 'ln_church.task_completion.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.task_completion.endpoint_choice_reason.v1', 'ln_church.task_completion.endpoint_choice_reason.v2', 'ln_church.task_completion.endpoint_choice_reason.v2_1']
     task_id: str
     task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
-    task_definition_version: Literal['1.0.0', '2.0.0']
+    task_definition_version: Literal['1.0.0', '2.0.0', '2.1.0']
     task_definition_digest: str
     terms_digest: str
     execution_id: str
@@ -394,7 +401,7 @@ class _ReceiptIdentity(_Frozen):
 
 
 class EndpointChoiceCompletionReceipt(_ReceiptIdentity):
-    schema_version: Literal['ln_church.task_completion_receipt.endpoint_choice_reason.v1', 'ln_church.task_completion_receipt.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.task_completion_receipt.endpoint_choice_reason.v1', 'ln_church.task_completion_receipt.endpoint_choice_reason.v2', 'ln_church.task_completion_receipt.endpoint_choice_reason.v2_1']
     receipt_state: Literal['accepted']
     status_url: str
 
@@ -407,7 +414,7 @@ class EndpointChoiceCompletionReceipt(_ReceiptIdentity):
 
 
 class EndpointChoiceSubmissionStatus(_ReceiptIdentity):
-    schema_version: Literal['ln_church.task_submission_status.endpoint_choice_reason.v1', 'ln_church.task_submission_status.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.task_submission_status.endpoint_choice_reason.v1', 'ln_church.task_submission_status.endpoint_choice_reason.v2', 'ln_church.task_submission_status.endpoint_choice_reason.v2_1']
     selected_candidate_id: str
     answer_reason: str = Field(repr=False, exclude=True)
     evaluation: EndpointChoiceEvaluation
@@ -465,7 +472,7 @@ class EndpointChoiceCounts(_Frozen):
 
 
 class EndpointChoicePublicResults(_Frozen):
-    schema_version: Literal['ln_church.task_results.endpoint_choice_reason.v1', 'ln_church.task_results.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.task_results.endpoint_choice_reason.v1', 'ln_church.task_results.endpoint_choice_reason.v2', 'ln_church.task_results.endpoint_choice_reason.v2_1']
     task_id: str
     task_type: Literal['endpoint_choice_reason.v1', 'endpoint_choice_reason.v2']
     answer_acceptance_closed_at: Optional[str]
@@ -497,7 +504,7 @@ class EndpointChoicePublicResults(_Frozen):
 
 
 class EndpointChoiceAbandonment(_Frozen):
-    schema_version: Literal['ln_church.agent_task_abandon_response.endpoint_choice_reason.v1', 'ln_church.agent_task_abandon_response.endpoint_choice_reason.v2']
+    schema_version: Literal['ln_church.agent_task_abandon_response.endpoint_choice_reason.v1', 'ln_church.agent_task_abandon_response.endpoint_choice_reason.v2', 'ln_church.agent_task_abandon_response.endpoint_choice_reason.v2_1']
     task_id: str
     execution_id: str
     state: Literal['abandoned']
@@ -507,6 +514,88 @@ class EndpointChoiceAbandonment(_Frozen):
     def _check(self):
         c.validate_task_id(self.task_id); c.execution_id(self.execution_id); c.validate_timestamp(self.abandoned_at)
         return self
+
+
+class EndpointChoiceV21Task(EndpointChoiceTask):
+    capacity_quality_pending: int = Field(ge=0, le=9007199254740991)
+    capacity_compensated: int = Field(ge=0, le=9007199254740991)
+    capacity_profile_id: Literal['endpoint-choice-reason-rpah.v2_1']
+    evaluation_profile_digest: str
+    status: Literal['OPEN', 'LISTING_ENDED', 'CLOSED', 'QUALITY_PENDING']
+
+    @model_validator(mode='after')
+    def _v21(self):
+        c.validate_v21_wire('task', self.model_dump(mode='json'))
+        profile = c.decode_json_object(c.load_contract_pack('v2_1')['resources']['evaluation-profile.json'], 2097152)
+        if self.evaluation_profile_digest != c.digest(profile) or self.capacity_compensated > self.capacity_consumed:
+            raise ValueError('Invalid Choice 2.1.0 profile/capacity.')
+        return self
+
+
+class EndpointChoiceV21Page(EndpointChoiceTaskPage):
+    tasks: Tuple[EndpointChoiceV21Task, ...]
+
+
+class EndpointChoiceV21Claim(EndpointChoiceClaimCredential):
+    capacity_quality_pending: Optional[int] = Field(default=None, ge=0, le=9007199254740991)
+    capacity_compensated: Optional[int] = Field(default=None, ge=0, le=9007199254740991)
+    capacity_profile_id: Optional[Literal['endpoint-choice-reason-rpah.v2_1']] = None
+
+    def __init__(self, **data):
+        c.validate_v21_wire('claim', data)
+        super().__init__(**data)
+
+    def model_dump(self, **kwargs):
+        value = super().model_dump(**kwargs)
+        for key in ('capacity_quality_pending', 'capacity_compensated', 'capacity_profile_id'):
+            if key not in self.model_fields_set:
+                value.pop(key, None)
+        return value
+
+
+class EndpointChoiceV21Evaluation(EndpointChoiceEvaluation):
+    reward_basis: Optional[Literal['SCORE_PROPORTIONAL', 'FULL_REWARD_LINE',
+        'OPERATOR_COMPENSATION', 'QUALITY_REJECTED']]
+
+    @model_validator(mode='after')
+    def _check(self):
+        if self.state == 'PENDING':
+            if any(v is not None for k, v in self.model_dump().items() if k != 'state'):
+                raise ValueError('Premature evaluation facts.')
+            return self
+        c.validate_timestamp(self.evaluated_at)
+        if type(self.is_correct) is not bool or self.base_amount_atomic != ('100000' if self.is_correct else '10000'):
+            raise ValueError('Invalid Choice 2.1.0 reward base.')
+        c.atomic(self.approved_amount_atomic)
+        if self.state == 'COMPENSATED':
+            if self.q is not None or self.applied_coefficient != '1' or self.reward_basis != 'OPERATOR_COMPENSATION' or self.approved_amount_atomic != self.base_amount_atomic:
+                raise ValueError('Invalid Choice 2.1.0 compensation.')
+        else:
+            c.decimal_string(self.q)
+            q = Decimal(self.q)
+            expected = ('0', 'QUALITY_REJECTED') if q <= Decimal('0.30') else (('1', 'FULL_REWARD_LINE') if q >= Decimal('0.70') else (self.q, 'SCORE_PROPORTIONAL'))
+            if (self.applied_coefficient, self.reward_basis) != expected or q <= Decimal('0.30') and self.approved_amount_atomic != '0':
+                raise ValueError('Invalid Choice 2.1.0 quality outcome.')
+        return self
+
+
+class EndpointChoiceV21Status(EndpointChoiceSubmissionStatus):
+    evaluation: EndpointChoiceV21Evaluation
+
+
+class EndpointChoiceV21ResultRow(EndpointChoiceResultRow):
+    evaluation: EndpointChoiceV21Evaluation
+
+
+class EndpointChoiceV21Results(EndpointChoicePublicResults):
+    rows: Tuple[EndpointChoiceV21ResultRow, ...]
+
+
+_V21_MODELS = {EndpointChoiceTask: EndpointChoiceV21Task,
+    EndpointChoiceTaskPage: EndpointChoiceV21Page,
+    EndpointChoiceClaimCredential: EndpointChoiceV21Claim,
+    EndpointChoiceSubmissionStatus: EndpointChoiceV21Status,
+    EndpointChoicePublicResults: EndpointChoiceV21Results}
 
 
 @dataclass(frozen=True)

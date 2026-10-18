@@ -64,7 +64,14 @@ class AgentEndpointChoiceReasonClient:
     @public_boundary
     def get_task(self, task_id, *, timeout_seconds=20.0):
         self._open(); c.validate_task_id(task_id)
-        value = _model(EndpointChoiceTask, self._transport.get_task(task_id, timeout_seconds=timeout_seconds))
+        payload = self._transport.get_task(task_id, timeout_seconds=timeout_seconds)
+        from .task_dispatch import ReadOnlyTask, tuple_of
+        expected = ('endpoint_choice_reason.v2' if self.version == 'v2_1' else 'endpoint_choice_reason.' + self.version,
+                    {'v1':'1.0.0','v2':'2.0.0','v2_1':'2.1.0'}[self.version], c.schema('agent_task',self.version))
+        if tuple_of(payload) != expected:
+            value = ReadOnlyTask.from_payload(payload)
+        else:
+            value = _model(EndpointChoiceTask, payload)
         if value.task_id != task_id: raise EndpointChoiceError('RESPONSE_BINDING_INVALID', request_bytes_sent=True)
         return value
 

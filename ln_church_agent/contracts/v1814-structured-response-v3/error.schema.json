@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_error.structured_response.v3"
+    },
+    "code": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "field_errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "code"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 22
+    },
+    "retry_after_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "recovery": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "code",
+    "message",
+    "request_id"
+  ]
+}

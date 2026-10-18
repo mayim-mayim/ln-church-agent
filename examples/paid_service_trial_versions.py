@@ -1,6 +1,6 @@
 """Explicit versioned Paid client use; no I/O or signing runs on import.
 
-Unreleased 1.18.11 v3 support includes the DC-fixed producer pack. Purchase cost may exceed
+Unreleased 1.18.15 v3 support includes the DC-fixed producer pack. Purchase cost may exceed
 0.02 USDC reward; existing PaymentPolicy limits/permissions still apply.
 """
 from ln_church_agent.paid_service_trial_client import PaidServiceTrialTaskClient

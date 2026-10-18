@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.18.15 — candidate
+
+- Bump the distribution and MCP package metadata to 1.18.15; align current
+  candidate documentation and packaging checks with that version.
+- Retain the S3 SDK code, dependency requirements, entry points and fixed
+  contract resources. Publication remains a separate Release step.
+
+## 1.18.14 — candidate
+
+- S3: encrypt the v3 journal with AES-256-GCM and a separately provisioned key;
+  preserve the original Claim/alias/report across process restart and key failure.
+  Validate and atomically encrypt pre-publication S2 journals on explicit reuse.
+  Keep all ten responder operations and the fixed B4/legacy pack bytes.
+
+- Add StructuredResponseClient, typed local answer validation, private durable
+  journal, explicit ten Python/MCP operations and same-ID/bytes recovery.
+- Keep profile omission/unknown/non-disclosure and independent status states.
+- Identify Choice 2.1.0 by its separate v2_1 namespace; retain old pack bytes.
+- Update the B4 requester contract/guide/manifest identity and supported v3 digest;
+  retain the accepted S1 responder behavior and unchanged Choice2.1 bytes.
+- Mirror the DC-fixed B4 v3/Choice2.1 producer packs; align closed DTOs and public
+  terms digests. Keep B aliases and withheld sources through same-byte recovery.
+- Add EN/JP respondent Guide and isolated Python/MCP/wheel integration evidence.
+  Live provider/wallet/OpenClaw checks and publication remain Release work.
+
 ## 1.18.9 — candidate
 
 - URL Choice & Reason strict worker DTOs, private Claim/answer recovery, Requester paid registration/read recovery and result proofs.

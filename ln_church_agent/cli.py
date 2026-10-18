@@ -1764,6 +1764,15 @@ def main():
     task_list_parser.add_argument("--cursor", type=str)
     task_list_parser.add_argument("--json", action="store_true")
 
+    task_discover_parser = task_subparsers.add_parser(
+        "discover", help="Discover recruiting candidates across Task families",
+        description=("Read one public candidate range. This does not reserve "
+                     "capacity or guarantee eligibility or Claim success."),
+    )
+    task_discover_parser.add_argument("--limit", type=int, default=20)
+    task_discover_parser.add_argument("--cursor", type=str)
+    task_discover_parser.add_argument("--json", action="store_true")
+
     task_get_parser = task_subparsers.add_parser("get", help="Get Task detail")
     task_get_parser.add_argument("task_id", type=str)
     task_get_parser.add_argument("--limit", type=int, default=20)
@@ -2570,7 +2579,50 @@ def main():
         client = None
         try:
             client = AgentTaskClient()
-            if args.task_command == "list":
+            if args.task_command == "discover":
+                from .access_quota import AccessQuotaError
+
+                try:
+                    result = client.discover_tasks(limit=args.limit, cursor=args.cursor)
+                except AccessQuotaError:
+                    _task_sys.stderr.write(
+                        "Task discovery unavailable: access quota not available. "
+                        "No candidate count was obtained. Choose an explicitly "
+                        "authorized access-quota purchase in Python, wait for "
+                        "the quota reset, or stop. This command does not buy access.\n"
+                    )
+                    raise SystemExit(2)
+                if args.json:
+                    _print_task_result(result, True)
+                else:
+                    print("Recruiting candidates in this range: %d" % len(result.tasks))
+                    print("Page scope : %s" % result.page_scope)
+                    print("Coverage   : %s" % result.coverage)
+                    print("Checked at : %s" % result.checked_at)
+                    print("Claim authority: %s; eligibility is checked at detail/Claim."
+                          % result.claim_authority)
+                    if result.empty_reason is not None:
+                        print("Empty reason: %s" % result.empty_reason)
+                        print("No candidates observed in this range; this is not a global inventory snapshot.")
+                    for task in result.tasks:
+                        print("  %s  %s  Definition %s" % (
+                            task.task_id, task.task_type, task.task_definition_version))
+                        print("    Task schema: %s" % task.task_schema_version)
+                        print("    Definition digest: %s" % task.task_definition_digest)
+                        print("    Title: %s" % _task_json.dumps(task.title, ensure_ascii=False))
+                        print("    Summary: %s" % _task_json.dumps(task.summary, ensure_ascii=False))
+                        print("    Recruitment: %s; observed capacity: %s" % (
+                            task.recruitment_state, task.capacity_available))
+                        print("    Claim before: %s" % task.claim_before)
+                        if task.scheduled_at is not None:
+                            print("    Scheduled execution: %s" % task.scheduled_at)
+                        print("    Projection updated: %s" % task.projection_updated_at)
+                        print("    Detail: %s" % task.detail_url)
+                        print("    Guide : %s" % task.definition_url)
+                    print("Next cursor: %s" % (result.next_cursor or "none"))
+                    print("Continue explicitly with --cursor; omit it to start a fresh search.")
+
+            elif args.task_command == "list":
                 result = client.list_tasks(
                     status=args.status,
                     limit=args.limit,
@@ -2880,8 +2932,23 @@ def main():
         except SystemExit:
             raise
         except TaskError as exc:
+            if args.task_command == "discover":
+                if exc.status_code == 402:
+                    _task_sys.stderr.write(
+                        "Task discovery unavailable (HTTP 402). No candidate count "
+                        "was obtained. Check access-quota authorization, wait, or stop; "
+                        "this command does not buy access.\n"
+                    )
+                else:
+                    _task_sys.stderr.write(
+                        "Task discovery unavailable. No candidate count was obtained.\n"
+                    )
             _task_cli_error(getattr(exc, "code", None))
         except Exception:
+            if args.task_command == "discover":
+                _task_sys.stderr.write(
+                    "Task discovery unavailable. No candidate count was obtained.\n"
+                )
             _task_cli_error("TASK_RESPONSE_INVALID")
         finally:
             if client is not None:

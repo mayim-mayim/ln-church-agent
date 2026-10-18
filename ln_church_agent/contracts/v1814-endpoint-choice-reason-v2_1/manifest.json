@@ -1,0 +1,55 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "source_repository": "mayim-mayim/LN_Church",
+  "task_type": "endpoint_choice_reason.v2",
+  "task_definition_version": "2.1.0",
+  "task_definition_digest": "4d7cb9d024ae41f60898146e4dbcd7ea3be63a33a9e8c0d01696192abe8f1b56",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "f1f58f129f778150068cb78ee4369d7089c49d3f",
+    "architecture_commit": "ebff885fba3244bccaf9fa30b6925b2b86c45fd7",
+    "task_type": "endpoint_choice_reason.v2",
+    "task_definition_version": "2.1.0",
+    "profile_id": "endpoint-choice-reason-jev-v2_1",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/SKILL.md",
+        "mode": "100644",
+        "blob": "9c6152ddded07bc885a07000d0a2b67feac364ea",
+        "sha256": "b3a1e2ec3423c915373a9d5adadc6dce4b9ec9f6535f5382e72011ce19b02eb6"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/definition.json",
+        "mode": "100644",
+        "blob": "ec0fa2d8e0126095262eb71762f0abfbd4c7811d",
+        "sha256": "ef5aa88e5d6b0ac6cf220a8147f49795bfa31d7228d66a42c09d9e90aae9580a"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/evaluation-profile.json",
+        "mode": "100644",
+        "blob": "958041b11c95180f470b4d002b4ce448bd46b557",
+        "sha256": "51576d617be36f50ff2d071dea113b198a8255470c31c9f9d7c88e19017eaf07"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "23c1efa4601a11feaf3aa57faae5ede7a78cb4df",
+        "sha256": "87bccb3b72a196790d83583385867eff4a620a443e85e6d6a4c75ac1f2003575"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/semantic-fixtures.json",
+        "mode": "100644",
+        "blob": "b4c6bd3910daa2cbc552c442f7c9e2f2dd334f52",
+        "sha256": "78435d655437471fc0c6cfc66d17075165edd77221010fa53df66c91c48cfa49"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "edb2ebcc2229a5813df3d9c50f91e26519f0ee34",
+        "sha256": "fad67ff282e7b3c754881674eef5bab9bad6731f3541595d120deb71da538b8f"
+      }
+    ]
+  }
+}

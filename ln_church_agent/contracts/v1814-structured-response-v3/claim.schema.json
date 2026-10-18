@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task_claim_response.structured_response.v3"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "structured_response.v3"
+    },
+    "task_definition_version": {
+      "const": "3.0.0"
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "terms_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "claim_token": {
+      "type": "string"
+    },
+    "reward_address": {
+      "type": "string"
+    },
+    "reward_address_control_verified": {
+      "const": false
+    },
+    "claim_accepted_at": {
+      "type": "string"
+    },
+    "report_deadline": {
+      "type": "string"
+    },
+    "context_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "terms_digest",
+    "execution_id",
+    "claim_token",
+    "reward_address",
+    "reward_address_control_verified",
+    "claim_accepted_at",
+    "report_deadline",
+    "context_id"
+  ]
+}

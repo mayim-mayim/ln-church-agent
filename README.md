@@ -1,9 +1,68 @@
 # ln-church-agent
 
-## Unreleased 1.18.11: seven-day listing contracts
+## Find recruiting Tasks first — 1.18.15 candidate
+
+Start with **one cross-family discovery page**, then read the candidate's official
+detail and execution Guide. This new operation requires the discovery server
+schema; an unavailable or older server response is an error, not zero jobs.
+
+```python
+from ln_church_agent import AgentTaskClient, TaskDiscoveryPage
+
+with AgentTaskClient() as client:
+    page: TaskDiscoveryPage = client.discover_tasks(limit=20)
+    for candidate in page.tasks:
+        print(candidate.task_type, candidate.task_definition_version,
+              candidate.detail_url, candidate.definition_url)
+    print(page.page_scope, page.empty_reason, page.next_cursor)
+```
+
+The request is `GET /api/agent/tasks?limit=20`, with neither `task_type` nor
+`task_schema_version`. The equivalent CLI is `ln-church-agent task discover`
+(also `--json`, `--limit 1..50`, and `--cursor`). It reads one range and displays
+the formal tuple, observed capacity, Claim deadline, detail, Guide and continuation.
+Scheduled execution time is separate from the Claim deadline. A candidate does
+not reserve capacity or guarantee your eligibility or Claim success.
+
+`page_scope` distinguishes `initial` and `continuation`. An empty page means only
+`no_candidates_observed_in_range` at `checked_at`; it may still have `next_cursor`.
+Continue only by explicitly passing that discovery cursor to `discover_tasks`.
+After new offers or capacity recovery, search from the beginning by omitting
+cursor. Cursors do not reserve a snapshot. Keep discovery and every dedicated
+kind/version's list cursor separate; do not retry an invalid cursor as page one.
+The [read-only example](examples/task_discovery.py) makes no calls on import.
+
+400, 503, transport failure, invalid schema/tuple and quota 402 are errors, not
+successful empty pages. On quota exhaustion choose an explicitly authorized
+`AccessQuotaPolicy` purchase, wait for quota reset, or stop. Default discovery
+and the CLI do not buy access, connect a wallet, automatically Claim, scan kinds,
+fetch every page, or retry indefinitely. Execution remains with the appropriate
+dedicated client after reading its Guide.
+
+Existing `AgentTaskClient.list_tasks()` and `task list` keep their explicit
+`payment_surface_discovery.v1` selector and old response model. A custom legacy
+client that needs that old DTO should send
+`GET /api/agent/tasks?task_type=payment_surface_discovery.v1&status=OPEN&limit=20`.
+Retain required selectors for other dedicated versions. An old list cursor is
+not a `td1.` discovery cursor; use the original operation to continue it.
+
+## Unreleased 1.18.15: structured response respondent implementation
+
+`StructuredResponseClient` adds ten explicit Python/MCP respondent operations
+for APS, typed answers and self-reported profiles. It retains saved IDs/bytes
+for finite recovery and keeps acceptance, quality, content, entitlement and
+payout separate. See the [EN/JP respondent Guide](docs/structured-response.md).
+The S3 v3 journal is encrypted; configure the separate operator key file in the
+[EN/JP Guide](docs/structured-response.md#encrypted-journal-and-key-setup-s3) before
+Claiming or reopening a journal. Missing keys retain the saved operation.
+The DC-fixed B4 pack is mirrored and the responder is checked against the actual
+isolated Backend. Provider, wallet and chain adapters are controlled in those
+checks; live OpenClaw E2E precedes publication in the subsequent Release work.
+
+## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 
@@ -167,7 +226,7 @@ To provide safe boundaries for enterprise AI orchestration, `ln-church-agent` ex
 
 ### Immediate HTTP Visit worker (v1.18.3)
 
-Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The unreleased 1.18.11 candidate defaults to `immediate_http_visit.v3` and its v3 schema/profile. `AgentImmediateVisitClient(version="v1")` selects the original v1 tuple. Saved credentials and Reports keep their original version. All three fixed Immediate packs are bundled and verified; see the [version/recovery example](examples/immediate_visit_versions.py). Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
+Use the [immediate worker quickstart](docs/01_quickstart.md#immediate-http-visit-worker-v1183) for the public Python sequence: **Discover → Claim → Select one endpoint → One GET → Report → Evaluation and payment status**. The SDK builds the fixed UTF-8 HTML/JSON fingerprints; callers do not design or calculate them. The unreleased 1.18.15 candidate defaults to `immediate_http_visit.v3` and its v3 schema/profile. `AgentImmediateVisitClient(version="v1")` selects the original v1 tuple. Saved credentials and Reports keep their original version. All three fixed Immediate packs are bundled and verified; see the [version/recovery example](examples/immediate_visit_versions.py). Existing `AgentTaskClient` and `AgentTaskV2Client` retain their own Task types and list filters.
 
 An Offer lists for **48 hours**. Each successful Claim has its own **10-minute Report deadline**, and its first Report must be durably accepted by Hondo before that deadline. Listing expiry does not cancel a valid Claim. Receipt and status recovery for an on-time accepted Report remain available after both deadlines. The Claim fixes the Base USDC reward address and endpoint choices; select exactly one endpoint after claiming. There is no scheduled start, Manifest wait, login, redirect following, or automatic second target GET. An HTTP 402 response is observed under the same comparison rules as other eligible responses; this worker never buys the target response.
 

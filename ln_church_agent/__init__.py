@@ -5,6 +5,7 @@ from .client import (
     validate_public_domain_for_observation
 )
 from .task_client import AgentTaskClient
+from .task_discovery_models import TaskDiscoveryPage, TaskDiscoveryCandidate
 from .task_models import (
     AgentTask,
     AgentTaskPage,
@@ -117,6 +118,12 @@ from .capabilities import get_capability_matrix
 # normal explicit import (``from ln_church_agent import AgentTaskV2Client``)
 # resolves and caches exactly the requested public symbol.
 _V18_LAZY_EXPORTS = {
+    'StructuredResponseClient': ('structured_response_client', 'StructuredResponseClient'),
+    'StructuredResponseJournal': ('structured_response_journal', 'StructuredResponseJournal'),
+    'StructuredResponseTask': ('structured_response_models', 'StructuredResponseTask'),
+    'StructuredResponseClaimCredential': ('structured_response_models', 'StructuredResponseClaimCredential'),
+    'FrozenStructuredResponseReport': ('structured_response_models', 'FrozenStructuredResponseReport'),
+    'StructuredResponseSubmissionStatus': ('structured_response_models', 'StructuredResponseSubmissionStatus'),
     'OfferRegistrationClient': ('offer_registration', 'OfferRegistrationClient'),
     'OfferRegistrationError': ('offer_registration', 'OfferRegistrationError'),
     'RegistrationQuote': ('offer_registration', 'RegistrationQuote'),
@@ -252,6 +259,12 @@ def __dir__():
 Http402Client = Payment402Client 
 
 __all__ = [
+    'StructuredResponseClient',
+    'StructuredResponseJournal',
+    'StructuredResponseTask',
+    'StructuredResponseClaimCredential',
+    'FrozenStructuredResponseReport',
+    'StructuredResponseSubmissionStatus',
     'OfferRegistrationClient',
     'OfferRegistrationError',
     'RegistrationQuote',
@@ -300,6 +313,8 @@ __all__ = [
     "Payment402Client", 
     "LnChurchClient", 
     "AgentTaskClient",
+    "TaskDiscoveryPage",
+    "TaskDiscoveryCandidate",
     "Http402Client", 
     "AssetType",
     "SchemeType",

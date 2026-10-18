@@ -52,6 +52,7 @@ from .task_models import (
     TaskDomainObservationResponse,
     TaskDomainObservationSubmission,
 )
+from .task_discovery_models import TaskDiscoveryPage, _discovery_query
 from .task_transport import (
     TaskAPIError,
     TaskAmbiguousOutcomeError,
@@ -371,6 +372,36 @@ class AgentTaskClient:
             raise TaskTransportError(
                 "TASK_TRANSPORT_ERROR", request_bytes_sent=None
             ) from None
+
+    @_public_client_error_boundary
+    def discover_tasks(
+        self,
+        *,
+        limit: int = 20,
+        cursor: Optional[str] = None,
+    ) -> TaskDiscoveryPage:
+        """Read one recruiting-candidate range across supported Task families.
+
+        No kind/schema selector, detail hydration, Claim, or implicit page
+        traversal is performed. Omit cursor to explicitly start a fresh search.
+        Access quota retains the existing opt-in policy and finite errors.
+        """
+        self._require_open()
+        try:
+            params = _discovery_query(limit, cursor)
+        except (TypeError, ValueError):
+            raise _local_invalid() from None
+        response = self._transport_request(
+            "GET", TASK_LIST_PATH, params=params, maximum_attempts=1,
+        )
+        page = _response_model(TaskDiscoveryPage, _response_payload(response))
+        scope = "initial" if cursor is None else "continuation"
+        if (page.page_scope != scope or len(page.tasks) > limit
+                or (cursor is not None and page.next_cursor == cursor)):
+            raise TaskTransportError(
+                "TASK_RESPONSE_INVALID", request_bytes_sent=True
+            )
+        return page
 
     @_public_client_error_boundary
     def list_tasks(

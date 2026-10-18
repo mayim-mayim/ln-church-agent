@@ -173,6 +173,11 @@ class JournalError(Exception):
             "JOURNAL_LOCKED",
             "JOURNAL_PERSISTENCE_AMBIGUOUS",
             "JOURNAL_STATE_CONFLICT",
+            "JOURNAL_KEY_REQUIRED",
+            "JOURNAL_KEY_UNAVAILABLE",
+            "JOURNAL_KEY_MISMATCH",
+            "JOURNAL_DECRYPTION_FAILED",
+            "JOURNAL_ENCRYPTION_FAILED",
         }:
             code = "JOURNAL_INVALID"
         super().__init__(code)

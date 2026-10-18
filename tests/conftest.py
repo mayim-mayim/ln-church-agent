@@ -9,6 +9,24 @@ to exercise private/mixed answers explicitly.
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _structured_response_test_key(request, tmp_path_factory, monkeypatch):
+    """Operator-provisioned key fixture only for v1814 responder tests."""
+    import os
+    from pathlib import Path
+    name = getattr(request.node.module, '__name__', '').rsplit('.', 1)[-1]
+    if not name.startswith('test_v1_18_14_'):
+        return
+    directory = tmp_path_factory.mktemp('structured-response-keys')
+    if os.name != 'nt':
+        directory.chmod(0o700)
+    path = Path(directory) / 'test.key'
+    path.write_bytes(os.urandom(32))
+    if os.name != 'nt':
+        path.chmod(0o600)
+    monkeypatch.setenv('LN_CHURCH_STRUCTURED_RESPONSE_KEY_FILE', str(path))
+
+
 _LEGACY_INSPECT_TEST_MODULES = frozenset(
     {
         "test_cli_inspect",
