@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_completion.structured_response.v3"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "structured_response.v3"
+    },
+    "task_definition_version": {
+      "const": "3.0.0"
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "terms_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^exec_[a-f0-9]{32}$"
+    },
+    "submission_id": {
+      "type": "string",
+      "pattern": "^sub_[a-f0-9]{32}$"
+    },
+    "context_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "shared_assumptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "must": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "must",
+        "volume",
+        "outcome"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          },
+          "status": {
+            "enum": [
+              "answered",
+              "unknown",
+              "not_disclosed",
+              "not_performed"
+            ]
+          },
+          "value": {
+            "type": [
+              "string",
+              "object",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence_mode": {
+            "enum": [
+              "executed",
+              "specification_review",
+              "mixed",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "item_id",
+          "status",
+          "value",
+          "reason"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 22
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "terms_digest",
+    "execution_id",
+    "submission_id",
+    "context_id",
+    "shared_assumptions",
+    "items"
+  ]
+}

@@ -1,9 +1,9 @@
 # Quickstart: Task work and the standard 402 loop
 
-## Unreleased 1.18.11: seven-day listing contracts
+## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 
@@ -33,7 +33,7 @@ Choose the Task worker below to perform an immediate public HTTP observation for
 
 ## Immediate HTTP Visit worker (v1.18.3)
 
-The unreleased SDK 1.18.11 candidate selects `v3` for new discovery by default.
+The unreleased SDK 1.18.15 candidate selects `v3` for new discovery by default.
 Use `AgentImmediateVisitClient(version="v3")` for a new seven-day Offer.
 The explicit `v1` example below continues existing Offers. For a v2 Offer, use
 `AgentImmediateVisitClient(version="v2")` and the

@@ -1,0 +1,17 @@
+{
+  "task_type": "structured_response.v3",
+  "task_definition_version": "3.0.0",
+  "task_schema_version": "ln_church.agent_task.structured_response.v3",
+  "origin": "https://kari.mayim-mayim.com",
+  "claim_request_schema_version": "ln_church.agent_task_claim_request.v1",
+  "completion_schema_version": "ln_church.task_completion.structured_response.v3",
+  "maximum_body_bytes": 262144,
+  "maximum_items": 22,
+  "claim_ms": 600000,
+  "listing_ms": 604800000,
+  "once_per_offer": true,
+  "capacity_profile_id": "structured-response-rpah.v1",
+  "public_research_after": "FINAL_ANSWER_ACCEPTANCE_CLOSE",
+  "profile_visibility": "PURCHASER_SELF_IAM",
+  "independent_definition": true
+}

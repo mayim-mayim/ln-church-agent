@@ -1,4 +1,4 @@
-"""Published API and DC-fixed producer resource compatibility for 1.18.11."""
+"""Published API and DC-fixed producer resource compatibility for 1.18.15."""
 import hashlib
 import importlib
 import json

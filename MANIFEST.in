@@ -18,6 +18,7 @@ recursive-include tests/fixtures/v185-paid-service-trial-v2 *
 exclude AGENTS.md DEVELOPMENT.md
 prune .agents
 prune docs/evidence
+prune tests/evidence
 prune scripts/release
 global-exclude __pycache__ *.py[cod]
 
@@ -30,3 +31,5 @@ recursive-include ln_church_agent/contracts/v185-paid-service-trial-v3 *
 recursive-include ln_church_agent/contracts/v183-immediate-visit-v3 *
 recursive-include ln_church_agent/contracts/v189-endpoint-choice-reason-v2 *
 recursive-include tests/fixtures/post-v1810 *.mjs
+recursive-include ln_church_agent/contracts/v1814-structured-response-v3 *
+recursive-include ln_church_agent/contracts/v1814-endpoint-choice-reason-v2_1 *

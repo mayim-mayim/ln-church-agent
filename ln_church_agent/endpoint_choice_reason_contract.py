@@ -126,6 +126,8 @@ def cursor(value):
 
 
 def load_contract_pack(version='v1'):
+    if validate_version(version) == 'v2_1':
+        return _load_v21_pack()
     if validate_version(version) == 'v2':
         return _load_v2_pack()
     if not PACK_SHA256:
@@ -157,7 +159,7 @@ def require_definition(value, version="v1"):
 
 
 def validate_version(version):
-    if version not in ('v1', 'v2'):
+    if version not in ('v1', 'v2', 'v2_1'):
         raise ValueError('Unsupported endpoint choice version.')
     return version
 
@@ -165,6 +167,10 @@ def version_of(value):
     kind = value.get('task_type') if isinstance(value, dict) else getattr(value, 'task_type', None)
     if kind not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'):
         raise ValueError('Unsupported endpoint choice tuple.')
+    definition = value.get('task_definition_version') if isinstance(value, dict) else getattr(value, 'task_definition_version', None)
+    namespace = value.get('schema_version') if isinstance(value, dict) else getattr(value, 'schema_version', '')
+    if kind == 'endpoint_choice_reason.v2' and (definition == '2.1.0' or namespace.endswith('.v2_1')):
+        return 'v2_1'
     return kind.rsplit('.', 1)[-1]
 
 # Filled from the fixed Hondo intake only.
@@ -192,3 +198,51 @@ def _load_v2_pack():
             or hashlib.sha256(resources['evaluation-profile.json']).hexdigest() != PACK_SHA256['evaluation-profile.json']):
         raise ValueError('Invalid endpoint choice v2 definition/profile.')
     return dict(manifest=manifest, resources=resources)
+
+
+# v1.18.14 intake is independent of both immutable legacy packs.
+V21_PACK_SHA256 = {'SKILL.md': 'b3a1e2ec3423c915373a9d5adadc6dce4b9ec9f6535f5382e72011ce19b02eb6',
+ 'definition.json': 'ef5aa88e5d6b0ac6cf220a8147f49795bfa31d7228d66a42c09d9e90aae9580a',
+ 'evaluation-profile.json': '51576d617be36f50ff2d071dea113b198a8255470c31c9f9d7c88e19017eaf07',
+ 'manifest.json': '386ee48258394db5c574b5e98f56144644f46f205ee680aa0eeac55a76cb3779',
+ 'requester-guide.md': '87bccb3b72a196790d83583385867eff4a620a443e85e6d6a4c75ac1f2003575',
+ 'semantic-fixtures.json': '78435d655437471fc0c6cfc66d17075165edd77221010fa53df66c91c48cfa49',
+ 'wire-contract.json': 'fad67ff282e7b3c754881674eef5bab9bad6731f3541595d120deb71da538b8f'}
+V21_PACK_SOURCE = {'commit': '235bc8de9ce60d32e467d2c1476cf9a6eeb6ab0e',
+ 'path': 'frontend/agent-task-specs/endpoint_choice_reason.v2/2.1.0',
+ 'repository': 'mayim-mayim/LN_Church',
+ 'task_definition_digest': '4d7cb9d024ae41f60898146e4dbcd7ea3be63a33a9e8c0d01696192abe8f1b56',
+ 'tree': 'db40a399648ff494c5e2298b25e03ccd9addc5cb'}
+
+def _load_v21_pack():
+    if not V21_PACK_SHA256 or V21_PACK_SOURCE is None:
+        raise ValueError('DC-fixed endpoint choice 2.1.0 pack has not been received.')
+    root = Path(__file__).parent / 'contracts' / 'v1814-endpoint-choice-reason-v2_1'
+    if {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} != set(V21_PACK_SHA256):
+        raise ValueError('Invalid endpoint choice 2.1.0 pack inventory.')
+    resources = {name: (root/name).read_bytes() for name in V21_PACK_SHA256}
+    if any(hashlib.sha256(raw).hexdigest() != V21_PACK_SHA256[name] for name,raw in resources.items()):
+        raise ValueError('Invalid endpoint choice 2.1.0 pack bytes.')
+    manifest = decode_json_object(resources['manifest.json'],2097152)
+    if (manifest['task_type'] != 'endpoint_choice_reason.v2'
+            or manifest['task_definition_version'] != '2.1.0'
+            or manifest['task_definition_digest'] != digest(manifest['descriptor'])):
+        raise ValueError('Invalid endpoint choice 2.1.0 definition.')
+    return dict(manifest=manifest,resources=resources,source=V21_PACK_SOURCE)
+
+def evaluation_profile(version):
+    if validate_version(version) != 'v2_1':
+        return PROFILE_ID
+    profile = decode_json_object(load_contract_pack(version)['resources']['evaluation-profile.json'],2097152)
+    return profile['profile_id']
+
+
+def terms_fields(version):
+    return TERMS_FIELDS + (('capacity_profile_id', 'evaluation_profile_digest')
+                           if validate_version(version) == 'v2_1' else ())
+
+
+def validate_v21_wire(kind, value):
+    from ._contract_schema import validate
+    contract = decode_json_object(load_contract_pack('v2_1')['resources']['wire-contract.json'], 2097152)
+    validate(contract['$defs'][kind], value)

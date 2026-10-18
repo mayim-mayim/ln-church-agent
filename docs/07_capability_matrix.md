@@ -1,9 +1,9 @@
 # Capability Matrix
 
-## Unreleased 1.18.11: seven-day listing contracts
+## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 
@@ -131,3 +131,18 @@ and WSL2/containers use the Linux lane only when the actual runtime is Linux.
 macOS is not claimed to have complete qualification.
 
 Development examples: [new Task worker](../examples/endpoint_choice_reason_worker.py), [Requester reads](../examples/endpoint_choice_reason_requester.py), and [Immediate v2/default and saved-version recovery](../examples/immediate_visit_versions.py). They are callable Python examples, not new CLI/MCP execution surfaces.
+
+
+## Structured response respondent — 1.18.15 candidate
+
+| Task type | Definition | Agent Task namespace | Current implementation state |
+|---|---|---|---|
+| structured_response.v3 | 3.0.0 | ln_church.agent_task.structured_response.v3 | DC-fixed B4 pack; explicit Python/MCP operations checked against isolated Backend |
+| endpoint_choice_reason.v2 | 2.1.0 | ln_church.agent_task.endpoint_choice_reason.v2_1 | Separate B4 pack and parser; actual producer DTO checks; legacy packs retained |
+| endpoint_choice_reason.v2 | 2.0.0 | ln_church.agent_task.endpoint_choice_reason.v2 | Existing fixed pack unchanged |
+| endpoint_choice_reason.v1 | 1.0.0 | ln_church.agent_task.endpoint_choice_reason.v1 | Existing fixed pack unchanged |
+
+New tuple execution requires the received fixed definition digest. Unsupported
+tuples remain read-only with an update indication. No new requester SDK,
+attribute collection, automatic Claim, answer generation or automatic submission.
+See the [EN/JP respondent Guide](structured-response.md) for all ten operations.

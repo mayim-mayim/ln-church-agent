@@ -1,9 +1,9 @@
 # Paid Service Trial: request, payment and result boundaries
 
-## Unreleased 1.18.11: seven-day listing contracts
+## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 

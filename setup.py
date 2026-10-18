@@ -9,10 +9,12 @@ if os.path.exists(readme_path):
 
 setup(
     name="ln-church-agent",
-    version="1.18.11",
+    version="1.18.15",
     packages=find_packages(include=['ln_church_agent', 'ln_church_agent.*']),
     package_data={
         "ln_church_agent": [
+            "contracts/v1814-structured-response-v3/*",
+            "contracts/v1814-endpoint-choice-reason-v2_1/*",
             "contracts/*.json",
             "contracts/v185-paid-service-trial/*",
             "contracts/v185-paid-service-trial-v2/*",
@@ -63,6 +65,7 @@ setup(
             "ln-church-agent=ln_church_agent.cli:main",
             "lnc-agent=ln_church_agent.cli:main",
             "ln-church-agent-mcp=ln_church_agent.integrations.mcp_inspect:main",
+            "ln-church-agent-respond-mcp=ln_church_agent.integrations.mcp_structured_response:main",
         ]
     },
     author="LN Church",

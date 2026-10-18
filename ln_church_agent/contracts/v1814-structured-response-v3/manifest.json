@@ -1,0 +1,95 @@
+{
+  "task_type": "structured_response.v3",
+  "task_definition_version": "3.0.0",
+  "task_definition_digest": "4d2b8f711b2273fba5215bbcfd767df1145d30a91ee9ea5711437e791616b274",
+  "descriptor": {
+    "specification_commit": "f1f58f129f778150068cb78ee4369d7089c49d3f",
+    "architecture_commit": "ebff885fba3244bccaf9fa30b6925b2b86c45fd7",
+    "definition_sha256": "ee2cfad73a75996ed3f8eed06dbd958a48897d0cb7b27a9a970af5297717a850",
+    "wire_contract_sha256": "357b760e43b16e4a97e9c67be4dc4e2b2c49eb5698f36e17650c4261c74ff1e4",
+    "evaluation_profile_sha256": "ed3ae5c6d632e93bec2d25f22098c8f653c730a4787f550f832f977a844c8fbb",
+    "question_bank_sha256": "c98157b3ee1de54639074000a1d54608934162eb976d92ce2afb14793ed43bde",
+    "files": {
+      "SKILL.md": {
+        "sha256": "22df87e9da2c04da10633c702cd737bd1cf240728606cdfb2d1681ecb0e111ce",
+        "bytes": 2959
+      },
+      "abandon.schema.json": {
+        "sha256": "50821784dd5592630906fc32d9641d5e51d914151bbcfa3e3d50db63cec3e64c",
+        "bytes": 406
+      },
+      "abandon_response.schema.json": {
+        "sha256": "0e89de857a60c8846570a666c1fb737143cc4a6c3223944c9e826e28795148ef",
+        "bytes": 648
+      },
+      "claim.schema.json": {
+        "sha256": "2ad0c30606dac2adf096951155207c363db432157520148c286976cfd543d20d",
+        "bytes": 1439
+      },
+      "claim_request.schema.json": {
+        "sha256": "7fe22483edc155c3b729d80af3e2e6fc89445c447cca231c5f2b922ba4e0fa17",
+        "bytes": 501
+      },
+      "completion.schema.json": {
+        "sha256": "b0e89ba35192969390e56fdeb1c9883742c132ef99db54e2f17cd9ac8a14b2f1",
+        "bytes": 2564
+      },
+      "context.schema.json": {
+        "sha256": "97dcae928b3b96c573274d2852d4fab405413498dee760cbbc8d65f48ffc15d7",
+        "bytes": 789
+      },
+      "definition.json": {
+        "sha256": "fbe167c0d8f749ee7d2e67db834dd0e530c5865299b2398986bda4315b66cbe8",
+        "bytes": 682
+      },
+      "error.schema.json": {
+        "sha256": "f6afe59e145563aeb307e43be299366b217e886008a5881225a69d866e1f630b",
+        "bytes": 992
+      },
+      "evaluation-profile.json": {
+        "sha256": "c7189863ec8f276bf0b7d30dc92e9fd08a8ceb03ba07eb170ac44b185498b11c",
+        "bytes": 2053
+      },
+      "page.schema.json": {
+        "sha256": "b01a813497aadac3b48f1d44e23e2c130a5d8ca463cb32a27c4096e0b0c8dce1",
+        "bytes": 118887
+      },
+      "question-bank.json": {
+        "sha256": "c98157b3ee1de54639074000a1d54608934162eb976d92ce2afb14793ed43bde",
+        "bytes": 82476
+      },
+      "receipt.schema.json": {
+        "sha256": "2966873071118d8c24de7be9fc0ec78c75108cee4ab7997578a540b31a575e05",
+        "bytes": 955
+      },
+      "registration.schema.json": {
+        "sha256": "c81c361e4b47fd63a5d56b77b68b459bf1ed021f5dd8f061032e8f0c9a0bb772",
+        "bytes": 7117
+      },
+      "requester-contract.json": {
+        "sha256": "a773e7d6a802896bc685fb15112a0045a20619bd0bb8cf1900cda90860e264d7",
+        "bytes": 250328
+      },
+      "requester-guide.md": {
+        "sha256": "51372a61dae483f261f6acbaabeb492e8a0b330352f3584dec1431a5f4a40baa",
+        "bytes": 7546
+      },
+      "status.schema.json": {
+        "sha256": "d16075af25f7ff5649cad42def1262f46b6a11a96c36350194c3bcef6efb34b1",
+        "bytes": 4476
+      },
+      "task.schema.json": {
+        "sha256": "9223e8a5c12518e0d8d3de7b5447e3f38f17429a918f4e81c98806eeba6f407b",
+        "bytes": 108088
+      },
+      "v3-registration-template.csv": {
+        "sha256": "c34ad60a87f34b787cbef37c6c21b6a5d946b8cc87eb1e0f924c1a48ec580b30",
+        "bytes": 1372
+      },
+      "wire-contract.json": {
+        "sha256": "cf7b88ccdfb80307ac6fdde07a1ac20c2e3c90b41f785dc6cbabe44db40c076e",
+        "bytes": 263873
+      }
+    }
+  }
+}

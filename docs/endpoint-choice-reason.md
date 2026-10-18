@@ -1,9 +1,9 @@
 # URL Choice & Reason — SDK guide
 
-## Unreleased 1.18.11: seven-day listing contracts
+## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.11 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 
@@ -29,7 +29,7 @@ execution before payment signing. The HTTP request schema inside Paid v3 remains
 `ln_church.paid_service_request.v2`.
 
 
-SDK 1.18.11 candidate source includes the DC-fixed Hondo contract packs.
+SDK 1.18.15 candidate source includes the DC-fixed Hondo contract packs.
 Development Control acceptance and public release are separate steps.
 The exact Worker SKILL and Requester guide are bundled without changes.
 

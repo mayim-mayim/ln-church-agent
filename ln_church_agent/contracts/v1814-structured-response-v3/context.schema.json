@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.task_context.structured_response.v3"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "context_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "context": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "prior": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "execution_id",
+    "context_id",
+    "context",
+    "prior"
+  ]
+}

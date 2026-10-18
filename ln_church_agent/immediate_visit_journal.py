@@ -68,7 +68,9 @@ def _invalid_constant(_value: str) -> None:
     raise ValueError
 
 
-def _read(path: Path, *, missing: bool = False) -> Optional[Dict[str, Any]]:
+def _read(path: Path, *, missing: bool = False, maximum_bytes: int = _MAX_BYTES) -> Optional[Dict[str, Any]]:
+    if type(maximum_bytes) is not int or not 0 < maximum_bytes <= 2 * 1024 * 1024:
+        raise JournalError("JOURNAL_INVALID")
     flags = os.O_RDONLY
     for name in ("O_NOFOLLOW", "O_BINARY", "O_NOINHERIT"):
         flags |= getattr(os, name, 0)
@@ -84,12 +86,12 @@ def _read(path: Path, *, missing: bool = False) -> Optional[Dict[str, Any]]:
         info = os.fstat(descriptor)
         at_path = os.stat(str(path), follow_symlinks=False)
         if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or not 0 < info.st_size <= _MAX_BYTES
+                or not 0 < info.st_size <= maximum_bytes
                 or (info.st_dev, info.st_ino) != (at_path.st_dev, at_path.st_ino)
                 or (os.name != "nt" and stat.S_IMODE(info.st_mode) != 0o600)):
             raise JournalError("JOURNAL_INVALID")
-        content = read_bounded(descriptor, _MAX_BYTES)
-        if len(content) > _MAX_BYTES:
+        content = read_bounded(descriptor, maximum_bytes)
+        if len(content) > maximum_bytes:
             raise JournalError("JOURNAL_INVALID")
     except OSError:
         raise JournalError("JOURNAL_INVALID") from None
@@ -111,13 +113,13 @@ def _read(path: Path, *, missing: bool = False) -> Optional[Dict[str, Any]]:
     raise JournalError("JOURNAL_INVALID")
 
 
-def _write(path: Path, payload: Dict[str, Any]) -> None:
+def _write(path: Path, payload: Dict[str, Any], *, maximum_bytes: int = _MAX_BYTES) -> None:
     descriptor = -1
     temporary = None
     try:
         encoded = jcs_bytes({"payload": payload,
                              "sha256": hashlib.sha256(jcs_bytes(payload)).hexdigest()})
-        if len(encoded) > _MAX_BYTES:
+        if type(maximum_bytes) is not int or not 0 < maximum_bytes <= 2 * 1024 * 1024 or len(encoded) > maximum_bytes:
             raise ValueError
         descriptor, temporary = tempfile.mkstemp(prefix=".%s." % path.name,
                                                  suffix=".tmp", dir=str(path.parent))
