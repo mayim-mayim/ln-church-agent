@@ -185,6 +185,7 @@ class TaskV2Transport:
         self,
         *,
         exchange: Optional[Exchange] = None,
+        definition_version: str = "1.0.0",
         access_quota: Optional[AccessQuotaPolicy] = None,
         resolver: Callable[[str, int], Sequence[str]] = _resolve_addresses,
         monotonic: Callable[[], float] = time.monotonic,
@@ -193,6 +194,9 @@ class TaskV2Transport:
     ) -> None:
         if exchange is not None and not callable(exchange):
             raise ValueError("Invalid v2 exchange.")
+        if definition_version not in ("1.0.0", "1.1.0"):
+            raise ValueError("Unsupported Scheduled definition.")
+        self.definition_version = definition_version
         self._resolver = resolver
         self._monotonic = monotonic
         self._sleep = sleep
@@ -469,11 +473,11 @@ class TaskV2Transport:
         raise last_error or TaskV2TransportError("TASK_V2_TRANSPORT_ERROR")
 
     def list_tasks(self) -> Dict[str, Any]:
-        return self._public_get(TASK_LIST_PATH, query=TASK_LIST_QUERY)
+        return self._public_get(TASK_LIST_PATH, query=TASK_LIST_QUERY + ("_1" if self.definition_version == "1.1.0" else ""))
 
     def get_task(self, task_id: str) -> Dict[str, Any]:
         return self._public_get(
-            task_detail_path(validate_task_id(task_id)), query=TASK_DETAIL_QUERY
+            task_detail_path(validate_task_id(task_id)), query=TASK_DETAIL_QUERY + ("_1" if self.definition_version == "1.1.0" else "")
         )
 
     def claim_task(self, task_id: str, body: bytes) -> Dict[str, Any]:

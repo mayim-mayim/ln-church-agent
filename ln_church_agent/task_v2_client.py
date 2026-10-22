@@ -121,6 +121,7 @@ class AgentTaskV2Client:
         self,
         *,
         transport: Optional[TaskV2Transport] = None,
+        definition_version: Optional[str] = None,
         access_quota: Optional[AccessQuotaPolicy] = None,
         utcnow: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         monotonic: Callable[[], float] = time.monotonic,
@@ -128,7 +129,11 @@ class AgentTaskV2Client:
     ) -> None:
         if transport is not None and not isinstance(transport, TaskV2Transport):
             raise ValueError("Invalid v2 transport.")
-        self._transport = transport or TaskV2Transport(access_quota=access_quota)
+        if definition_version is not None and definition_version not in ("1.0.0", "1.1.0"):
+            raise ValueError("Unsupported Scheduled definition.")
+        if transport is not None and definition_version is not None and transport.definition_version != definition_version:
+            raise ValueError("Cross-version Scheduled transport.")
+        self._transport = transport or TaskV2Transport(access_quota=access_quota, definition_version=definition_version or "1.0.0")
         self._owns_transport = transport is None
         self._utcnow = utcnow
         self._monotonic = monotonic
@@ -163,14 +168,20 @@ class AgentTaskV2Client:
 
     def list_tasks(self) -> ScheduledHttpGetBatchTaskPage:
         self._require_open()
-        return _model(ScheduledHttpGetBatchTaskPage, self._transport.list_tasks())
+        page = _model(ScheduledHttpGetBatchTaskPage, self._transport.list_tasks())
+        if any(task.task_definition_version != self._transport.definition_version for task in page.tasks):
+            raise TaskV2TransportError("TASK_V2_RESPONSE_INVALID", request_bytes_sent=True)
+        return page
 
     def get_task(self, task_id: str) -> ScheduledHttpGetBatchTask:
         self._require_open()
-        return _model(
+        task = _model(
             ScheduledHttpGetBatchTask,
             self._transport.get_task(validate_task_id(task_id)),
         )
+        if task.task_definition_version != self._transport.definition_version:
+            raise TaskV2TransportError("TASK_V2_RESPONSE_INVALID", request_bytes_sent=True)
+        return task
 
     def claim_task(
         self,
@@ -192,7 +203,8 @@ class AgentTaskV2Client:
             response = _model(ScheduledTaskClaimResponse, payload)
         finally:
             payload.clear()
-        if response.task_id != task_id or response.reward_address != request.reward_address:
+        if (response.task_id != task_id or response.reward_address != request.reward_address
+                or response.task_definition_version != self._transport.definition_version):
             raise TaskV2TransportError(
                 "TASK_V2_RESPONSE_INVALID", request_bytes_sent=True
             )
@@ -333,7 +345,10 @@ class AgentTaskV2Client:
             credential.report_close_at, "report_close_at"
         )
         if (
-            receipt.task_id != credential.task_id
+            (credential.task_definition_version == '1.1.0' and (
+                getattr(receipt, 'economic_terms_revision', None) != credential.economic_terms_revision
+                or getattr(receipt, 'terms_digest', None) != credential.terms_digest))
+            or receipt.task_id != credential.task_id
             or receipt.task_type != credential.task_type
             or receipt.task_definition_version
             != credential.task_definition_version
@@ -364,7 +379,10 @@ class AgentTaskV2Client:
             credential.report_close_at, "report_close_at"
         )
         if (
-            status.task_id != credential.task_id
+            (credential.task_definition_version == '1.1.0' and (
+                getattr(status, 'economic_terms_revision', None) != credential.economic_terms_revision
+                or getattr(status, 'terms_digest', None) != credential.terms_digest))
+            or status.task_id != credential.task_id
             or status.task_type != credential.task_type
             or status.task_definition_version
             != credential.task_definition_version

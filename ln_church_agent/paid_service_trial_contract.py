@@ -81,7 +81,7 @@ def amount(value: Any) -> str:
 
 def amount_for_version(value: Any, version: str) -> str:
     value = uint(value)
-    if not 1 <= int(value) <= (2 ** 256 - 1 if validate_version(version) == 'v3' else 10000):
+    if not 1 <= int(value) <= (2 ** 256 - 1 if validate_version(version) in ('v3', 'v3_1') else 10000):
         raise ValueError("Invalid purchase amount.")
     return value
 
@@ -235,12 +235,14 @@ def version_of(value: Any) -> str:
     if kind == V2_TASK_TYPE:
         return 'v2'
     if kind == 'paid_service_trial.v3':
-        return 'v3'
+        schema = value.get('schema_version', '') if isinstance(value, dict) else getattr(value, 'schema_version', '')
+        definition = value.get('task_definition_version') if isinstance(value, dict) else getattr(value, 'task_definition_version', None)
+        return 'v3_1' if definition == '3.1.0' or schema.endswith('.v3_1') else 'v3'
     raise ValueError('Invalid Paid Service Trial version.')
 
 
 def validate_version(version: str) -> str:
-    if version not in ('v1', 'v2', 'v3'):
+    if version not in ('v1', 'v2', 'v3', 'v3_1'):
         raise ValueError('Invalid Paid Service Trial version.')
     return version
 
@@ -437,7 +439,7 @@ def purchase_terms_digest(request: dict, terms: Any, version: str = 'v2') -> str
         raise ValueError("HTTP request binding requires v2 or v3.")
     request = validate_request(request)
     selected = purchase_terms_model(version).model_validate(terms)
-    return v2_digest(dict(schema_version='ln_church.paid_service_purchase_binding.' + version,
+    return v2_digest(dict(schema_version='ln_church.paid_service_purchase_binding.' + ('v3' if version == 'v3_1' else version),
         request_digest=v2_digest(request), resource_url=request['url'], x402_version=2,
         authorization_method='EIP-3009', requirements=selected.requirements.wire()))
 
@@ -451,6 +453,9 @@ def target_url(claim: Any) -> str:
 
 
 def load_contract_bundle(version: str = 'v1') -> dict:
+    if validate_version(version) == 'v3_1':
+        from ._contract_schema import load_economic_pack
+        return load_economic_pack('paid')
     if validate_version(version) == 'v1':
         return _load_v1_contract_bundle()
     return _load_v2_contract_bundle() if version == "v2" else _load_v3_contract_bundle()

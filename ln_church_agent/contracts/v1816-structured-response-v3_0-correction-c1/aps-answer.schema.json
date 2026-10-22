@@ -1,0 +1,464 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kari.mayim-mayim.com/agent-task-spec-corrections/structured_response.v3/3.0.0/c1/aps-answer.schema.json",
+  "title": "APS report entries selected by saved Task profile and definitions",
+  "description": "Apply only after resolving the saved tuple/digest and applicability in validation-rules.json. This schema does not select a Task by item ID. UTF-8, URL parser, canonical JSON and saved-terms constraints require the finite companion rules. Passing structure is not passing quality.",
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "x-max-utf8-bytes": 4096
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-max-utf8-bytes": 4096,
+          "description": "If a string: parse with the existing WHATWG URL parser without a base, require https: and a nonempty hostname, preserve the original string. No reachability check, userinfo prohibition or port-443-only rule."
+        }
+      },
+      "required": [
+        "name",
+        "url"
+      ]
+    },
+    "a1_1": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_1"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "candidates": {
+                  "type": "array",
+                  "minItems": 0,
+                  "maxItems": 5,
+                  "items": {
+                    "$ref": "#/$defs/candidate"
+                  }
+                },
+                "method": {
+                  "type": "string",
+                  "x-max-utf8-bytes": 4096
+                }
+              },
+              "required": [
+                "candidates",
+                "method"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_1"
+            },
+            "status": {
+              "enum": [
+                "unknown"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    },
+    "a1_2": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_2"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "known_before_study": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "known_before_study"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_2"
+            },
+            "status": {
+              "enum": [
+                "unknown"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    },
+    "a1_3": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_3"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "candidates": {
+                  "type": "array",
+                  "minItems": 0,
+                  "maxItems": 10,
+                  "items": {
+                    "$ref": "#/$defs/candidate"
+                  }
+                },
+                "method": {
+                  "type": "string",
+                  "x-max-utf8-bytes": 4096
+                }
+              },
+              "required": [
+                "candidates",
+                "method"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_3"
+            },
+            "status": {
+              "enum": [
+                "unknown",
+                "not_performed"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    },
+    "a1_4": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_4"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "identified": {
+                  "type": "boolean"
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-max-utf8-bytes": 4096,
+                  "description": "If a string: parse with the existing WHATWG URL parser without a base, require https: and a nonempty hostname, preserve the original string. No reachability check, userinfo prohibition or port-443-only rule."
+                },
+                "method": {
+                  "type": "string",
+                  "x-max-utf8-bytes": 4096
+                }
+              },
+              "required": [
+                "identified",
+                "url",
+                "method"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "a1_4"
+            },
+            "status": {
+              "enum": [
+                "unknown",
+                "not_performed"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    },
+    "category": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "category"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "x-max-utf8-bytes": 4096
+                }
+              },
+              "required": [
+                "name"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "category"
+            },
+            "status": {
+              "enum": [
+                "unknown"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    },
+    "competitors": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "competitors"
+            },
+            "status": {
+              "const": "answered"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "candidates": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "items": {
+                    "$ref": "#/$defs/candidate"
+                  }
+                }
+              },
+              "required": [
+                "candidates"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "const": "competitors"
+            },
+            "status": {
+              "enum": [
+                "unknown"
+              ]
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "item_id",
+            "status",
+            "value",
+            "reason"
+          ]
+        }
+      ],
+      "x-max-canonical-utf8-bytes": 8192
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task_completion_receipt.v2_1"
+    },
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "terms_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "scheduled_http_get_batch.v1"
+    },
+    "task_definition_version": {
+      "const": "1.1.0"
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "submission_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "report_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "report_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "completion_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "accepted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "receipt_state": {
+      "const": "DURABLY_ACCEPTED"
+    },
+    "evaluation_state": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "economic_terms_revision",
+    "terms_digest",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "manifest_sha256",
+    "submission_id",
+    "report_id",
+    "report_sha256",
+    "completion_id",
+    "accepted_at",
+    "receipt_state",
+    "evaluation_state"
+  ]
+}

@@ -18,10 +18,19 @@ def prepare_registration(value):
     failed = False
     try:
         if isinstance(value, bytes): value = c.decode_json_object(value, 65536)
-        if type(value) is not dict or set(value) != {'task_type', 'plan_id', 'question', 'candidates', 'correct_candidate_ids', 'reveal_correct_set_after_answer'}:
+        economic = type(value) is dict and value.get('task_definition_version') == '2.3.0'
+        extra = {'schema_version', 'task_definition_version', 'economic_terms'} if economic else set()
+        if type(value) is not dict or set(value) - extra != {'task_type', 'plan_id', 'question', 'candidates', 'correct_candidate_ids', 'reveal_correct_set_after_answer'}:
             raise ValueError
-        if value['task_type'] not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') or value['plan_id'] not in c.PLANS or type(value['reveal_correct_set_after_answer']) is not bool:
+        if value['task_type'] not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') or (not economic and value['plan_id'] not in c.PLANS) or type(value['reveal_correct_set_after_answer']) is not bool:
             raise ValueError
+        if economic:
+            from ._contract_schema import validate_economic_wire
+            from .task_economic_terms import validate_economic_terms
+            validate_economic_wire('choice', 'registration', value)
+            terms = validate_economic_terms('choice', value['economic_terms'])
+            if value['plan_id'] != terms['plan_id']:
+                raise ValueError('Cross-bound economic plan.')
         c.text_value(value['question'], 4096)
         if type(value['candidates']) is not list or not 1 <= len(value['candidates']) <= 10:
             raise ValueError

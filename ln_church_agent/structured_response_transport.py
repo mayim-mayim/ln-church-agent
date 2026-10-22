@@ -54,7 +54,8 @@ def public_boundary(f):
 
 
 class StructuredResponseTransport(ImmediateVisitTransport):
-    def __init__(self,**kwargs):
+    def __init__(self,*,definition_version=c.TASK_DEFINITION_VERSION,**kwargs):
+        self.definition_version=c.validate_version(definition_version)
         super().__init__(version='v3',**kwargs)
 
     @public_boundary
@@ -64,7 +65,7 @@ class StructuredResponseTransport(ImmediateVisitTransport):
             raise StructuredResponseError('TRANSPORT_CLOSED',request_bytes_sent=False)
         if len(body)>c.MAX_REPORT_BYTES:
             raise ValueError('Request exceeds contract limit.')
-        headers={'Accept':'application/json','Accept-Encoding':'identity','User-Agent':'ln-church-agent-structured-response/1.18.14'}
+        headers={'Accept':'application/json','Accept-Encoding':'identity','User-Agent':'ln-church-agent-structured-response/1.18.16'}
         if claim_token is not None:
             headers['X-LN-Task-Claim-Token']=c.validate_claim_token(claim_token)
         if idempotency_key is not None:
@@ -106,7 +107,7 @@ class StructuredResponseTransport(ImmediateVisitTransport):
             c.validate_wire('error', payload)
         except ValueError:
             raise StructuredResponseError('RESPONSE_INVALID',status_code=status,request_bytes_sent=True) from None
-        if (payload.get('schema_version')!=c.schema('task_error') or set(payload)-{'schema_version','code','message','request_id','field_errors','retry_after_ms','recovery'}
+        if (payload.get('schema_version')!=c.schema('task_error',c.version_of(payload)) or set(payload)-{'schema_version','code','message','request_id','field_errors','retry_after_ms','recovery'}
                 or not {'schema_version','code','message','request_id'}<=set(payload)):
             raise StructuredResponseError('RESPONSE_INVALID',status_code=status,request_bytes_sent=True)
         retry=None
@@ -124,7 +125,7 @@ class StructuredResponseTransport(ImmediateVisitTransport):
 
     def list_tasks(self,*,limit=25,cursor=None,timeout_seconds=20.0):
         c.positive_bound(limit,'limit',integer=True,maximum=100)
-        params=dict(task_type=c.TASK_TYPE,task_schema_version=c.TASK_SCHEMA_VERSION,limit=str(limit))
+        params=dict(task_type=c.TASK_TYPE,task_schema_version=c.schema('agent_task',self.definition_version),limit=str(limit))
         if cursor is not None:
             params['cursor']=c.cursor(cursor)
         return self._once('GET','/api/agent/tasks',query=urlencode(params),timeout_seconds=timeout_seconds)
@@ -133,7 +134,7 @@ class StructuredResponseTransport(ImmediateVisitTransport):
         return self._once('GET',c.task_detail_path(task_id)+'/context',claim_token=claim_token,timeout_seconds=timeout_seconds)
 
     def get_task(self,task_id,*,timeout_seconds=20.0):
-        query=urlencode(dict(task_type=c.TASK_TYPE,task_schema_version=c.TASK_SCHEMA_VERSION))
+        query=urlencode(dict(task_type=c.TASK_TYPE,task_schema_version=c.schema('agent_task',self.definition_version)))
         return self._once('GET',c.task_detail_path(task_id),query=query,timeout_seconds=timeout_seconds)
 
     def get_submission_status(self,task_id,submission_id,claim_token,*,timeout_seconds=20.0):

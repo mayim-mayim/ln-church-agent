@@ -79,7 +79,14 @@ _POST_TASK_RE = re.compile(
 _LOCAL_CODES = frozenset(LOCAL_ERROR_CODES)
 _AMBIGUOUS_CODES = frozenset(LOCAL_AMBIGUOUS_DELIVERY_CODES)
 _RETRYABLE_STATUSES = frozenset(RETRYABLE_HTTP_STATUSES)
-_EXPECTED_SUCCESS_STATUSES = frozenset({200})
+_EXPECTED_SUCCESS_STATUSES = {
+    "list": frozenset({200}),
+    "detail": frozenset({200}),
+    "status": frozenset({200}),
+    "claim": frozenset({200}),
+    "observation": frozenset({200, 201}),
+    "completion": frozenset({200, 202}),
+}
 _MAX_RETRY_AFTER_SECONDS = 30.0
 _TASK_SPECIAL_V4_192 = ipaddress.ip_network("192.0.0.0/24")
 _TASK_SPECIAL_V4_192_GLOBAL = frozenset(
@@ -1549,7 +1556,7 @@ class TaskTransport:
                 data = _decode_json_object(
                     status, response_headers, content
                 )
-                if status in _EXPECTED_SUCCESS_STATUSES:
+                if status in _EXPECTED_SUCCESS_STATUSES[operation]:
                     return TaskTransportResponse(status, data)
                 if 200 <= status <= 299:
                     raise TaskTransportError(

@@ -244,7 +244,7 @@ class PaidServiceTrialTransport:
             return _ResponsePayload(payload, status)
         if 200 <= status <= 299:
             raise PaidServiceTrialTransportError("RESPONSE_INVALID", status_code=status, request_bytes_sent=True)
-        fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version in ('v2', 'v3') else set())
+        fields = {'schema_version', 'code', 'message', 'request_id'} | ({'reason'} if version in ('v2', 'v3', 'v3_1') else set())
         reason = payload.get('reason')
         reason_valid = (version=='v1' or
             (reason in c.V2_TERMS_REASONS if payload.get('code')=='unsupported_purchase_terms' and isinstance(reason,str)
@@ -262,7 +262,7 @@ class PaidServiceTrialTransport:
 
     def list_tasks(self, *, limit: int = 25, cursor: Optional[str] = None, timeout_seconds: float = 20.0) -> Dict[str, Any]:
         positive_bound(limit, "limit", integer=True, maximum=50)
-        query = {"task_type": "paid_service_trial."+self.version, "task_schema_version": "ln_church.agent_task.paid_service_trial."+self.version, "limit": str(limit)}
+        query = {"task_type": "paid_service_trial."+("v3" if self.version == "v3_1" else self.version), "task_schema_version": "ln_church.agent_task.paid_service_trial."+self.version, "limit": str(limit)}
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor or len(cursor.encode("utf-8")) > 1024:
                 raise ValueError("Invalid cursor.")

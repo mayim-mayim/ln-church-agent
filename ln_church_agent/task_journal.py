@@ -217,11 +217,15 @@ def _validated_definition_identity(
         type(task_type) is not str
         or task_type != _TASK_TYPE
         or type(task_definition_version) is not str
-        or task_definition_version != _TASK_DEFINITION_VERSION
+        or task_definition_version not in (_TASK_DEFINITION_VERSION, "1.1.0")
         or type(task_definition_digest) is not str
         or _SHA256_RE.fullmatch(task_definition_digest) is None
     ):
         raise JournalError("JOURNAL_INVALID")
+    if task_definition_version == "1.1.0":
+        from ._contract_schema import ECONOMIC_PACKS
+        if task_definition_digest != ECONOMIC_PACKS["scheduled"]["digest"]:
+            raise JournalError("JOURNAL_INVALID")
     return task_type, task_definition_version, task_definition_digest
 
 
@@ -501,12 +505,19 @@ def _normalise_acknowledgement(value: Any) -> Dict[str, str]:
         selected_keys = (
             _RECEIPT_SOURCE_KEYS if source == "receipt" else _STATUS_SOURCE_KEYS
         )
+        separated = selected.get('task_definition_version') == '1.1.0'
+        if separated:
+            selected_keys = selected_keys | {'economic_terms_revision','terms_digest'}
+            from ._contract_schema import validate_economic_revision
+            validate_economic_revision(selected.get('economic_terms_revision'))
+            if _SHA256_RE.fullmatch(selected.get('terms_digest','')) is None:
+                raise JournalError('JOURNAL_INVALID')
         if set(selected) != selected_keys:
             raise JournalError("JOURNAL_INVALID")
         if source == "receipt":
             if (
                 selected["schema_version"]
-                != "ln_church.agent_task_completion_receipt.v2"
+                != ("ln_church.agent_task_completion_receipt.v2_1" if separated else "ln_church.agent_task_completion_receipt.v2")
                 or selected["evaluation_state"]
                 not in {"PENDING", "APPROVED", "REJECTED", "BLOCKED"}
             ):
@@ -546,7 +557,7 @@ def _normalise_acknowledgement(value: Any) -> Dict[str, str]:
             )
             if (
                 selected["schema_version"]
-                != "ln_church.agent_task_reward_status.v2"
+                != ("ln_church.agent_task_reward_status.v2_1" if separated else "ln_church.agent_task_reward_status.v2")
                 or type(evaluation) is not dict
                 or evaluation_keys not in ({"state"}, {"state", "reason"})
                 or evaluation["state"]
@@ -660,7 +671,8 @@ def _normalise_terminal_status(value: Any) -> Dict[str, Any]:
             value = value.model_dump(mode="python", exclude_none=True)
         except Exception:
             raise JournalError("JOURNAL_INVALID") from None
-    if type(value) is not dict or set(value) != _STATUS_SOURCE_KEYS:
+    keys = _STATUS_SOURCE_KEYS | ({'economic_terms_revision','terms_digest'} if isinstance(value,dict) and value.get('task_definition_version') == '1.1.0' else set())
+    if type(value) is not dict or set(value) != keys:
         raise JournalError("JOURNAL_INVALID")
     # Reuse the canonical status-shape validator; terminality itself is a
     # separate irreversible fact and may never be inferred from evaluation.
@@ -984,7 +996,20 @@ def _validate_payload(payload: Any) -> Dict[str, Any]:
         "TERMINAL_STATUS",
     } and attempts != 0:
         raise JournalError("JOURNAL_INVALID")
-    if _contains_secret(payload):
+    secret_scan_payload = payload
+    if (
+        ack is not None
+        and ack.get("source") == "receipt"
+        and re.fullmatch(r"completion_[a-f0-9]{32}", ack.get("completion_id", ""))
+    ):
+        # Only this schema- and binding-validated public receipt field can
+        # resemble a 43-character Claim token. Keep its original value in the
+        # durable payload; exempt only this location from the secret scan.
+        secret_scan_payload = {
+            **payload,
+            "compound_ack": {**ack, "completion_id": None},
+        }
+    if _contains_secret(secret_scan_payload):
         raise JournalError("JOURNAL_INVALID")
     return payload
 

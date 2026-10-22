@@ -1,6 +1,30 @@
 # ln-church-agent
 
-## Find recruiting Tasks first — 1.18.15 candidate
+## 1.18.16: saved economic conditions
+
+The fixed Backend c4 contracts add Scheduled 1.1, Immediate/Paid/Structured
+3.1 and Choice 2.3. Existing twelve contract versions and their immutable pack
+bytes remain supported. Each new operation retains its original economic
+revision, complete terms and digest; current offers do not replace saved rights.
+Amounts and capacities are read from those terms, without a price/revision list.
+
+Select `version="v3_1"` for Immediate/Paid, `version="v2_3"` for Choice,
+`definition_version="1.1.0"` for Scheduled, and
+`definition_version="3.1.0"` for Structured. Existing defaults remain unchanged.
+Structured 3.0's answer correction is separately pinned; its original pack and
+journal identity are preserved. See [respondent guidance](docs/structured-response.md).
+
+`OfferRegistrationClient.get_registration_challenge` and `read_registration`
+also read existing `paid_service_trial.v3` registrations (3.0/3.1) with an
+explicit caller-supplied read signature. This does not add a Paid Requester or
+create a payment authorization. Registration read proofs cannot authorize payment.
+
+This release uses the accepted fixed contracts and preserves saved-operation
+recovery. The release was checked with the same original wheel, including one
+Structured Response task through confirmed reward payment. This does not claim
+live business execution for every supported family.
+
+## Find recruiting Tasks first
 
 Start with **one cross-family discovery page**, then read the candidate's official
 detail and execution Guide. This new operation requires the discovery server
@@ -62,7 +86,8 @@ checks; live OpenClaw E2E precedes publication in the subsequent Release work.
 ## Unreleased 1.18.15: seven-day listing contracts
 
 This source work targets Immediate v3, Paid Service Trial v3, and URL Choice &
-Reason v2. Version 1.18.15 is candidate metadata, not a published SDK release.
+Reason v2. Version 1.18.15 was published for Task Discovery; this release retains
+that read surface. Earlier candidate-stage notes are historical context.
 The DC-fixed producer packs are bundled. Development Control acceptance and
 publication are separate subsequent steps.
 

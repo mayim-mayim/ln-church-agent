@@ -81,13 +81,21 @@ class StructuredResponseJournal:
                 if getattr(claim,k) != getattr(task,k):
                     raise JournalError('JOURNAL_STATE_CONFLICT')
             claim_wire = claim.model_dump()
+            if claim.task_definition_version == '3.1.0' and (
+                    claim_wire['terms_snapshot'] != c.terms_snapshot(task.model_dump())
+                    or claim_wire['economic_terms_revision'] != task.economic_terms_revision):
+                raise JournalError('JOURNAL_STATE_CONFLICT')
             if ('context_id' in claim_wire
                     and claim_wire['context_id'] != task.model_dump().get('context_id')):
                 raise JournalError('JOURNAL_STATE_CONFLICT')
         if d['report'] is not None:
             if task is None or claim is None:
                 raise JournalError('JOURNAL_INVALID')
-            report = FrozenStructuredResponseReport.from_bytes(d['report'].encode()).validate_binding(task,claim)
+            # Loading an original operation verifies bytes/hash and its saved
+            # binding, not today's answer semantics. An accepted/unknown POST
+            # must reach the server's original idempotency/status boundary.
+            report = FrozenStructuredResponseReport.from_bytes(d['report'].encode()).validate_binding(
+                task, claim, validate_answer=False)
             if report.report_sha256 != d['report_sha256']:
                 raise JournalError('JOURNAL_INVALID')
         elif d['report_sha256'] is not None or d['completion_started'] or d['completion_unknown'] or d['accepted']:
@@ -161,8 +169,14 @@ class StructuredResponseJournal:
             d=self._load()
             if d['abandoned'] or d['task'] is None or d['credential'] is None:
                 raise JournalError('JOURNAL_STATE_CONFLICT')
+            task=StructuredResponseTask(d['task'])
+            claim=StructuredResponseClaimCredential(d['credential'])
             report=FrozenStructuredResponseReport.from_bytes(report.canonical_bytes).validate_binding(
-                StructuredResponseTask(d['task']),StructuredResponseClaimCredential(d['credential']))
+                task, claim, validate_answer=False)
+            if (d['report'] is not None and d['report'].encode()==report.canonical_bytes
+                    and (d['completion_started'] or d['completion_unknown'] or d['accepted'])):
+                return report
+            report.validate_binding(task, claim)
             if d['report'] is not None and d['report'].encode()!=report.canonical_bytes:
                 if (not correction or d['accepted'] or d['completion_unknown'] or d['rejection'] not in ('invalid_request','invalid_structure')
                         or report.report['submission_id']==FrozenStructuredResponseReport.from_bytes(d['report'].encode()).report['submission_id']):
@@ -194,6 +208,9 @@ class StructuredResponseJournal:
             d=self._load()
             if d['report'] is None or d['abandoned']:
                 raise JournalError('JOURNAL_STATE_CONFLICT')
+            if not (d['completion_started'] or d['completion_unknown'] or d['accepted']):
+                FrozenStructuredResponseReport.from_bytes(d['report'].encode()).validate_binding(
+                    StructuredResponseTask(d['task']), StructuredResponseClaimCredential(d['credential']))
             d.update(completion_started=True,completion_unknown=True,rejection=None);self._write(d)
 
     @_private_boundary

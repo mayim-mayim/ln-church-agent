@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "economic_terms_revision",
+    "plan_id",
+    "registration_amount_atomic",
+    "capacity_total",
+    "reward",
+    "base_fee_atomic",
+    "unfilled_refund_each_atomic"
+  ],
+  "properties": {
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    },
+    "capacity_total": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "normal_amount_atomic",
+        "compensation_amount_atomic"
+      ],
+      "properties": {
+        "normal_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        },
+        "compensation_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        }
+      }
+    },
+    "base_fee_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    },
+    "unfilled_refund_each_atomic": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    }
+  }
+}

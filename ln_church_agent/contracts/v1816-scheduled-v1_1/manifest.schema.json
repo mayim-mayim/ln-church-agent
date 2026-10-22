@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ln-church:schema:scheduled_http_get_batch.v1:1.0.0:manifest",
+  "title": "scheduled_http_get_batch.v1 requester Manifest",
+  "description": "Normative shape of the canonical requester Manifest. UTF-8 byte limits, WHATWG serialization equality, exact-origin authorization and RFC 8785 canonicalization are enforced by the server in addition to this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "method",
+    "urls"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.http_get_batch_manifest.v1"
+    },
+    "method": {
+      "const": "GET"
+    },
+    "urls": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https://",
+        "maxLength": 2048
+      }
+    }
+  }
+}

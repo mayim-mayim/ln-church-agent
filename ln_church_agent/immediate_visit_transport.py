@@ -233,7 +233,7 @@ class ImmediateVisitTransport:
     def list_tasks(self, *, limit: int = 25, cursor: Optional[str] = None, timeout_seconds: float = 20.0, version: Optional[str] = None) -> Dict[str, Any]:
         positive_bound(limit, "limit", integer=True, maximum=100)
         version = validate_version(version or self.version)
-        query = {"task_type": "immediate_http_visit." + version, "task_schema_version": "ln_church.agent_task.immediate_visit." + version, "limit": str(limit)}
+        query = {"task_type": "immediate_http_visit." + ("v3" if version == "v3_1" else version), "task_schema_version": "ln_church.agent_task.immediate_visit." + version, "limit": str(limit)}
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor or len(cursor.encode("utf-8")) > 8192:
                 raise ValueError("Invalid cursor.")

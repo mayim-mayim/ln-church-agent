@@ -100,7 +100,8 @@ class StructuredResponseTask(_View):
 
 class StructuredResponseTaskPage(_View):
     def _validate(self, p):
-        if set(p) != {'schema_version', 'tasks', 'next_cursor'} or p['schema_version'] != c.schema('agent_task_page'):
+        version = c.version_of(p)
+        if set(p) != {'schema_version', 'tasks', 'next_cursor'} or p['schema_version'] != c.schema('agent_task_page', version):
             raise ValueError('Invalid discovery envelope.')
         if type(p.get('tasks')) is not list or len(p['tasks']) > 100:
             raise ValueError('Invalid discovery page.')
@@ -116,9 +117,17 @@ class StructuredResponseTaskPage(_View):
 class StructuredResponseClaimCredential(_View):
     def _validate(self, p):
         c.validate_wire('claim', p)
-        if (p['schema_version'] != c.schema('agent_task_claim_response')
-                or p['task_type'] != c.TASK_TYPE or p['task_definition_version'] != c.TASK_DEFINITION_VERSION):
+        version = c.version_of(p)
+        if p['schema_version'] != c.schema('agent_task_claim_response', version):
             raise ValueError('Invalid Claim tuple.')
+        c.require_identity(p)
+        if version == '3.1.0':
+            terms = p['terms_snapshot']
+            c.validate_economics(terms)
+            if (c.digest(terms) != p['terms_digest']
+                    or terms['economic_terms_revision'] != p['economic_terms_revision']
+                    or any(terms[k] != p[k] for k in ('task_type','task_definition_version','task_definition_digest','context_id'))):
+                raise ValueError('Invalid Claim economic authority.')
         c.validate_task_id(p['task_id']); c.execution_id(p['execution_id'])
         c.validate_sha256(p['task_definition_digest']); c.validate_sha256(p['terms_digest'])
         c.address(p['reward_address']); c.validate_claim_token(p['claim_token'])
@@ -167,9 +176,10 @@ class FrozenStructuredResponseReport:
         c.validate_wire('completion', p)
         fields = {'schema_version','task_id','task_type','task_definition_version','task_definition_digest',
                   'terms_digest','execution_id','submission_id','context_id','shared_assumptions','items'}
-        if (set(p) != fields or p['schema_version'] != c.schema('task_completion')
-                or p['task_type'] != c.TASK_TYPE or p['task_definition_version'] != c.TASK_DEFINITION_VERSION):
+        if (set(p) != fields or p['schema_version'] != c.schema('task_completion', c.version_of(p))
+                or p['task_type'] != c.TASK_TYPE):
             raise ValueError('Invalid completion fields.')
+        c.require_identity(p)
         c.validate_task_id(p['task_id']); c.execution_id(p['execution_id'])
         c.validate_submission_id(p['submission_id'])
         c.validate_sha256(p['task_definition_digest']); c.validate_sha256(p['terms_digest'])
@@ -180,7 +190,9 @@ class FrozenStructuredResponseReport:
             raise ValueError('Expected canonical completion bytes.')
         return cls(canonical, hashlib.sha256(canonical).hexdigest())
 
-    def validate_binding(self, task, claim):
+    def validate_binding(self, task, claim, *, validate_answer=True):
+        c.require_tuple(task.model_dump())
+        c.validate_terms(task.model_dump())
         p = self.report
         for key in ('task_id','task_type','task_definition_version','task_definition_digest','terms_digest'):
             if p[key] != getattr(task,key) or p[key] != getattr(claim,key):
@@ -190,9 +202,11 @@ class FrozenStructuredResponseReport:
         claim_wire = claim.model_dump()
         if 'context_id' in claim_wire and claim_wire['context_id'] != p['context_id']:
             raise ValueError('Answer Claim context binding mismatch.')
-        answer = c.validate_answer(p['shared_assumptions'], p['items'], task.items)
-        if answer['items'] != p['items']:
-            raise ValueError('Answer item order mismatch.')
+        if validate_answer:
+            answer = c.validate_answer(p['shared_assumptions'], p['items'], task.items,
+                                       task=task.model_dump())
+            if answer['items'] != p['items']:
+                raise ValueError('Answer item order mismatch.')
         return self
 
 
@@ -201,7 +215,13 @@ class StructuredResponseCompletionReceipt(_View):
         c.validate_wire('receipt', p)
         fields = {'schema_version','task_id','execution_id','submission_id','report_sha256',
                   'received_at','evaluation_deadline','state'}
-        if set(p) != fields or p['schema_version'] != c.schema('task_completion_receipt') or p['state'] != 'accepted':
+        version = c.version_of(p)
+        if version == '3.1.0':
+            from ._contract_schema import validate_economic_revision
+            fields |= {'economic_terms_revision','terms_digest'}
+            validate_economic_revision(p['economic_terms_revision'])
+            c.validate_sha256(p['terms_digest'])
+        if set(p) != fields or p['schema_version'] != c.schema('task_completion_receipt', version) or p['state'] != 'accepted':
             raise ValueError('Invalid completion receipt.')
         c.validate_task_id(p['task_id']); c.execution_id(p['execution_id'])
         c.validate_submission_id(p['submission_id']); c.validate_sha256(p['report_sha256'])
@@ -211,18 +231,23 @@ class StructuredResponseCompletionReceipt(_View):
     def matches(self, report):
         p = report.report
         return (all(getattr(self,k) == p[k] for k in ('task_id','execution_id','submission_id'))
+                and c.version_of(self._private_payload()) == c.version_of(p)
+                and (c.version_of(p) == '3.0.0' or self.terms_digest == p['terms_digest'])
                 and self.report_sha256 == report.report_sha256)
 
 
 class StructuredResponseSubmissionStatus(StructuredResponseCompletionReceipt):
     def _validate(self, p):
         c.validate_wire('status', p)
+        version = c.version_of(p)
         receipt = {k:p[k] for k in ('task_id','execution_id','submission_id','report_sha256',
                                    'received_at','evaluation_deadline')}
         receipt['state'] = 'accepted'
-        receipt['schema_version'] = c.schema('task_completion_receipt')
+        receipt['schema_version'] = c.schema('task_completion_receipt', version)
+        if version == '3.1.0':
+            receipt.update({k:p[k] for k in ('economic_terms_revision','terms_digest')})
         super()._validate(receipt)
-        if p['schema_version'] != c.schema('task_submission_status'):
+        if p['schema_version'] != c.schema('task_submission_status', version):
             raise ValueError('Invalid status schema.')
         for field in ('quality','content','entitlement','payout'):
             if type(p[field]) is not dict or type(p[field].get('state')) is not str:
@@ -233,7 +258,10 @@ class StructuredResponseSubmissionStatus(StructuredResponseCompletionReceipt):
         if amount is not None and (type(amount) is not str or not amount.isascii() or not amount.isdecimal()):
             raise ValueError('Invalid atomic entitlement amount.')
         original = FrozenStructuredResponseReport.from_report(p['report'])
-        if original.report_sha256 != p['report_sha256'] or original.report['context_id'] != p['context_id']:
+        if (original.report_sha256 != p['report_sha256']
+                or c.version_of(original.report) != version
+                or any(original.report[k] != p[k] for k in ('task_id','execution_id','submission_id','context_id'))
+                or version == '3.1.0' and original.report['terms_digest'] != p['terms_digest']):
             raise ValueError('Invalid original submission binding.')
 
     @property
@@ -245,7 +273,7 @@ class StructuredResponseSubmissionStatus(StructuredResponseCompletionReceipt):
 class StructuredResponseContext(_View):
     def _validate(self, p):
         c.validate_wire('context', p)
-        if p['schema_version'] != c.schema('task_context'):
+        if p['schema_version'] != c.schema('task_context', c.version_of(p)):
             raise ValueError('Invalid context schema.')
         c.validate_task_id(p['task_id']); c.execution_id(p['execution_id'])
         if p['context_id'] is not None:

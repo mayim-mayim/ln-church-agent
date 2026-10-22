@@ -59,8 +59,24 @@ PACK_SOURCE = {'commit': '235bc8de9ce60d32e467d2c1476cf9a6eeb6ab0e',
  'tree': 'db40a399648ff494c5e2298b25e03ccd9addc5cb'}
 
 
-def schema(kind):
-    return 'ln_church.' + kind + '.structured_response.v3'
+def validate_version(version):
+    if version not in ('3.0.0', '3.1.0'):
+        raise ValueError('Unsupported structured response version.')
+    return version
+
+
+def version_of(value):
+    """Select a wire contract by its namespace, checking the version if present."""
+    namespace = value.get('schema_version', '')
+    version = ('3.1.0' if namespace.endswith('.structured_response.v3_1') else
+               '3.0.0' if namespace.endswith('.structured_response.v3') else None)
+    if version is None or value.get('task_definition_version', version) != version:
+        raise ValueError('Invalid structured response version binding.')
+    return version
+
+
+def schema(kind, version=TASK_DEFINITION_VERSION):
+    return 'ln_church.' + kind + '.structured_response.' + ('v3_1' if validate_version(version) == '3.1.0' else 'v3')
 
 
 def canonical_bytes(value, maximum=MAX_REPORT_BYTES):
@@ -75,7 +91,9 @@ def digest(value):
 
 
 def validate_wire(kind, value):
-    from ._contract_schema import validate
+    from ._contract_schema import validate, validate_economic_wire
+    if version_of(value) == '3.1.0':
+        return validate_economic_wire('structured', kind, value)
     resources = load_contract_pack()['resources']
     definition = decode_json_object(resources[kind + '.schema.json'], 2097152)
     return validate(definition, value)
@@ -89,9 +107,72 @@ _TERM_FIELDS = ('task_type', 'task_definition_version', 'task_definition_digest'
 
 
 def validate_terms(value):
-    terms = {key: value[key] for key in _TERM_FIELDS if key in value}
+    terms = terms_snapshot(value)
+    if value.get('task_definition_version') == '3.1.0':
+        validate_economics(terms)
     if digest(terms) != value['terms_digest']:
         raise ValueError('Invalid structured response terms digest.')
+
+
+def terms_snapshot(value):
+    fields = _TERM_FIELDS + (('economic_terms_revision', 'unfilled_refund_each_atomic')
+                            if value.get('task_definition_version') == '3.1.0' else ())
+    return {key: value[key] for key in fields if key in value}
+
+
+def validate_economics(terms):
+    from ._contract_schema import validate_atomic_amount, validate_economic_revision, validate_safe_count
+    validate_economic_revision(terms['economic_terms_revision'])
+    validate_safe_count(terms['capacity_total'])
+    validate_atomic_amount(terms['registration_amount_atomic'])
+    validate_atomic_amount(terms['unfilled_refund_each_atomic'])
+    for field in ('normal_amount_atomic', 'compensation_amount_atomic'):
+        validate_atomic_amount(terms['reward'][field])
+    fixed = dict(quality_cutoff='0.30', full_reward_boundary='0.70', boundary_behavior='REDUCED_AT_EQUAL')
+    if (set(terms['reward']) != set(fixed) | {'normal_amount_atomic','compensation_amount_atomic'}
+            or any(terms['reward'].get(k) != v for k,v in fixed.items())
+            or terms['capacity_profile_id'] != 'structured-response-rpah.v1'
+            or terms['evaluation_profile_id'] not in {'structured-response-custom.v1','aps-blind.v1','aps-disclosed.v1','aps-deep.v1','aps-common-comparison.v1','agent-profile.v1'}
+            or terms['visibility_profile_id'] not in {'research-after-close.v1','profile-limited.v1'}):
+        raise ValueError('Unsupported structured response rule/profile.')
+
+
+def validate_saved_entitlement(status, terms):
+    """Check a 3.1 server result against the original Claim, without paying it."""
+    from fractions import Fraction
+    from ._contract_schema import validate_atomic_amount
+    entitlement, quality = status['entitlement'], status['quality']
+    amount = entitlement['amount_atomic']
+    if entitlement['state'] == 'PENDING':
+        if amount is not None:
+            raise ValueError('Pending entitlement has no confirmed amount.')
+        return
+    if entitlement['state'] != 'FINAL':
+        raise ValueError('Unknown entitlement state.')
+    validate_atomic_amount(amount, allow_zero=True)
+    kind = entitlement.get('kind')
+    if kind == 'COMPENSATION':
+        if quality['state'] == 'REJECTED' or amount != terms['reward']['compensation_amount_atomic']:
+            raise ValueError('Invalid saved compensation amount.')
+    elif kind == 'REJECTED':
+        if quality['state'] != 'REJECTED' or amount != '0':
+            raise ValueError('Invalid rejected entitlement.')
+    elif kind == 'NORMAL':
+        values = quality['required_values']
+        if (quality['state'] != 'PASSED' or type(values) is not list or not values
+                or len(values) != sum(item['required'] for item in terms['items'])
+                or any(type(v) is not str or re.fullmatch(r'(?:0|1|0\.[0-9]*[1-9])',v) is None for v in values)):
+            raise ValueError('Invalid structured quality basis.')
+        scores = [Fraction(v) for v in values]
+        if any(score <= Fraction(3,10) for score in scores):
+            raise ValueError('Rejected quality cannot receive normal reward.')
+        mean = sum(scores) / len(scores)
+        base = int(terms['reward']['normal_amount_atomic'])
+        expected = base if mean > Fraction(7,10) else base * mean.numerator // mean.denominator
+        if int(amount) != expected or quality.get('amount_atomic') != amount:
+            raise ValueError('Reward differs from original Claim basis.')
+    else:
+        raise ValueError('Unknown entitlement kind.')
 
 
 def json_copy(value):
@@ -124,6 +205,22 @@ def https_url(value):
     return value
 
 
+def _aps_report_url(value):
+    """Validate a reported URL, without fetching or rewriting the original.
+
+    The six APS answer fields have no registration/fetch policy, userinfo ban,
+    or port-443 restriction (fixed answer specification c1, section 4).
+    """
+    if value is None:
+        return value
+    text(value, 4096)
+    parsed = urlsplit(value)
+    if parsed.scheme != 'https' or not parsed.hostname:
+        raise ValueError('Invalid APS report HTTPS URL.')
+    _ = parsed.port
+    return value
+
+
 def cursor(value):
     if value is not None:
         text(value, 4096, nonempty=True)
@@ -147,7 +244,10 @@ def validate_participation(value):
         validate_task_id(source)
 
 
-def load_contract_pack():
+def load_contract_pack(version=TASK_DEFINITION_VERSION):
+    if validate_version(version) == '3.1.0':
+        from ._contract_schema import load_economic_pack
+        return load_economic_pack('structured')
     if not PACK_SHA256 or PACK_SOURCE is None:
         raise ValueError('DC-fixed Backend structured response pack has not been received.')
     root = Path(__file__).parent / 'contracts' / PACK_DIRECTORY
@@ -173,11 +273,12 @@ def load_contract_pack():
 
 
 def supported_tuple(value):
-    if (value.get('schema_version') != TASK_SCHEMA_VERSION or value.get('task_type') != TASK_TYPE
-            or value.get('task_definition_version') != TASK_DEFINITION_VERSION):
-        return False
     try:
-        return value.get('task_definition_digest') == load_contract_pack()['manifest']['task_definition_digest']
+        version = version_of(value)
+        return (value.get('schema_version') == schema('agent_task', version)
+                and value.get('task_type') == TASK_TYPE
+                and value.get('task_definition_version') == version
+                and value.get('task_definition_digest') == pack_for(version)['manifest']['task_definition_digest'])
     except ValueError:
         return False
 
@@ -185,6 +286,27 @@ def supported_tuple(value):
 def require_tuple(value):
     if not supported_tuple(value):
         raise ValueError('Unsupported structured response tuple; update SDK or receive the fixed pack.')
+
+
+def require_identity(value):
+    version = version_of(value)
+    if (value.get('task_type') != TASK_TYPE or value.get('task_definition_version') != version
+            or value.get('task_definition_digest') != pack_for(version)['manifest']['task_definition_digest']):
+        raise ValueError('Invalid structured response definition identity.')
+
+
+def load_answer_contract(version=TASK_DEFINITION_VERSION):
+    """Select only bundled, hash-pinned correction or self-contained 3.1 bytes."""
+    if validate_version(version) == '3.1.0':
+        resources = load_contract_pack(version)['resources']
+    else:
+        from .structured_response_correction import load_correction
+        resources = load_correction()['resources']
+    return decode_json_object(resources['validation-rules.json'], 2097152)
+
+
+def pack_for(version):
+    return load_contract_pack() if validate_version(version) == '3.0.0' else load_contract_pack(version)
 
 
 def _fields(value, fields):
@@ -260,7 +382,47 @@ def validate_definition_items(items):
             check_fields(item['report_fields'])
 
 
-def validate_answer(shared_assumptions, answers, definitions):
+def _aps_report_items(task, definitions):
+    """Select bound APS items from the fixed correction/3.1 applicability."""
+    if task is None:
+        return frozenset()
+    require_tuple(task)
+    validate_terms(task)
+    if definitions != task['items']:
+        raise ValueError('Answer definition does not match saved terms.')
+    version = version_of(task)
+    rules = load_answer_contract(version)
+    profiles = {(row['evaluation_profile_id'], kind): set(row['items'])
+                for row in rules['applicability'] for kind in row['aps_kinds']}
+    selected = profiles.get((task.get('evaluation_profile_id'), task.get('aps_kind')))
+    if selected is None:
+        return frozenset()
+    pack = pack_for(version)
+    bank = decode_json_object(pack['resources']['question-bank.json'], 2097152)
+    profile = decode_json_object(pack['resources']['evaluation-profile.json'], 2097152)
+    if (task.get('question_bank_version') != bank['version']
+            or task.get('question_bank_digest') != digest(bank)
+            or task.get('evaluation_profile_digest') != digest(profile)):
+        raise ValueError('Invalid APS saved definition binding.')
+    originals = {item['item_id']: item for item in bank['items']}
+    matched = set()
+    for item in definitions:
+        key = item['item_id']
+        if key not in selected or 'report_fields' in item:
+            continue
+        original = originals[key]
+        # Public question identity excludes custom questions with the same ID.
+        # BLIND content_conditions are withheld, so they are not compared or
+        # reconstructed from private data.
+        if (item.get('kind') == original['kind'] == 'report'
+                and item.get('required') is original['required']
+                and item.get('allowed_statuses') == original['allowed_statuses']
+                and item.get('question') == original['question']):
+            matched.add(key)
+    return frozenset(matched)
+
+
+def validate_answer(shared_assumptions, answers, definitions, *, task=None):
     if type(shared_assumptions) is not dict or set(shared_assumptions) != {'must','volume','outcome'}:
         raise ValueError('Invalid shared assumptions.')
     for v in shared_assumptions.values():
@@ -268,6 +430,7 @@ def validate_answer(shared_assumptions, answers, definitions):
     if sum(len(v.encode('utf-8')) for v in shared_assumptions.values()) > 4096:
         raise ValueError('Shared assumptions exceed byte limit.')
     validate_definition_items(definitions)
+    aps_items = _aps_report_items(task, definitions)
     if type(answers) is not list or len(answers) > 22:
         raise ValueError('Invalid answer items.')
     by_id = {}
@@ -293,13 +456,15 @@ def validate_answer(shared_assumptions, answers, definitions):
             raise ValueError('Status is not allowed by this item.')
         # APS fifth-axis evidence must be declared by the public definition.
         if 'evidence_mode' in a:
-            if (d.get('axis') not in (5, '5') and d.get('aps_axis') not in (5,'5')):
+            if (d['item_id'] in aps_items
+                    or d.get('axis') not in (5, '5') and d.get('aps_axis') not in (5,'5')):
                 raise ValueError('Evidence mode is not permitted for this item.')
             if a['evidence_mode'] not in {'executed','specification_review','mixed','unknown'}:
                 raise ValueError('Invalid evidence mode.')
-        # Explanation quality is server-owned; only missing-status reasons
-        # require nonempty text at the structural boundary.
-        text(a['reason'], 8192, nonempty=a['status'] != 'answered')
+        # Explanation quality is server-owned. Non-answered items and the
+        # two APS reason-requesting reports require a nonblank reason.
+        text(a['reason'], 8192, nonempty=a['status'] != 'answered'
+             or d['item_id'] in aps_items and d['item_id'] in {'category', 'competitors'})
         if a['status'] != 'answered':
             if a['value'] is not None:
                 raise ValueError('Unknown/non-disclosed/unperformed value must be null.')
@@ -309,9 +474,11 @@ def validate_answer(shared_assumptions, answers, definitions):
             if a['value'] not in {ch['choice_id'] for ch in d['choices']}:
                 raise ValueError('Unknown choice ID.')
         else:
-            if 'report_fields' not in d and d['item_id'] in {'a1_1','a1_2','a1_3','a1_4','category','competitors'}:
+            if d['item_id'] in aps_items:
                 _aps_report(a['value'],d['item_id'])
             else:
+                if 'report_fields' not in d:
+                    raise ValueError('Missing report field definition.')
                 _fields(a['value'], d['report_fields'])
         ordered.append(a)
     return json_copy({'shared_assumptions':shared_assumptions, 'items':ordered})
@@ -331,9 +498,9 @@ def _aps_report(value,key):
     if key=='a1_4':
         if type(value['identified']) is not bool:
             raise ValueError('Expected identification boolean.')
-        https_url(value['url'])
+        _aps_report_url(value['url'])
     if 'name' in value:
-        text(value['name'],4096,nonempty=True)
+        text(value['name'],4096)
     if 'method' in value:
         text(value['method'],4096)
     if 'candidates' in value:
@@ -344,4 +511,4 @@ def _aps_report(value,key):
         for row in rows:
             if type(row) is not dict or set(row)!={'name','url'}:
                 raise ValueError('Invalid APS candidate.')
-            text(row['name'],4096,nonempty=True);https_url(row['url'])
+            text(row['name'],4096);_aps_report_url(row['url'])

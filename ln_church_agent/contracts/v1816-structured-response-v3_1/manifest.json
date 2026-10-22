@@ -1,0 +1,169 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "task_type": "structured_response.v3",
+  "task_definition_version": "3.1.0",
+  "task_definition_digest": "290fdabf00b6e8d7858af52dff3783032ca71fe58aaed267a1622d831a70ac4c",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "ba13fbc206eaba47e054b2fd3dab7650e10a65a4",
+    "architecture_commit": "be08425844aa2bc8dc18afd474c6762714be73e6",
+    "task_type": "structured_response.v3",
+    "task_definition_version": "3.1.0",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/SKILL.md",
+        "mode": "100644",
+        "blob": "79aecdb6519c2573d6c95ff35c59408aca1a5950",
+        "sha256": "1d38ddc98e0617fedb8a0364e6627c6cbcce19ac2d1877922ff5286af235c286"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/abandon.schema.json",
+        "mode": "100644",
+        "blob": "c049799c97826763b936c7ee8fc4605cdb4e0a37",
+        "sha256": "8feb9ed9cabd15890b82dd7635078f8cdbb1c9421a34c4adf8ca943bf5f83de9"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/abandon_response.schema.json",
+        "mode": "100644",
+        "blob": "be4c5ff4c6c39449f6be8565bbde5f2b81be5178",
+        "sha256": "23b90645d931fd85d233acf6856668ad17103de3af35c092652bcdce2edcf09b"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json",
+        "mode": "100644",
+        "blob": "72911ef298986d8d9725b02970eee3ae6043cc37",
+        "sha256": "165364a825b304fb6b40b08f37b0c30b143c5f22607a62d1b266737caa1e4f3e"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/claim.schema.json",
+        "mode": "100644",
+        "blob": "3f72eeadea16384b9ee31a2522d2f9b4774c7ddb",
+        "sha256": "03948441c930687a3029100d4f4a9ab8299053e78248aa4d3e6291bd3987700d"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/claim_request.schema.json",
+        "mode": "100644",
+        "blob": "39a0645592c490c89f8bdd46a3378a570a80642f",
+        "sha256": "b56aafa59368929d181c5f70dd58226a377aac26ef58cc645d594fb2fc0251a6"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/completion.schema.json",
+        "mode": "100644",
+        "blob": "a3e26a3b9b6cc9fe2bd49d72c2d02a97ac800a4d",
+        "sha256": "bc55744c53bcf6c34a48e40de0c5af75d89d1b866e17554674b7c5b0ec17366f"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/context.schema.json",
+        "mode": "100644",
+        "blob": "14a585bd395826f85277d87a4a56bd636a3c85e4",
+        "sha256": "a8f5d18bff172b2c8c0eff772b45244bdbc4cc055a855eb0b5c7e080af8d5fe9"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/definition.json",
+        "mode": "100644",
+        "blob": "6031e442c89f78769ed19f7575831a91b583ab48",
+        "sha256": "e54b67c855b888b659b080998dc5dcd666deed33c1f30effc8f39f166b9686ad"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/economic-terms.schema.json",
+        "mode": "100644",
+        "blob": "fd2273e021162065fe9bdbdef332878eb29f99bd",
+        "sha256": "34d925a38dae01c9b8fb1f42fdbf6a8dc962af1d34d3e1c49e935913003511ce"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/error.schema.json",
+        "mode": "100644",
+        "blob": "6a3bda5263333109c341e62f09b1903517803999",
+        "sha256": "d20f0e9a071af7490242cb4d03d78ef200e62b903cd6d0fc41d0e680416ee306"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/evaluation-profile.json",
+        "mode": "100644",
+        "blob": "39ab170b94207283ce62b0781c3ba84184075d10",
+        "sha256": "c7189863ec8f276bf0b7d30dc92e9fd08a8ceb03ba07eb170ac44b185498b11c"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/examples.json",
+        "mode": "100644",
+        "blob": "df547e75bb2cde0e1fdc8def10ceeaa4a59e8b4e",
+        "sha256": "20ce6b782f0222848273596a2f946e6ceec96c27b615a4fe5b3968ddbe691a02"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/page.schema.json",
+        "mode": "100644",
+        "blob": "3d667f994d07e604bf60a8872dfc28744b86c39f",
+        "sha256": "b9b23e0211a1b62829084b56316ae18202df84bbea06c4c7b67d5224f7e09ee2"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/question-bank.json",
+        "mode": "100644",
+        "blob": "522fe94c0bdc3180d6439aa6c69c2f6e22989240",
+        "sha256": "c98157b3ee1de54639074000a1d54608934162eb976d92ce2afb14793ed43bde"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/receipt.schema.json",
+        "mode": "100644",
+        "blob": "bbe2109d8ac9e499c7b887dd80f191e29ce0989f",
+        "sha256": "b1a9d457338efebbaff1d7db9499c5b0e941b457405c5da42e2943a27bea5abc"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/registration.schema.json",
+        "mode": "100644",
+        "blob": "61f072121fba389e19d831d5da05ca114df2e6ab",
+        "sha256": "e23d42a3a7502ae3ef39f012b88581cbed8dbf0b5a7e5a19266155eb30936467"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/requester-contract.json",
+        "mode": "100644",
+        "blob": "e80099ee2b3dcc0090cce3bda5f5121dfe4889d4",
+        "sha256": "bdff8d32a37194fede82da2c3f546a547ed6b2ae80f6f4d6ee02c436f59f4a0e"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "6d273fd6242d3c6059aaddce2b7f3ecc999cb14f",
+        "sha256": "f1f93b4cb12af822dc1fab6ce949c6f47687167d577ed71a275a2e8ce9c8693a"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/status.schema.json",
+        "mode": "100644",
+        "blob": "64e6498d54f3784bded6d71b014093d82e0c0ae3",
+        "sha256": "575edc4a7d537d0104ce1bae6f1f735146f8029ce1ddec400ecfdd6bc271a983"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/task.schema.json",
+        "mode": "100644",
+        "blob": "ded927bb1e1f67ec1bb310d8f3c2ae6bface01fe",
+        "sha256": "0f7470b997e772655fd56772794bf7c30ccbc9abf7918175cd3a5ad7e0c1f408"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/terms.schema.json",
+        "mode": "100644",
+        "blob": "64e407c8ab28a67b37cac49ed74f64ffb2072399",
+        "sha256": "3315c10f73e53f4f265d9439f247bbd1cf53c840d0dcd051fd619b158827aad6"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/v3-registration-template.csv",
+        "mode": "100644",
+        "blob": "7ad0b2948a13cf7429bfec5adcc44b9dd6b23f2e",
+        "sha256": "c34ad60a87f34b787cbef37c6c21b6a5d946b8cc87eb1e0f924c1a48ec580b30"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/validation-rules.json",
+        "mode": "100644",
+        "blob": "cad86d14746fafa7aed78c40ab3f1af92881a371",
+        "sha256": "17fd670dceb8915126fb7d9a8a0e0fcf2b56aaae601c09655f1c6db1f69a8490"
+      },
+      {
+        "path": "frontend/agent-task-specs/structured_response.v3/3.1.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "e69506aae28d36ce0a09204f5d7a861f6ca52b99",
+        "sha256": "6eaeb91982ccff22728df7f3ad459f46f4df6849dceeafe50148d17565c83636"
+      }
+    ],
+    "answer_contract_specification_commit": "045b5d4d09222c5efab5bfbedce9b13e06a80455",
+    "answer_contract_architecture_commit": "9157a28069f619ebe97e782ebb80f663c2a77f43"
+  }
+}

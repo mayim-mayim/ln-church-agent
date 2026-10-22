@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "economic_terms_revision",
+    "plan_id",
+    "registration_amount_atomic",
+    "capacity_total",
+    "reward"
+  ],
+  "properties": {
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    },
+    "capacity_total": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "asset",
+        "asset_address",
+        "amount_atomic"
+      ],
+      "properties": {
+        "network": {
+          "const": "eip155:8453"
+        },
+        "asset": {
+          "const": "USDC"
+        },
+        "asset_address": {
+          "type": "string",
+          "enum": [
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ]
+        },
+        "amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        }
+      }
+    }
+  }
+}
