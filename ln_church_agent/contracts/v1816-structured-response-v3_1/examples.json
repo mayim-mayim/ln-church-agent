@@ -1,0 +1,391 @@
+{
+  "schema_version": "ln_church.aps_answer_examples.v1",
+  "synthetic": true,
+  "instructions": "Read the public Task and obtain its authenticated Claim. Copy task_id, task_type, task_definition_version, task_definition_digest, terms_digest and context_id from that saved operation; use its execution_id, a new submission_id and its Claim token. These examples are item entries, not sendable complete requests. Supply every required item from the saved Task. Use your actual observations; do not submit synthetic values as real findings.",
+  "binding_fields": {
+    "schema_version": "Use the completion namespace for the saved definition version.",
+    "task_id": "Saved Task ID",
+    "task_type": "Saved task_type",
+    "task_definition_version": "Saved definition version",
+    "task_definition_digest": "Saved definition digest, never the correction_digest",
+    "terms_digest": "Saved terms_digest, unchanged",
+    "execution_id": "Claim execution_id",
+    "submission_id": "Your operation ID, retained on identical retry",
+    "context_id": "Saved context_id including null",
+    "shared_assumptions": "Your must/volume/outcome assumptions; at most 4096 UTF-8 bytes combined",
+    "items": "All required saved definitions; each applicable item uses its explicit schema reference"
+  },
+  "cases": [
+    {
+      "id": "a1_1-answered",
+      "item_id": "a1_1",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_1",
+        "status": "answered",
+        "value": {
+          "candidates": [
+            {
+              "name": "Imaginary Atlas",
+              "url": null
+            },
+            {
+              "name": "Imaginary Beacon",
+              "url": "https://example.org/#Original"
+            }
+          ],
+          "method": ""
+        },
+        "reason": ""
+      }
+    },
+    {
+      "id": "a1_1-unknown",
+      "item_id": "a1_1",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_1",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_1-invalid-text",
+      "item_id": "a1_1",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_1",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_1-invalid-empty-object",
+      "item_id": "a1_1",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_1",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_2-answered",
+      "item_id": "a1_2",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_2",
+        "status": "answered",
+        "value": {
+          "known_before_study": false
+        },
+        "reason": ""
+      }
+    },
+    {
+      "id": "a1_2-unknown",
+      "item_id": "a1_2",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_2",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_2-invalid-text",
+      "item_id": "a1_2",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_2",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_2-invalid-empty-object",
+      "item_id": "a1_2",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_2",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_3-answered",
+      "item_id": "a1_3",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_3",
+        "status": "answered",
+        "value": {
+          "candidates": [],
+          "method": "I searched the synthetic directory and found no candidates."
+        },
+        "reason": ""
+      }
+    },
+    {
+      "id": "a1_3-unknown",
+      "item_id": "a1_3",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_3",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_3-not_performed",
+      "item_id": "a1_3",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_3",
+        "status": "not_performed",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_3-invalid-text",
+      "item_id": "a1_3",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_3",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_3-invalid-empty-object",
+      "item_id": "a1_3",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_3",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_4-answered",
+      "item_id": "a1_4",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_4",
+        "status": "answered",
+        "value": {
+          "identified": false,
+          "url": null,
+          "method": "I searched the synthetic directory but could not identify the service."
+        },
+        "reason": ""
+      }
+    },
+    {
+      "id": "a1_4-unknown",
+      "item_id": "a1_4",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_4",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_4-not_performed",
+      "item_id": "a1_4",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_4",
+        "status": "not_performed",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "a1_4-invalid-text",
+      "item_id": "a1_4",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_4",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_4-invalid-empty-object",
+      "item_id": "a1_4",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "a1_4",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "category-answered",
+      "item_id": "category",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "category",
+        "status": "answered",
+        "value": {
+          "name": "Information retrieval"
+        },
+        "reason": "The synthetic example fits the stated use case."
+      }
+    },
+    {
+      "id": "category-unknown",
+      "item_id": "category",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "category",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "category-invalid-text",
+      "item_id": "category",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "category",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "category-invalid-empty-object",
+      "item_id": "category",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "category",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "competitors-answered",
+      "item_id": "competitors",
+      "description": "Synthetic structurally valid answered entry; this does not establish quality or reward.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "competitors",
+        "status": "answered",
+        "value": {
+          "candidates": [
+            {
+              "name": "Imaginary Beacon",
+              "url": null
+            }
+          ]
+        },
+        "reason": "The synthetic example fits the stated use case."
+      }
+    },
+    {
+      "id": "competitors-unknown",
+      "item_id": "competitors",
+      "description": "An allowed non-answered status keeps a null value and an actual explanation.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "competitors",
+        "status": "unknown",
+        "value": null,
+        "reason": "I cannot determine this in the current synthetic environment."
+      }
+    },
+    {
+      "id": "competitors-invalid-text",
+      "item_id": "competitors",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "competitors",
+        "status": "answered",
+        "value": "This free text is not the required report object.",
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "competitors-invalid-empty-object",
+      "item_id": "competitors",
+      "description": "The old general envelope alone permits this value; the resolved answer contract rejects its shape.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "competitors",
+        "status": "answered",
+        "value": {},
+        "reason": "Synthetic comparison."
+      }
+    },
+    {
+      "id": "a1_1-zero",
+      "item_id": "a1_1",
+      "description": "No recalled candidates; preserve zero entries and the explicitly allowed empty method.",
+      "structurally_valid": true,
+      "entry": {
+        "item_id": "a1_1",
+        "status": "answered",
+        "value": {
+          "candidates": [],
+          "method": ""
+        },
+        "reason": ""
+      }
+    },
+    {
+      "id": "competitors-zero",
+      "item_id": "competitors",
+      "description": "Zero competitors must be unknown with null value and a reason, not answered with an empty array.",
+      "structurally_valid": false,
+      "entry": {
+        "item_id": "competitors",
+        "status": "answered",
+        "value": {
+          "candidates": []
+        },
+        "reason": "No candidate was found."
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# structured_response.v3 / definition 3.1.0
+
+This immutable contract accepts economic values supplied by the server. Obtain current offers at `GET /api/bazaar/task-offers/economic-terms/structured`. Confirm the complete offered snapshot before signing a registration. Include the `economic_terms` object, opaque `economic_terms_revision`, and this definition in the family-specific request. A stale offer requires reconfirmation; it is not permission to increase a signed amount.
+
+`economic-terms.schema.json` is a closed value schema. Use integer arithmetic, canonical decimal atomic strings, the existing Base USDC network/asset, uint256 bounds, positive safe-integer capacity and bounded plan labels. Labels and revisions are not accepted-value lists or sources of prices. Unknown fields, types, rules and profiles remain unsupported. The server retains its certified admission and budget limits. Reward maximums and costs must agree arithmetically with the saved snapshot.
+
+Persist the successful Claim and its complete saved terms/digest with the Task and execution identity. Evaluate, report, recover and check status against that operation. Current offers and unrelated TaskGet results never replace an old Claim. Missing saved values are an error; do not fill them with zero or today's prices. The definition manifest hashes contract resources only. Updating a sales revision does not regenerate this pack.
+
+Existing timing, participation, authorization, idempotency, quality, rounding, compensation, visibility and refund rules are unchanged. Common envelopes retain their own versions. Family-specific DTOs use this pack's new suffix. Examples and semantic fixtures are illustrative, not economic dispatch constants.
+
+Keep APS question-bank, evaluation and visibility profiles, RPAH v1 and existing source-selection rules. Orders retain their quoted base fee, unit fee, capacity and reward snapshot for deferred Task generation. Unfilled-capacity refunds use the original unfilled_refund_each_atomic; compensation uses the original compensation_amount_atomic. New quote and registration schemas are family-specific v3_1.
+
+## APS report answer contract
+
+Resolve this version using [aps-answer.schema.json](aps-answer.schema.json), [validation-rules.json](validation-rules.json), [English examples](examples.json), the completion envelope and your saved public Task terms. The rules select the saved APS profile and kind before choosing explicit item schemas. Never apply APS rules to a generic item solely by ID. The six report shapes, allowed statuses, zero-candidate behavior and byte/parser rules are fully declared in these resources. Follow the examples' binding_fields instructions using your actual Task and Claim IDs/digests; examples are synthetic, not sendable facts. Keep the saved terms unchanged, preserve candidate order, and retain the receipt for same-operation recovery. Structure does not establish quality or reward. This pack is self-contained; the 3.0.0 correction is not applicable.

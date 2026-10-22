@@ -33,3 +33,12 @@ recursive-include ln_church_agent/contracts/v189-endpoint-choice-reason-v2 *
 recursive-include tests/fixtures/post-v1810 *.mjs
 recursive-include ln_church_agent/contracts/v1814-structured-response-v3 *
 recursive-include ln_church_agent/contracts/v1814-endpoint-choice-reason-v2_1 *
+
+# DC-fixed c4 economic packs and immutable external correction.
+recursive-include ln_church_agent/contracts/v1816-scheduled-v1_1 *
+recursive-include ln_church_agent/contracts/v1816-immediate-visit-v3_1 *
+recursive-include ln_church_agent/contracts/v1816-paid-service-trial-v3_1 *
+recursive-include ln_church_agent/contracts/v1816-endpoint-choice-reason-v2_3 *
+recursive-include ln_church_agent/contracts/v1816-structured-response-v3_1 *
+recursive-include ln_church_agent/contracts/v1816-structured-response-v3_0-correction-c1 *
+recursive-include tests/fixtures/v1816 *.json

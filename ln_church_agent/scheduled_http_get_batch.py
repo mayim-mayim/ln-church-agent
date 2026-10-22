@@ -136,7 +136,7 @@ class ScheduledExecutionContext:
             task_id = validate_task_id(task_id)
             if task_type != "scheduled_http_get_batch.v1":
                 raise ValueError
-            if task_definition_version != "1.0.0":
+            if task_definition_version not in ("1.0.0", "1.1.0"):
                 raise ValueError
             task_definition_digest = validate_sha256(
                 task_definition_digest, "task_definition_digest"
@@ -458,7 +458,7 @@ class ScheduledHTTPGetBatchExecutor:
             validate_task_id(task_id)
             if task_type != "scheduled_http_get_batch.v1":
                 raise ValueError
-            if task_definition_version != "1.0.0":
+            if task_definition_version not in ("1.0.0", "1.1.0"):
                 raise ValueError
             validate_sha256(task_definition_digest, "task_definition_digest")
             validate_opaque_id(

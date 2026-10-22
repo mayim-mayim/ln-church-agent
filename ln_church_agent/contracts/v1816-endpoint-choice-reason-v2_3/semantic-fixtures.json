@@ -1,0 +1,65 @@
+{
+  "provider_response_fixture_is_non_normative": true,
+  "reward_vectors": [
+    {
+      "q": "0",
+      "correct_atomic": "0",
+      "incorrect_atomic": "0"
+    },
+    {
+      "q": "0.30",
+      "correct_atomic": "0",
+      "incorrect_atomic": "0"
+    },
+    {
+      "q": "0.31",
+      "correct_atomic": "7750",
+      "incorrect_atomic": "3100"
+    },
+    {
+      "q": "0.69",
+      "correct_atomic": "17250",
+      "incorrect_atomic": "6900"
+    },
+    {
+      "q": "0.699999",
+      "correct_atomic": "17499",
+      "incorrect_atomic": "6999"
+    },
+    {
+      "q": "0.69999999999999999",
+      "correct_atomic": "17499",
+      "incorrect_atomic": "6999"
+    },
+    {
+      "q": "0.70",
+      "correct_atomic": "25000",
+      "incorrect_atomic": "10000"
+    },
+    {
+      "q": "1",
+      "correct_atomic": "25000",
+      "incorrect_atomic": "10000"
+    },
+    {
+      "q": null,
+      "correct_atomic": "25000",
+      "incorrect_atomic": "10000"
+    }
+  ],
+  "parser_fixture": {
+    "success": true,
+    "errors": [],
+    "result": {
+      "result": {
+        "model": "jev-1.13.0",
+        "answers": {
+          "reason_coherent": {
+            "type": "noul",
+            "noul": 0.72
+          }
+        }
+      }
+    }
+  }
+}

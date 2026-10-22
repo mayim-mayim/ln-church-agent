@@ -1,6 +1,6 @@
 # Structured response respondent Guide — EN
 
-1.18.15 is a pre-publication candidate with the DC-fixed B4 contracts.
+1.18.16 is a pre-publication candidate with the DC-fixed Backend c4 contracts.
 Python/MCP operations are checked against the isolated Backend with controlled
 providers. Live provider, wallet and OpenClaw checks belong to the subsequent
 Release work. Discovery displays unsupported tuples read-only.
@@ -9,6 +9,65 @@ Release work. Discovery displays unsupported tuples read-only.
 the five profile items. The Agent selects a Task and provides its answers.
 The SDK does not collect attributes, generate answers, automatically Claim or
 automatically submit. A Claim does not request a new wallet signature.
+
+## 1.18.16 working source: bounded APS answer correction
+
+The fixed c4 input includes Structured 3.1 and the separate 3.0 answer correction.
+Use `StructuredResponseClient(definition_version="3.1.0")` to discover or Claim
+3.1 Tasks. The default remains 3.0 for existing callers. MCP list/get/claim tools
+accept the same `definition_version` selector. Recovery selects the saved
+Task/Claim version; never substitute a current Task or economic offer.
+
+`prepare_answer` uses the saved Task/Claim identity and terms. For the fixed
+3.0 and 3.1 definitions, `aps-blind.v1 / BLIND` selects a1_1 and a1_3;
+`aps-disclosed.v1 / DISCLOSED` or `REEVALUATION` selects a1_2, a1_4, category
+and competitors. The public question definition, required flag and allowed
+statuses must correspond to the original bank. A custom report sharing an ID
+uses its own declared fields; the ID alone does not select APS rules.
+
+Every answer entry has `item_id`, `status`, `value` and `reason`. For these six
+reports, do not add `evidence_mode`, self-scores or quality probabilities.
+The answered value has exactly the following keys, all required:
+
+| Item | Answered value | Allowed statuses |
+|---|---|---|
+| a1_1 | `candidates` (0–5), `method` string | answered, unknown |
+| a1_2 | `known_before_study` boolean | answered, unknown |
+| a1_3 | `candidates` (0–10), `method` string | answered, unknown, not_performed |
+| a1_4 | `identified` boolean, `url`, `method` string | answered, unknown, not_performed |
+| category | `name` string | answered, unknown |
+| competitors | `candidates` (1–3) | answered, unknown |
+
+A candidate has exactly `name` (string) and `url` (HTTPS URL or null). URLs
+must parse without a base and have a host; a report URL may have userinfo or
+a nondefault HTTPS port. Preparing an answer does not fetch a URL or change
+its fragment/case. Each name, method and URL string is at most 4,096 UTF-8
+bytes. Empty names/methods are structurally allowed, including a1_1 method="";
+this does not establish that the requested explanation or discovery occurred.
+The server evaluates explanation quality. Candidate order and duplicates
+are preserved; only answer entries are ordered by the saved definition.
+
+For non-answered statuses, use null value and a nonblank reason. Answered
+category and competitors also require a nonblank reason. With no competitors,
+use unknown/null and explain why; an answered empty competitor array is not
+valid. The other four answered reasons may be empty. The whole canonical
+item must fit 8,192 bytes, the completion 262,144 bytes, and the combined
+shared assumptions 4,096 bytes. These are byte limits, not character limits.
+
+An original dispatched operation is recovered by its saved bytes/hash,
+Task/Claim/context binding and submission ID, even when its accepted answer
+would fail the new preparation rules. Reading or retrying it does not
+re-evaluate its answer locally, change its receipt, extend a deadline or
+create a new reward. Unsent answers are validated before their first POST.
+Different bytes cannot replace an accepted or outcome-unknown operation.
+Existing definite-rejection correction rules still require a new submission
+ID. Keep the original journal and encryption key to recover that operation.
+
+The original 3.0 pack remains byte-identical. Its separate correction is pinned
+to the original definition, manifest, completion and question-bank digests; it
+is not added to the saved terms digest. Structured 3.1 uses its own complete
+pack, namespace and answer rules. Its Claim, receipt and status retain the
+saved economic revision and terms digest, including after CURRENT changes.
 
 ## Encrypted journal and key setup (S3)
 
@@ -103,9 +162,10 @@ and does not silently enable paid access-quota purchases.
 | `recover_completion` | `structured_response_recover_completion` | Status first, then bounded same-operation retry |
 | `abandon` | `structured_response_abandon` | Explicit unaccepted Claim release |
 
-Responder tuple: `structured_response.v3` / `3.0.0` /
-`ln_church.agent_task.structured_response.v3`, bound to the public definition
-digest and Task terms digest. Choice 2.1.0 keeps type `endpoint_choice_reason.v2`
+Responder tuples: `structured_response.v3` / `3.0.0` /
+`ln_church.agent_task.structured_response.v3`, and `structured_response.v3` /
+`3.1.0` / `ln_church.agent_task.structured_response.v3_1`, each bound to its
+public definition digest and saved Task terms digest. Choice 2.1.0 keeps type `endpoint_choice_reason.v2`
 and uses namespace `endpoint_choice_reason.v2_1`. Its original 1.0.0/2.0.0 packs
 remain separate. Unknown tuples require an SDK update and cannot execute as an
 older family. No new requester registration/purchase client is introduced.
@@ -241,6 +301,13 @@ Task/Claim/key/deadline・B alias・準備済みbytes/hash・receipt・送信結
 操作名・tuple・Python例はEN/JPで共通です。AgentがTaskと回答を明示し、SDKは
 属性自動収集・回答生成・自動参加・自動送信・新しいClaim署名を行いません。
 未知tupleは読取表示と更新案内に留めます。
+
+1.18.16候補は固定c4のStructured 3.1と旧3.0外部訂正に対応します。
+新規3.1は`StructuredResponseClient(definition_version="3.1.0")`を明示し、
+MCPのlist/get/claimにも同じ引数を渡します。既存の既定値は3.0です。
+回復は保存済みTask・Claim・回答bytes・terms digestを使い、現在条件へ置換しません。
+新3.1のrevision、通常報酬、補償額と評価後の確定額を元Claimへ照合します。
+旧3.0本体と元journalの暗号化方式は保持し、外部訂正は別identityで検証します。
 
 wireのcontext IDは当該Taskの読取scopeに属するopaque値です。B専用aliasを
 別TaskやstudyのIDへ置換せず、そのまま保存・送信します。INCLUDE/EXCLUDEの

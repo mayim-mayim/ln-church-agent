@@ -644,11 +644,11 @@ class PurchaseIdentityV3(PurchaseIdentity):
 
 
 def purchase_terms_model(version):
-    return PurchaseTermsV3 if c.validate_version(version) == 'v3' else PurchaseTerms
+    return PurchaseTermsV3 if c.validate_version(version) in ('v3', 'v3_1') else PurchaseTerms
 
 
 def purchase_identity_model(version):
-    return PurchaseIdentityV3 if c.validate_version(version) == 'v3' else PurchaseIdentity
+    return PurchaseIdentityV3 if c.validate_version(version) in ('v3', 'v3_1') else PurchaseIdentity
 
 
 class PaidServiceTrialTaskV3(PaidServiceTrialTaskV2):
@@ -711,3 +711,150 @@ _MODELS = {
         receipt=PaidServiceTrialCompletionReceiptV2, status=PaidServiceTrialSubmissionStatusV2,
         abandon=PaidServiceTrialAbandonmentV2),
 }
+
+
+class RewardV31(Reward):
+    amount_atomic: str
+
+    @field_validator('amount_atomic')
+    @classmethod
+    def _amount(cls, value):
+        from ._contract_schema import validate_atomic_amount
+        return validate_atomic_amount(value)
+
+
+def _paid_terms_v31(value):
+    from ._contract_schema import validate_economic_wire, validate_atomic_amount, validate_economic_revision
+    validate_economic_wire('paid', 'PublicOfferTerms', value)
+    validate_economic_revision(value['economic_terms_revision'])
+    validate_atomic_amount(value['registration_amount_atomic'])
+    RewardV31.model_validate(value['reward'])
+    request = c.validate_request(value['request'])
+    if (c.v2_digest(request) != value['request_digest']
+            or c.purchase_terms_digest(request,value['purchase_terms'],'v3_1') != value['purchase_terms_digest']):
+        raise ValueError('Invalid saved purchase terms.')
+    return value
+
+
+class PaidServiceTrialTaskV31(PaidServiceTrialTaskV3):
+    schema_version: Literal['ln_church.agent_task.paid_service_trial.v3_1']
+    task_definition_version: Literal['3.1.0']
+    plan_id: str
+    registration_amount_atomic: str
+    economic_terms_revision: str
+    reward: RewardV31
+
+    def public_terms(self):
+        return dict(super().public_terms(),economic_terms_revision=self.economic_terms_revision)
+
+    @model_validator(mode='after')
+    def _binding(self):
+        from ._contract_schema import validate_economic_wire, ECONOMIC_PACKS
+        p = self.model_dump(mode='json')
+        validate_economic_wire('paid', 'PaidServiceTrialTask', p)
+        terms = _paid_terms_v31(self.public_terms())
+        path = c.PUBLIC_API_ORIGIN + '/api/agent/task-offers/' + self.task_id
+        if (c.v2_digest(terms) != self.terms_digest
+                or self.task_definition_digest != ECONOMIC_PACKS['paid']['digest']
+                or self.capacity_total != self.capacity_reserved + self.capacity_consumed + self.capacity_available
+                or c.instant_ms(self.listing_ends_at)-c.instant_ms(self.published_at) != 604800000
+                or self.definition_url != c.PUBLIC_API_ORIGIN + '/agent-task-specs/paid_service_trial.v3/3.1.0/manifest.json'
+                or self.summary_url != path + '/summary' or self.results_url != path + '/execution-summaries'):
+            raise ValueError('Invalid saved Paid Task binding.')
+        return self
+
+
+class PaidServiceTrialClaimV31(PaidServiceTrialClaimV3):
+    schema_version: Literal['ln_church.agent_task_claim_response.paid_service_trial.v3_1']
+    task_definition_version: Literal['3.1.0']
+    reward: RewardV31
+    economic_terms_revision: str
+    terms_snapshot: dict = Field(repr=False)
+
+    def __init__(self, **data):
+        from ._contract_schema import validate_economic_wire
+        validate_economic_wire('paid', 'PaidServiceTrialClaim', data)
+        super().__init__(**data)
+
+    @model_validator(mode='after')
+    def _economic(self):
+        from ._contract_schema import ECONOMIC_PACKS
+        terms = _paid_terms_v31(self.terms_snapshot)
+        p = self.model_dump(mode='json')
+        if (self.task_definition_digest != ECONOMIC_PACKS['paid']['digest']
+                or c.v2_digest(terms) != self.terms_digest
+                or any(p[k] != terms[k] for k in ('request','request_digest','purchase_terms_digest',
+                     'purchase_terms','repeat_policy','reward','economic_terms_revision'))):
+            raise ValueError('Invalid saved Paid Claim binding.')
+        return self
+
+
+class PaidServiceTrialPageV31(PaidServiceTrialTaskPageV3):
+    schema_version: Literal['ln_church.agent_task_page.paid_service_trial.v3_1']
+    tasks: Tuple[PaidServiceTrialTaskV31, ...]
+
+
+class PaidServiceTrialReportV31(PaidServiceTrialReportV3):
+    schema_version: Literal['ln_church.task_completion.paid_service_trial.v3_1']
+    task_definition_version: Literal['3.1.0']
+
+
+class PaidServiceTrialReceiptV31(PaidServiceTrialCompletionReceiptV3):
+    schema_version: Literal['ln_church.task_completion_receipt.paid_service_trial.v3_1']
+
+
+class PaidServiceTrialAbandonmentV31(PaidServiceTrialAbandonmentV3):
+    schema_version: Literal['ln_church.agent_task_abandon_response.paid_service_trial.v3_1']
+
+
+class EvaluationV31(Evaluation):
+    approved_amount_atomic: Optional[str]
+
+    @model_validator(mode='after')
+    def _state(self):
+        from ._contract_schema import validate_atomic_amount
+        if self.state == 'PENDING':
+            if self.approved_amount_atomic is not None or self.evaluated_at is not None:
+                raise ValueError('Premature Paid evaluation.')
+        else:
+            validate_atomic_amount(self.approved_amount_atomic, allow_zero=self.state != 'APPROVED')
+            if self.state != 'APPROVED' and self.approved_amount_atomic != '0':
+                raise ValueError('Invalid Paid evaluation amount.')
+            if self.evaluated_at is not None:
+                c.instant_ms(self.evaluated_at)
+        return self
+
+
+class PayoutV31(Payout):
+    confirmed_paid_amount_atomic: Optional[str]
+
+    @model_validator(mode='after')
+    def _state(self):
+        from ._contract_schema import validate_atomic_amount
+        if self.confirmed_paid_amount_atomic is not None:
+            validate_atomic_amount(self.confirmed_paid_amount_atomic, allow_zero=True)
+        if (self.state == 'paid_confirmed') != (self.confirmed_paid_amount_atomic not in (None,'0')):
+            raise ValueError('Invalid confirmed Paid payout.')
+        if self.paid_confirmed_at is not None:
+            c.instant_ms(self.paid_confirmed_at)
+            if self.state != 'paid_confirmed':
+                raise ValueError('Invalid payout timestamp.')
+        return self
+
+
+class PaidServiceTrialStatusV31(PaidServiceTrialSubmissionStatusV3):
+    schema_version: Literal['ln_church.task_submission_status.paid_service_trial.v3_1']
+    evaluation: EvaluationV31
+    payout: PayoutV31
+
+    def require_report(self, claim, report):
+        super().require_report(claim,report)
+        if (self.evaluation.state == 'APPROVED' and self.evaluation.approved_amount_atomic != claim.reward.amount_atomic
+                or self.payout.state == 'paid_confirmed' and self.payout.confirmed_paid_amount_atomic != self.evaluation.approved_amount_atomic):
+            raise ValueError('Paid reward differs from saved Claim.')
+
+
+_MODELS['v3_1'] = dict(task=PaidServiceTrialTaskV31,page=PaidServiceTrialPageV31,
+    claim=PaidServiceTrialClaimV31,report=PaidServiceTrialReportV31,
+    receipt=PaidServiceTrialReceiptV31,status=PaidServiceTrialStatusV31,
+    abandon=PaidServiceTrialAbandonmentV31)

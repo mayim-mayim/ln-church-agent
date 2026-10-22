@@ -34,10 +34,14 @@ class StructuredResponseClaim:
 
 
 class StructuredResponseClient:
-    def __init__(self,*,transport=None,access_quota=None,monotonic=time.monotonic,sleep=time.sleep):
+    def __init__(self,*,transport=None,access_quota=None,definition_version=None,monotonic=time.monotonic,sleep=time.sleep):
         if transport is not None and not isinstance(transport,StructuredResponseTransport):
             raise ValueError('Invalid structured response transport.')
-        self._transport=transport or StructuredResponseTransport(access_quota=access_quota)
+        if definition_version is not None:
+            c.validate_version(definition_version)
+            if transport is not None and transport.definition_version != definition_version:
+                raise ValueError('Structured transport version mismatch.')
+        self._transport=transport or StructuredResponseTransport(access_quota=access_quota,definition_version=definition_version or c.TASK_DEFINITION_VERSION)
         self._owns_transport=transport is None
         self._clock=monotonic
         self._sleep=sleep
@@ -73,7 +77,7 @@ class StructuredResponseClient:
     def get_task(self,task_id,*,timeout_seconds=20.0):
         self._open();c.validate_task_id(task_id)
         task=_model(StructuredResponseTask,self._transport.get_task(task_id,timeout_seconds=timeout_seconds))
-        if task.task_id!=task_id:
+        if task.task_id!=task_id or task.supported and task.task_definition_version!=self._transport.definition_version:
             raise StructuredResponseError('RESPONSE_BINDING_INVALID',request_bytes_sent=True)
         return task
 
@@ -124,7 +128,8 @@ class StructuredResponseClient:
         if claim is None or task is None:
             raise ValueError('Missing saved Claim.')
         result=_model(StructuredResponseContext,self._transport.get_context(claim.task_id,claim._claim_token_value(),timeout_seconds=timeout_seconds))
-        if result.task_id!=claim.task_id or result.execution_id!=claim.execution_id or result.context_id!=task.model_dump().get('context_id'):
+        if (result.task_id!=claim.task_id or result.execution_id!=claim.execution_id or result.context_id!=task.model_dump().get('context_id')
+                or c.version_of(result.model_dump())!=claim.task_definition_version):
             raise StructuredResponseError('RESPONSE_BINDING_INVALID',request_bytes_sent=True)
         return result
 
@@ -136,21 +141,33 @@ class StructuredResponseClient:
             if task is None or claim is None:
                 raise ValueError('Missing saved Claim.')
             c.require_tuple(task.model_dump())
-            answer=c.validate_answer(shared_assumptions,items,task.items)
             saved=journal.load_report()
+            if (saved is not None and not correction
+                    and submission_id in (None, saved.report['submission_id'])
+                    and journal.completion_started()
+                    and c.canonical_bytes(dict(shared_assumptions=shared_assumptions,items=items))
+                    ==c.canonical_bytes({k:saved.report[k] for k in ('shared_assumptions','items')})):
+                return journal.prepare_report(saved)
+            answer=c.validate_answer(shared_assumptions,items,task.items,task=task.model_dump())
             # Repeating an identical local preparation retains its original ID.
             if saved is not None and submission_id is None and not correction:
                 submission_id=saved.report['submission_id']
             submission_id=submission_id or 'sub_'+secrets.token_hex(16)
             payload={k:getattr(claim,k) for k in ('task_id','task_type','task_definition_version','task_definition_digest','terms_digest','execution_id')}
-            payload.update(schema_version=c.schema('task_completion'),submission_id=submission_id,
+            payload.update(schema_version=c.schema('task_completion',claim.task_definition_version),submission_id=submission_id,
                 context_id=task.model_dump().get('context_id'),**answer)
             return journal.prepare_report(FrozenStructuredResponseReport.from_report(payload),correction=correction)
 
     def _bound(self,cls,payload,claim,report):
         value=_model(cls,payload)
-        if not value.matches(report) or c.parse_timestamp(value.received_at)>=c.parse_timestamp(claim.report_deadline):
+        if (not value.matches(report) or c.parse_timestamp(value.received_at)>=c.parse_timestamp(claim.report_deadline)
+                or claim.task_definition_version=='3.1.0' and value.economic_terms_revision!=claim.economic_terms_revision):
             raise StructuredResponseError('RESPONSE_BINDING_INVALID',request_bytes_sent=True)
+        if claim.task_definition_version == '3.1.0' and isinstance(value, StructuredResponseSubmissionStatus):
+            try:
+                c.validate_saved_entitlement(value.model_dump(), claim.terms_snapshot)
+            except ValueError:
+                raise StructuredResponseError('RESPONSE_BINDING_INVALID',request_bytes_sent=True) from None
         return value
 
     def _status(self,claim,report,timeout_seconds):
@@ -247,10 +264,10 @@ class StructuredResponseClient:
             if claim is None:
                 raise ValueError('Missing saved Claim.')
             key=journal.abandon_key(idempotency_key)
-            body=c.canonical_bytes(dict(schema_version=c.schema('agent_task_abandon_request'),execution_id=claim.execution_id))
+            body=c.canonical_bytes(dict(schema_version=c.schema('agent_task_abandon_request',claim.task_definition_version),execution_id=claim.execution_id))
             value=self._transport.abandon_claim(claim.task_id,claim._claim_token_value(),body,idempotency_key=key,timeout_seconds=timeout_seconds)
             c.validate_wire('abandon_response', value)
-            if (value.get('schema_version')!=c.schema('agent_task_abandon_response')
+            if (value.get('schema_version')!=c.schema('agent_task_abandon_response',claim.task_definition_version)
                     or value.get('task_id')!=claim.task_id or value.get('execution_id')!=claim.execution_id):
                 raise StructuredResponseError('RESPONSE_BINDING_INVALID',request_bytes_sent=True)
             journal.record_abandoned()

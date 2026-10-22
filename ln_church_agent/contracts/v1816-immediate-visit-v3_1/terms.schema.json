@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_type": {
+      "const": "immediate_http_visit.v3"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "capacity_total": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "repeat_policy": {
+      "enum": [
+        "allow",
+        "once_per_endpoint"
+      ]
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "asset",
+        "asset_address",
+        "base_amount_atomic",
+        "bonus_amount_atomic",
+        "maximum_amount_atomic"
+      ],
+      "properties": {
+        "network": {
+          "const": "eip155:8453"
+        },
+        "asset": {
+          "const": "USDC"
+        },
+        "asset_address": {
+          "type": "string",
+          "enum": [
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ]
+        },
+        "base_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78
+        },
+        "bonus_amount_atomic": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 78
+        },
+        "maximum_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78
+        }
+      }
+    },
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "definition_version": {
+      "const": "3.1.0"
+    },
+    "profile_id": {
+      "const": "immediate_visit_utf8.v3"
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "endpoint_id",
+          "url"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string",
+            "pattern": "^ep_[a-f0-9]{64}$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "urls": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "uri"
+      }
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "maximum_reward_principal_atomic": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    },
+    "listing_seconds": {
+      "const": 604800
+    },
+    "claim_seconds": {
+      "const": 600
+    },
+    "reward_policy_id": {
+      "const": "IMMEDIATE_VISIT_REWARD_V1"
+    }
+  },
+  "required": [
+    "task_type",
+    "plan_id",
+    "registration_amount_atomic",
+    "capacity_total",
+    "repeat_policy",
+    "reward",
+    "economic_terms_revision",
+    "definition_version",
+    "profile_id",
+    "endpoints",
+    "urls",
+    "task_definition_digest",
+    "maximum_reward_principal_atomic",
+    "listing_seconds",
+    "claim_seconds",
+    "reward_policy_id"
+  ]
+}

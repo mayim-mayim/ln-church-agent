@@ -1,0 +1,83 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "task_type": "scheduled_http_get_batch.v1",
+  "task_definition_version": "1.1.0",
+  "task_definition_digest": "1e0331dfe9ff1ca63b1002e9ccd530e2de8cf0b0dc751704c0190093d19227a7",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "ba13fbc206eaba47e054b2fd3dab7650e10a65a4",
+    "architecture_commit": "be08425844aa2bc8dc18afd474c6762714be73e6",
+    "task_type": "scheduled_http_get_batch.v1",
+    "task_definition_version": "1.1.0",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/SKILL.md",
+        "mode": "100644",
+        "blob": "f559f50434b5b284dc7892a194633212788657f9",
+        "sha256": "9d1749d1dfc0e24c50c437f582c013adfc9c8b0403a19a1bb57f59425dd38ef7"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/claim.schema.json",
+        "mode": "100644",
+        "blob": "bc480af354ed39e9c6e2fce7bbcdfd30dd16ba69",
+        "sha256": "204194d4a2277191083b3eb46eeb3ecec1d8f2634fc802ca79242a1a214f5ae4"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/economic-terms.schema.json",
+        "mode": "100644",
+        "blob": "061660d445adb87cbfaa0df63797f391eff1c935",
+        "sha256": "211231894cd679218b9737edfd4751cd7f3a92d3ad2e0c8aac97f6a28c2192e7"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/manifest.schema.json",
+        "mode": "100644",
+        "blob": "022c74a492013701b0129852fe86aa563c169500",
+        "sha256": "d4b38242647611e6453e1b07b29da8e428b52cb211359f963cb84a0ca4c6a989"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/public-summary.json",
+        "mode": "100644",
+        "blob": "87793121f068b36b4bf12491cbf2992b87e3da71",
+        "sha256": "78fd2f7b38285d7c599e7f1408b3c2bf3f7448328b1996d96cc0f7d2b652b434"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/receipt.schema.json",
+        "mode": "100644",
+        "blob": "b86f9c2b12059404eeb9959cbec380e6f72ef761",
+        "sha256": "de83b9478c4a203e52cc3a942082d04c9e7daa0e6e2661b9b9dc3103e252c544"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/registration.schema.json",
+        "mode": "100644",
+        "blob": "760cc877cba500144945646821aece517e30294a",
+        "sha256": "b66ccfa9a3a41b9aca119c0acb8f38afe7381ff41efad876a570add37fe14f4b"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/requester-registration/SKILL.md",
+        "mode": "100644",
+        "blob": "0e6eb0e74e81fad67a4dc1775dfaf1dc3f17f98e",
+        "sha256": "a2d91562300997745d4b357a21d641add91d0eff712c0b25e327fb8fdce80ee1"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/result.schema.json",
+        "mode": "100644",
+        "blob": "c00443917756902f9150bfb505ead2c983966786",
+        "sha256": "d0170aad6bdc7caea6c95f069db2c5969e9b09ee7d32a7d547a27bcd0e1b6988"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/submission.schema.json",
+        "mode": "100644",
+        "blob": "7e33851578435e0c5b51bd922a276bc46cc60a5f",
+        "sha256": "a7551d0f4627c14aaa790a708bd309f15e8808c3c9920e58d6d8f6b54849df07"
+      },
+      {
+        "path": "frontend/agent-task-specs/scheduled_http_get_batch.v1/1.1.0/task.schema.json",
+        "mode": "100644",
+        "blob": "c587136747456856eee79378d6e46d52260443ca",
+        "sha256": "1da9b85b6a927f255662374588101473c97ee5578b3aedbd3acad7d929229204"
+      }
+    ]
+  }
+}

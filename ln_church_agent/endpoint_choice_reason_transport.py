@@ -54,7 +54,7 @@ class EndpointChoiceTransport(ImmediateVisitTransport):
 
     def __init__(self, *, version="v2", **kwargs):
         c.validate_version(version)
-        super().__init__(version='v2' if version == 'v2_1' else version, **kwargs)
+        super().__init__(version='v2' if version in ('v2_1', 'v2_3') else version, **kwargs)
         self.version = version
 
     @public_boundary
@@ -117,7 +117,7 @@ class EndpointChoiceTransport(ImmediateVisitTransport):
     def list_tasks(self, *, limit=25, cursor=None, timeout_seconds=20.0, version="v2"):
         c.validate_version(version)
         c.positive_bound(limit, 'limit', integer=True, maximum=100)
-        params = dict(task_type="endpoint_choice_reason.v2" if version == "v2_1" else "endpoint_choice_reason."+version, task_schema_version=c.schema("agent_task", version), limit=str(limit))
+        params = dict(task_type="endpoint_choice_reason.v2" if version in ("v2_1", "v2_3") else "endpoint_choice_reason."+version, task_schema_version=c.schema("agent_task", version), limit=str(limit))
         if cursor is not None:
             params['cursor'] = c.cursor(cursor)
         return self._once('GET', '/api/agent/tasks', query=urlencode(params), timeout_seconds=timeout_seconds)

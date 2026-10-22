@@ -62,6 +62,11 @@ _TUPLES = {
     ('structured_response.v3', '3.0.0'): (
         'ln_church.agent_task.structured_response.v3',
         '4d2b8f711b2273fba5215bbcfd767df1145d30a91ee9ea5711437e791616b274'),
+    ('scheduled_http_get_batch.v1', '1.1.0'): ('ln_church.agent_task.v2_1', '1e0331dfe9ff1ca63b1002e9ccd530e2de8cf0b0dc751704c0190093d19227a7'),
+    ('immediate_http_visit.v3', '3.1.0'): ('ln_church.agent_task.immediate_visit.v3_1', '9591ae9d321993c9e101693f02985b87dce59ebaf1f83f580994e8f3442dfb43'),
+    ('paid_service_trial.v3', '3.1.0'): ('ln_church.agent_task.paid_service_trial.v3_1', '48b478927f0c1bad45a1d89f74cc8990243e408d883479022b17d33e2427ef62'),
+    ('endpoint_choice_reason.v2', '2.3.0'): ('ln_church.agent_task.endpoint_choice_reason.v2_3', '4c070bbf5fb2c5e1b658f0075fba9e0d6cfd5cb8a48d7191fe027431a72a11df'),
+    ('structured_response.v3', '3.1.0'): ('ln_church.agent_task.structured_response.v3_1', '290fdabf00b6e8d7858af52dff3783032ca71fe58aaed267a1622d831a70ac4c'),
 }
 
 

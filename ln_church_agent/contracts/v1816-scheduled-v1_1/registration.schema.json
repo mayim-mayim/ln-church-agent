@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ln-church:schema:scheduled_http_get_batch.v1:1.1.0:registration",
+  "title": "scheduled_http_get_batch.v1 multipart metadata part",
+  "description": "Closed multipart metadata part plus confirmed economics; Manifest is the separate bounded private input.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "registration_intent_id",
+    "task_type",
+    "task_definition_version",
+    "scheduled_at",
+    "plan_id",
+    "economic_terms"
+  ],
+  "properties": {
+    "registration_intent_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "task_type": {
+      "const": "scheduled_http_get_batch.v1"
+    },
+    "task_definition_version": {
+      "const": "1.1.0"
+    },
+    "scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00Z$"
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "economic_terms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "economic_terms_revision",
+        "plan_id",
+        "registration_amount_atomic",
+        "capacity_total",
+        "reward"
+      ],
+      "properties": {
+        "economic_terms_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._~-]+$"
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._~-]+$"
+        },
+        "registration_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        },
+        "capacity_total": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "reward": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "network",
+            "asset",
+            "asset_address",
+            "base_amount_atomic",
+            "reference_amount_atomic"
+          ],
+          "properties": {
+            "network": {
+              "const": "eip155:8453"
+            },
+            "asset": {
+              "const": "USDC"
+            },
+            "asset_address": {
+              "type": "string",
+              "enum": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+              ]
+            },
+            "base_amount_atomic": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 78,
+              "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+            },
+            "reference_amount_atomic": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 78,
+              "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+            }
+          }
+        }
+      }
+    }
+  }
+}

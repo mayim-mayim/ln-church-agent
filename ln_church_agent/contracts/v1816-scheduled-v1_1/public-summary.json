@@ -1,0 +1,23 @@
+{
+  "schema_version": "ln_church.agent_task_definition_public_summary.v1",
+  "authority": "NON_NORMATIVE_DERIVED_GUIDE",
+  "task_type": "scheduled_http_get_batch.v1",
+  "task_definition_version": "1.1.0",
+  "example": {
+    "discovery_query": "GET /api/agent/tasks?task_type=scheduled_http_get_batch.v1&task_schema_version=ln_church.agent_task.v2_1",
+    "task_schema_version": "ln_church.agent_task.v2_1",
+    "method": "GET",
+    "plan_ids": [
+      "C50",
+      "C500",
+      "C5000"
+    ],
+    "maximum_targets": 10,
+    "execution_order": "sequential_manifest_order",
+    "result_position_field": "position",
+    "completion_202_meaning": "durable_receipt_only",
+    "plan_labels_are_illustrative": true
+  },
+  "economic_terms_source": "Confirmed registration/order snapshot; Claim is the execution authority. Numeric revisions do not alter this contract.",
+  "definition_digest_source": "Read manifest.json and verify the descriptor and all resource hashes."
+}

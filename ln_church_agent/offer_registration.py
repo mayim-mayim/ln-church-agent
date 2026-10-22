@@ -28,6 +28,7 @@ PROFILES = {'endpoint_choice_reason.v2': 'V189_ENDPOINT_CHOICE_REASON',
             c.TASK_TYPE: 'V189_ENDPOINT_CHOICE_REASON',
             'immediate_http_visit.v1': 'V183_IMMEDIATE_VISIT',
             'immediate_http_visit.v2': 'V183_IMMEDIATE_VISIT'}
+READ_PROFILES = dict(PROFILES, **{'paid_service_trial.v3': 'V185_PAID_SERVICE_TRIAL'})
 PAYMENT_STATES = {'UNPAID','AUTHORIZATION_BOUND','SETTLING','CONFIRMING',
     'ATTEMPT_REVERTED_AUTHORIZATION_LIVE','UNKNOWN','UNKNOWN_EXHAUSTED','CONFIRMED','FAILED','EXPIRED_UNPAID'}
 DOMAIN = dict(name='LNChurch Registration Recovery', version='1', chainId=8453)
@@ -69,8 +70,8 @@ def reference(value):
 
 
 def family(task_type):
-    if task_type not in PROFILES: raise ValueError('Unsupported registration family.')
-    return PROFILES[task_type]
+    if task_type not in READ_PROFILES: raise ValueError('Unsupported registration family.')
+    return READ_PROFILES[task_type]
 
 
 def plan(task_type, plan_id):
@@ -82,10 +83,23 @@ def plan(task_type, plan_id):
 def _request(value):
     if isinstance(value, EndpointChoiceRegistrationInput): value = value._private_payload()
     if type(value) is not dict: raise ValueError('Invalid registration.')
-    task_type = value.get('task_type'); family(task_type)
+    task_type = value.get('task_type')
+    if task_type not in PROFILES:
+        raise ValueError('Unsupported requester registration family.')
     if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2'):
         c.load_contract_pack(task_type.rsplit('.',1)[-1])
         return prepare_registration(value)._private_payload()
+    if value.get('task_definition_version') == '3.1.0':
+        from ._contract_schema import validate_economic_wire
+        from .task_economic_terms import validate_economic_terms
+        validate_economic_wire('immediate', 'registration', value)
+        terms = validate_economic_terms('immediate', value['economic_terms'])
+        if value['plan_id'] != terms['plan_id']:
+            raise ValueError('Cross-bound economic plan.')
+        urls = [c.prepare_url(url) for url in value['urls']]
+        if len(set(urls)) != len(urls):
+            raise ValueError('Duplicate URL.')
+        return dict(copy.deepcopy(value), urls=urls)
     if task_type.endswith(('.v2', '.v3')): load_pack(task_type.rsplit('.',1)[-1])
     if set(value) != {'task_type','plan_id','repeat_policy','urls'} or value['repeat_policy'] not in ('allow','once_per_endpoint'):
         raise ValueError('Invalid registration.')
@@ -97,7 +111,8 @@ def _request(value):
 
 
 def _requirements(request, value):
-    amount,_ = plan(request['task_type'],request['plan_id'])
+    amount = (request['economic_terms']['registration_amount_atomic'] if 'economic_terms' in request
+              else plan(request['task_type'],request['plan_id'])[0])
     if type(value) is not dict or set(value) != {'scheme','network','asset','amount','payTo','maxTimeoutSeconds','extra'}:
         raise ValueError('Invalid payment terms.')
     if (value['scheme'] != 'exact' or value['network'] != 'eip155:8453' or c.address(value['asset']) != c.ASSET
@@ -197,6 +212,13 @@ class RegistrationReadResult:
 
 
 def _success(value, task_type, operation_ref, request=None):
+    if task_type == 'paid_service_trial.v3':
+        return _paid_read_success(value, operation_ref)
+    economic = type(value) is dict and value.get('schema_version', '').endswith(('.v3_1', '.v2_3'))
+    if economic:
+        return _economic_success(value, task_type, operation_ref, request)
+    if request is not None and 'economic_terms' in request:
+        raise OfferRegistrationError('RESPONSE_INVALID')
     fields = {'schema_version','registration_intent_id','task_id','task_type','status','task_url','summary_url',
               'results_url','published_at','listing_ends_at','plan_id','registration_amount_atomic','capacity_total'}
     fields.add('manifest_url' if task_type in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') else 'repeat_policy')
@@ -217,6 +239,35 @@ def _success(value, task_type, operation_ref, request=None):
     if any(value[k] != v for k,v in links.items()): raise OfferRegistrationError('RESPONSE_INVALID')
     if task_type not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') and value['repeat_policy'] not in ('allow','once_per_endpoint'): raise ValueError
     if request is not None and (value['plan_id'] != request['plan_id'] or (task_type not in ('endpoint_choice_reason.v1', 'endpoint_choice_reason.v2') and value['repeat_policy'] != request['repeat_policy'])): raise ValueError
+    return copy.deepcopy(value)
+
+
+def _paid_read_success(value, operation_ref):
+    """Validate an existing Paid registration read; grants no purchase capability."""
+    from . import paid_service_trial_contract as paid
+    from ._contract_schema import validate, validate_atomic_amount
+    from .paid_service_trial_models import RewardV31
+    suffix = value.get('schema_version', '').rsplit('.', 1)[-1]
+    if suffix not in ('v3', 'v3_1'):
+        raise ValueError('Unsupported Paid registration result.')
+    pack = paid.load_contract_bundle(suffix)
+    wire = c.decode_json_object(pack['resources']['wire-contract.json'], 2097152)
+    validate(wire['$defs']['PaidServiceTrialRegistration'], value, root=wire)
+    if value['registration_intent_id'] != reference(operation_ref):
+        raise ValueError('Invalid original Paid operation binding.')
+    task_id = c.validate_task_id(value['task_id'])
+    links = dict(task_url=c.PUBLIC_API_ORIGIN+'/agent-taskboard.html?task_id='+task_id+'&view=results',
+        summary_url=c.PUBLIC_API_ORIGIN+'/api/agent/task-offers/'+task_id+'/summary',
+        results_url=c.PUBLIC_API_ORIGIN+'/api/agent/task-offers/'+task_id+'/execution-summaries')
+    if any(value[k] != v for k,v in links.items()) or c.parse_timestamp(value['listing_ends_at'])-c.parse_timestamp(value['published_at']) != timedelta(hours=168):
+        raise ValueError('Invalid Paid registration links/window.')
+    if suffix == 'v3_1':
+        validate_atomic_amount(value['registration_amount_atomic'])
+        RewardV31.model_validate(value['reward'])
+    else:
+        capacity = {'C40':40, 'C400':400, 'C4000':4000}[value['plan_id']]
+        if value['capacity_total'] != capacity or int(value['registration_amount_atomic']) != capacity * 25000:
+            raise ValueError('Invalid legacy Paid registration plan binding.')
     return copy.deepcopy(value)
 
 
@@ -277,15 +328,15 @@ class OfferRegistrationClient:
         if self._owns:self._transport.close()
     def __enter__(self): return self
     def __exit__(self,*args):self.close()
-    def _send(self, path, body, timeout, payment=None):
+    def _send(self, path, body, timeout, payment=None, *, method="POST"):
         if self._closed or self._transport._closed: raise OfferRegistrationError('CLIENT_CLOSED')
         c.positive_bound(timeout,'timeout_seconds')
         headers={'Accept':'application/json','Accept-Encoding':'identity','Content-Type':'application/json; charset=utf-8','User-Agent':'ln-church-agent/1.18.9'}
         if payment is not None:
-            if path != PATH: raise ValueError
+            if path != PATH or method != 'POST': raise ValueError
             headers['PAYMENT-SIGNATURE']=payment
         failed=False
-        try: raw=self._transport._exchange('POST',path,None,headers,body,timeout)
+        try: raw=self._transport._exchange(method,path,None,headers,body,timeout)
         except Exception: failed=True
         if failed: raise OfferRegistrationError('TRANSPORT_ERROR')
         try:
@@ -299,6 +350,17 @@ class OfferRegistrationClient:
             return raw.status_code,hs,value
         except Exception: pass
         raise OfferRegistrationError('RESPONSE_INVALID')
+    @boundary
+    def get_economic_offers(self, family, *, timeout_seconds=20.0):
+        from ._contract_schema import ECONOMIC_PACKS
+        from .task_economic_terms import validate_offers
+        if family not in ECONOMIC_PACKS:
+            raise ValueError('Unsupported economic family.')
+        code, _, value = self._send(PATH+'/economic-terms/'+family, b'', timeout_seconds, method='GET')
+        if code != 200:
+            raise OfferRegistrationError('RESPONSE_INVALID', status_code=code)
+        return validate_offers(family, value)
+
     @boundary
     def prepare_registration(self, request, *, timeout_seconds=20.0):
         request=_request(request); body=c.canonical_bytes(request,65536)
@@ -356,8 +418,40 @@ class OfferRegistrationClient:
                 or value['schema_version']!='ln_church.registration_read_result.v1'
                 or value['profile']!=family(ch._task_type) or value['operation_ref']!=ch._ref): raise ValueError
         if value['kind']=='COMMITTED' and value['status'] is None:
+            if type(value['result']) is dict and value['result'].get('schema_version', '').endswith('.v2_3'):
+                from ._contract_schema import validate_economic_wire
+                validate_economic_wire('choice', 'registration_recovery_result', value)
             result=_success(value['result'],ch._task_type,ch._ref);state=None
         elif value['kind']=='STATUS' and value['result'] is None:
             result=None;state=_status(value['status'])
         else: raise ValueError
         return RegistrationReadResult(value['profile'],ch._ref,value['kind'],result,state)
+
+
+def _economic_success(value, task_type, operation_ref, request):
+    from ._contract_schema import validate_economic_wire, validate_atomic_amount, validate_economic_revision
+    family_name = 'choice' if task_type == 'endpoint_choice_reason.v2' else 'immediate'
+    validate_economic_wire(family_name, 'registration_result' if family_name == 'choice' else 'registration-result', value)
+    if value['task_type'] != task_type or value['registration_intent_id'] != reference(operation_ref):
+        raise ValueError('Invalid original operation binding.')
+    validate_atomic_amount(value['registration_amount_atomic'])
+    validate_economic_revision(value['economic_terms_revision'])
+    c.validate_sha256(value['terms_digest'])
+    from .endpoint_choice_reason_models import EndpointChoiceRewardV23
+    from .immediate_visit_models import ImmediateVisitRewardV31
+    (EndpointChoiceRewardV23 if family_name == 'choice' else ImmediateVisitRewardV31).model_validate(value['reward'])
+    task_id = c.validate_task_id(value['task_id'])
+    links = dict(task_url=c.PUBLIC_API_ORIGIN+c.task_detail_path(task_id),
+                 summary_url=c.PUBLIC_API_ORIGIN+'/api/agent/task-offers/'+task_id+'/summary',
+                 results_url=c.PUBLIC_API_ORIGIN+(c.task_detail_path(task_id)+'/results' if family_name == 'choice' else '/agent-taskboard.html?task_id='+task_id+'&view=results'))
+    if family_name == 'choice':
+        links['manifest_url'] = c.PUBLIC_API_ORIGIN+'/agent-task-specs/endpoint_choice_reason.v2/2.3.0/manifest.json'
+    if any(value[k] != v for k,v in links.items()) or c.parse_timestamp(value['listing_ends_at'])-c.parse_timestamp(value['published_at']) != timedelta(hours=168):
+        raise ValueError('Invalid economic registration links/window.')
+    if request is not None:
+        terms = request.get('economic_terms')
+        if terms is None or any(value[k] != terms[k] for k in ('plan_id','economic_terms_revision','registration_amount_atomic','capacity_total')) or any(value['reward'][k] != v for k,v in terms['reward'].items()):
+            raise ValueError('Cross-bound registration conditions.')
+        if family_name == 'immediate' and value['repeat_policy'] != request['repeat_policy']:
+            raise ValueError('Cross-bound repeat policy.')
+    return copy.deepcopy(value)

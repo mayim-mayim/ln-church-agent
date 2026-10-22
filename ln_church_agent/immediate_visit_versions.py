@@ -30,13 +30,13 @@ V2_PACK_SHA256 = {'SKILL.md': '850c4741abd3a40c33ff0bd1a7ca92279acb9519120586768
 
 
 def validate_version(value):
-    if value not in ("v1", "v2", "v3"):
+    if value not in ("v1", "v2", "v3", "v3_1"):
         raise ValueError("Unsupported immediate visit version.")
     return value
 
 
 def version_of(value):
-    return validate_version(value.profile_id.rsplit(".", 1)[-1])
+    return validate_version(getattr(value, "schema_version", value.profile_id).rsplit(".", 1)[-1])
 
 
 def claim_schema(version):
@@ -46,11 +46,13 @@ def claim_schema(version):
 
 def validate_tuple(value):
     version = version_of(value)
-    if value.task_type != "immediate_http_visit." + version:
+    if value.profile_id != "immediate_visit_utf8." + ("v3" if version == "v3_1" else version):
+        raise ValueError("Cross-version immediate visit profile.")
+    if value.task_type != "immediate_http_visit." + ("v3" if version == "v3_1" else version):
         raise ValueError("Cross-version immediate visit tuple.")
     if value.schema_version.rsplit(".", 1)[-1] != version:
         raise ValueError("Cross-version immediate visit schema.")
-    if hasattr(value, "definition_version") and value.definition_version != {"v1": "1.0.0", "v2": "2.0.0", "v3": "3.0.0"}[version]:
+    if hasattr(value, "definition_version") and value.definition_version != {"v1": "1.0.0", "v2": "2.0.0", "v3": "3.0.0", "v3_1": "3.1.0"}[version]:
         raise ValueError("Cross-version immediate visit definition.")
 
 
@@ -115,6 +117,9 @@ V3_PACK_SHA256 = {'SKILL.md': 'b136f2f9b597285f3b9478ef02a72df9ab9d620c747c22045
 
 def load_pack(version):
     validate_version(version)
+    if version == "v3_1":
+        from ._contract_schema import load_economic_pack
+        return load_economic_pack("immediate")["resources"]
     if version == 'v2':
         return load_v2_pack()
     if version != 'v3' or not V3_PACK_SHA256:

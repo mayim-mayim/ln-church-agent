@@ -28,9 +28,10 @@ def _journal(handle):
     return StructuredResponseJournal.open(_directory(),handle)
 
 
-def _call(operation):
+def _call(operation, definition_version=None):
     try:
-        with StructuredResponseClient() as client:
+        options = {} if definition_version in (None, '3.0.0') else {'definition_version': definition_version}
+        with StructuredResponseClient(**options) as client:
             value=operation(client)
             return value.model_dump() if hasattr(value,'model_dump') else value
     except StructuredResponseAPIError as e:
@@ -50,22 +51,22 @@ def _call(operation):
 
 def register_tools(mcp):
     @mcp.tool()
-    def structured_response_list_tasks(limit:int=25,cursor:Optional[str]=None)->Dict[str,Any]:
+    def structured_response_list_tasks(limit:int=25,cursor:Optional[str]=None,definition_version:str='3.0.0')->Dict[str,Any]:
         """Read available structured response Tasks. Does not Claim or submit."""
-        return _call(lambda c:c.list_tasks(limit=limit,cursor=cursor))
+        return _call(lambda c:c.list_tasks(limit=limit,cursor=cursor),definition_version)
 
     @mcp.tool()
-    def structured_response_get_task(task_id:str)->Dict[str,Any]:
+    def structured_response_get_task(task_id:str,definition_version:str='3.0.0')->Dict[str,Any]:
         """Read question, types, quality, reward, participation and visibility."""
         def read(c):
             t=c.get_task(task_id)
             return dict(task=t.model_dump(),read_only=not t.supported,update_required=t.update_required)
-        return _call(read)
+        return _call(read,definition_version)
 
     @mcp.tool()
-    def structured_response_claim(task_id:str,agent_id:str,reward_address:str,idempotency_key:str)->Dict[str,Any]:
+    def structured_response_claim(task_id:str,agent_id:str,reward_address:str,idempotency_key:str,definition_version:str='3.0.0')->Dict[str,Any]:
         """Explicitly Claim once, saving the original key/request before dispatch. No wallet signature."""
-        return _call(lambda c:c.claim(task_id,agent_id,reward_address,idempotency_key,journal_directory=_directory()))
+        return _call(lambda c:c.claim(task_id,agent_id,reward_address,idempotency_key,journal_directory=_directory()),definition_version)
 
     @mcp.tool()
     def structured_response_recover_claim(journal_handle:str)->Dict[str,Any]:

@@ -15,6 +15,7 @@ from pydantic import (
     PrivateAttr,
     SecretStr,
     ValidationError,
+    SerializeAsAny,
     field_validator,
     model_serializer,
     model_validator,
@@ -116,6 +117,18 @@ class _StrictModel(BaseModel):
 
 class _FrozenModel(BaseModel):
     model_config = _FROZEN
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        data = obj.model_dump(mode='python', exclude_none=True) if isinstance(obj, BaseModel) else obj
+        if cls.__name__ == 'ScheduledHttpGetBatchTaskPage' and isinstance(data, Mapping) and any(t.get('task_definition_version') == '1.1.0' for t in data.get('tasks', []) if isinstance(t,dict)):
+            return ScheduledHttpGetBatchPageV11.model_validate(data, **kwargs)
+        if isinstance(data, Mapping) and data.get('task_definition_version') == '1.1.0':
+            selected = globals().get('_SCHEDULED_11_MODELS', {}).get(cls, cls)
+            if selected is not cls:
+                return selected.model_validate(data, **kwargs)
+        return super().model_validate(obj, **kwargs)
+
 
 
 class _SecretBearingFrozenModel(_FrozenModel):
@@ -313,6 +326,8 @@ class ScheduledTaskClaimResponse(_SecretBearingFrozenModel):
         if not isinstance(obj, Mapping):
             raise _finite_model_error("Invalid scheduled Task Claim response.")
         candidate = dict(obj)
+        if candidate.get('task_definition_version') == '1.1.0':
+            cls = globals().get('_SCHEDULED_11_MODELS', {}).get(cls, cls)
         try:
             return cls(**candidate)
         except Exception:
@@ -436,6 +451,8 @@ class ScheduledTaskClaimCredential(_OwnedTaskModel, _SecretBearingFrozenModel):
         if not isinstance(obj, Mapping):
             raise _finite_model_error("Invalid scheduled Task credential.")
         candidate = dict(obj)
+        if candidate.get('task_definition_version') == '1.1.0':
+            cls = globals().get('_SCHEDULED_11_MODELS', {}).get(cls, cls)
         try:
             return cls(**candidate)
         except Exception:
@@ -537,6 +554,8 @@ class ScheduledTaskClaimCredential(_OwnedTaskModel, _SecretBearingFrozenModel):
         if not isinstance(payload, Mapping):
             raise _finite_model_error("Invalid scheduled Task credential file.")
         candidate = dict(payload)
+        if candidate.get('task_definition_version') == '1.1.0':
+            cls = globals().get('_SCHEDULED_11_MODELS', {}).get(cls, cls)
         expected = set(cls.model_fields.keys()) | {
             "schema_version",
             "state",
@@ -603,6 +622,8 @@ class ScheduledTaskReadiness(_SecretBearingFrozenModel):
         if not isinstance(obj, Mapping):
             raise _finite_model_error("Invalid scheduled Task readiness.")
         candidate = dict(obj)
+        if candidate.get('task_definition_version') == '1.1.0':
+            cls = globals().get('_SCHEDULED_11_MODELS', {}).get(cls, cls)
         try:
             return cls(**candidate)
         except Exception:
@@ -812,7 +833,7 @@ class ScheduledCompletionReport(_FrozenModel):
     )
     submission_id: str
     task_type: Literal["scheduled_http_get_batch.v1"] = TASK_TYPE
-    task_definition_version: Literal["1.0.0"] = TASK_DEFINITION_VERSION
+    task_definition_version: Literal["1.0.0", "1.1.0"] = TASK_DEFINITION_VERSION
     task_definition_digest: str
     manifest_sha256: str
     manifest_fetch: ManifestFetchResult
@@ -841,6 +862,10 @@ class ScheduledCompletionReport(_FrozenModel):
 
     @model_validator(mode="after")
     def _coverage(self) -> "ScheduledCompletionReport":
+        if self.task_definition_version == "1.1.0":
+            from ._contract_schema import ECONOMIC_PACKS
+            if self.task_definition_digest != ECONOMIC_PACKS["scheduled"]["digest"]:
+                raise ValueError("Invalid Scheduled contract identity.")
         if self.manifest_fetch.outcome == "retrieved":
             if not self.results:
                 raise ValueError("Retrieved Manifest requires target results.")
@@ -1021,8 +1046,8 @@ class ScheduledRewardStatus(_FrozenModel):
 
 class ScheduledCompletionAcknowledgement(_FrozenModel):
     source: Literal["receipt", "status"]
-    receipt: Optional[ScheduledCompletionReceipt] = None
-    status: Optional[ScheduledRewardStatus] = None
+    receipt: Optional[SerializeAsAny[ScheduledCompletionReceipt]] = None
+    status: Optional[SerializeAsAny[ScheduledRewardStatus]] = None
 
     @model_validator(mode="after")
     def _one_source(self) -> "ScheduledCompletionAcknowledgement":
@@ -1081,3 +1106,145 @@ __all__ = [
     "ScheduledCompletionAcknowledgement",
     "ScheduledTaskErrorResponse",
 ]
+
+
+class ScheduledTaskRewardV11(ScheduledTaskReward):
+    asset_address: Literal[
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    ]
+    amount_atomic: str
+
+    @field_validator('amount_atomic')
+    @classmethod
+    def _amount(cls, value):
+        from ._contract_schema import validate_atomic_amount
+        return validate_atomic_amount(value)
+
+
+def _scheduled_economic_identity(value):
+    from ._contract_schema import ECONOMIC_PACKS, load_economic_pack, validate_economic_revision
+    load_economic_pack('scheduled')
+    if value.task_definition_digest != ECONOMIC_PACKS['scheduled']['digest']:
+        raise ValueError('Invalid Scheduled contract identity.')
+    validate_economic_revision(value.economic_terms_revision)
+    validate_sha256(value.terms_digest)
+
+
+def _scheduled_claim_economics(value):
+    from ._contract_schema import validate_economic_wire, validate_atomic_amount
+    _scheduled_economic_identity(value)
+    terms = value.economic_terms
+    validate_economic_wire('scheduled', 'economic-terms', terms)
+    validate_atomic_amount(terms['registration_amount_atomic'])
+    for key in ('base_amount_atomic','reference_amount_atomic'):
+        validate_atomic_amount(terms['reward'][key])
+    if (value.economic_terms_revision != terms['economic_terms_revision']
+            or value.reward.amount_atomic != terms['reward']['base_amount_atomic']
+            or terms['reward']['network'] != value.reward.network
+            or terms['reward']['asset'] != value.reward.asset
+            or terms['reward']['asset_address'].lower() != value.reward.asset_address.lower()
+            or terms['capacity_total'] > 5000):
+        raise ValueError('Invalid saved Scheduled Claim economics.')
+
+
+class ScheduledHttpGetBatchTaskV11(ScheduledHttpGetBatchTask):
+    schema_version: Literal['ln_church.agent_task.v2_1']
+    task_definition_version: Literal['1.1.0']
+    economic_terms_revision: str
+    terms_digest: str
+    registration_amount_atomic: str
+    reward: dict
+    plan_id: str
+
+    @model_validator(mode='after')
+    def _invariants(self):
+        from ._contract_schema import validate_economic_wire, validate_atomic_amount
+        _scheduled_economic_identity(self)
+        p = self.model_dump(mode='json')
+        validate_economic_wire('scheduled', 'task', p)
+        validate_economic_wire('scheduled', 'economic-terms', {k:p[k] for k in
+            ('economic_terms_revision','registration_amount_atomic','reward','plan_id','capacity_total')})
+        validate_atomic_amount(self.registration_amount_atomic)
+        for k in ('base_amount_atomic','reference_amount_atomic'):
+            validate_atomic_amount(self.reward[k])
+        if (not 1 <= self.capacity_total <= 5000
+                or self.minimum_counted_claims != self.capacity_total // 2
+                or self.capacity_remaining > self.capacity_total
+                or self.base_rewards_paid_confirmed > self.base_reward_entitlements
+                or self.accepted_reports > self.successful_claims_lifetime
+                or parse_rfc3339_whole_second(self.report_close_at,'report_close_at') != parse_rfc3339_whole_second(self.scheduled_at,'scheduled_at') + timedelta(seconds=600)):
+            raise ValueError('Invalid Scheduled Task projection.')
+        return self
+
+
+class ScheduledTaskClaimResponseV11(ScheduledTaskClaimResponse):
+    schema_version: Literal['ln_church.agent_task_claim_response.v2_1']
+    task_definition_version: Literal['1.1.0']
+    economic_terms_revision: str
+    terms_digest: str
+    economic_terms: dict = Field(repr=False)
+    reward: ScheduledTaskRewardV11
+
+    @model_validator(mode='after')
+    def _economic(self):
+        _scheduled_claim_economics(self)
+        return self
+
+    def to_credential(self, *, agent_id):
+        p = self._private_payload()
+        p.pop('schema_version')
+        p.pop('reward_address_control_verified')
+        return ScheduledTaskClaimCredentialV11(**p,agent_id=validate_agent_id(agent_id))
+
+
+class ScheduledTaskClaimCredentialV11(ScheduledTaskClaimCredential):
+    task_definition_version: Literal['1.1.0']
+    economic_terms_revision: str
+    terms_digest: str
+    economic_terms: dict = Field(repr=False)
+    reward: ScheduledTaskRewardV11
+
+    @model_validator(mode='after')
+    def _economic(self):
+        _scheduled_claim_economics(self)
+        return self
+
+
+class ScheduledCompletionReceiptV11(ScheduledCompletionReceipt):
+    schema_version: Literal['ln_church.agent_task_completion_receipt.v2_1']
+    task_definition_version: Literal['1.1.0']
+    economic_terms_revision: str
+    terms_digest: str
+
+    @model_validator(mode='after')
+    def _economic(self):
+        from ._contract_schema import validate_economic_wire
+        _scheduled_economic_identity(self)
+        validate_economic_wire('scheduled','receipt',self.model_dump(mode='json',exclude_none=True))
+        return self
+
+
+class ScheduledRewardStatusV11(ScheduledRewardStatus):
+    schema_version: Literal['ln_church.agent_task_reward_status.v2_1']
+    task_definition_version: Literal['1.1.0']
+    economic_terms_revision: str
+    terms_digest: str
+
+    @model_validator(mode='after')
+    def _economic(self):
+        from ._contract_schema import validate_economic_wire
+        _scheduled_economic_identity(self)
+        validate_economic_wire('scheduled','result',self.model_dump(mode='json',exclude_none=True))
+        return self
+
+
+class ScheduledHttpGetBatchPageV11(ScheduledHttpGetBatchTaskPage):
+    tasks: List[Union[ScheduledHttpGetBatchTaskV11, ScheduledHttpGetBatchTask]] = Field(max_length=50)
+
+
+_SCHEDULED_11_MODELS = {ScheduledHttpGetBatchTask:ScheduledHttpGetBatchTaskV11,
+    ScheduledTaskClaimResponse:ScheduledTaskClaimResponseV11,
+    ScheduledTaskClaimCredential:ScheduledTaskClaimCredentialV11,
+    ScheduledCompletionReceipt:ScheduledCompletionReceiptV11,
+    ScheduledRewardStatus:ScheduledRewardStatusV11}

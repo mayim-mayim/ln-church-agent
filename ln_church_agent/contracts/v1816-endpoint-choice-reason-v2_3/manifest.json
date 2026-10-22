@@ -1,0 +1,59 @@
+{
+  "schema_version": "ln_church.agent_task_source_bundle_manifest.v1",
+  "task_type": "endpoint_choice_reason.v2",
+  "task_definition_version": "2.3.0",
+  "task_definition_digest": "4c070bbf5fb2c5e1b658f0075fba9e0d6cfd5cb8a48d7191fe027431a72a11df",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_source_bundle.v1",
+    "source_repository": "mayim-mayim/LN_Church",
+    "specification_repository": "mayim-mayim/LN_Church_Development-Charter",
+    "specification_commit": "ba13fbc206eaba47e054b2fd3dab7650e10a65a4",
+    "architecture_commit": "be08425844aa2bc8dc18afd474c6762714be73e6",
+    "task_type": "endpoint_choice_reason.v2",
+    "task_definition_version": "2.3.0",
+    "source_bundle_entries": [
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/SKILL.md",
+        "mode": "100644",
+        "blob": "b3885b9658714da395027f4e49d217353c56c02e",
+        "sha256": "4bb753871db7a1882a2eafb904409307953370552b7acc04eea6b375c9041ce5"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/definition.json",
+        "mode": "100644",
+        "blob": "91566bbfc2f55241d3cdcea6353dd60da241b819",
+        "sha256": "2cdf37135c4cf28c95785a568f4a285da09da2e742106e34017a38da8e4840cd"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/economic-terms.schema.json",
+        "mode": "100644",
+        "blob": "9c63823a33f60c458f26ed90acf326ad73f2c568",
+        "sha256": "7c0dea9b16a082101517edff85f971c04c520fed38e8da31afbfe9aa81462247"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/evaluation-profile.json",
+        "mode": "100644",
+        "blob": "958041b11c95180f470b4d002b4ce448bd46b557",
+        "sha256": "51576d617be36f50ff2d071dea113b198a8255470c31c9f9d7c88e19017eaf07"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/requester-guide.md",
+        "mode": "100644",
+        "blob": "436ded34e69d0ad84d5430119e67ddbc07e414d2",
+        "sha256": "cda2a752faf8ddcfba172174a97645a96d96ca0670fffc475880d389a6c83a73"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/semantic-fixtures.json",
+        "mode": "100644",
+        "blob": "495cae2c510cff8a56bbde6b19f7c8d8858c5b0d",
+        "sha256": "402b0d7d3053420b5c6111559ca6280985f24d540ced6eb03878b92d12fb526c"
+      },
+      {
+        "path": "frontend/agent-task-specs/endpoint_choice_reason.v2/2.3.0/wire-contract.json",
+        "mode": "100644",
+        "blob": "29ff57b81c1506f4e663f9059850515721d32f81",
+        "sha256": "edc390a5574058b24dde631014c95978da9f5e2683eab58fb6eb757a654222db"
+      }
+    ]
+  }
+}

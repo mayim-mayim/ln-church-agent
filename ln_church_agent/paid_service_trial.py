@@ -124,7 +124,7 @@ class PaidServiceTrialExecutor:
                     if len(encoded)>16384:
                         raise ValueError('Payment header too large.')
                     core={k:getattr(claim,k) for k in ('task_id','task_type','task_definition_version','task_definition_digest','terms_digest','execution_id')}
-                    if version in ('v2', 'v3'):
+                    if version in ('v2', 'v3', 'v3_1'):
                         core.update(request_digest=claim.request_digest,purchase_terms_digest=claim.purchase_terms_digest)
                     core.update(schema_version='ln_church.task_completion.paid_service_trial.'+version,
                                 submission_id='sub_'+uuid.uuid4().hex,purchase=purchase.model_dump(mode='json'))
@@ -132,7 +132,7 @@ class PaidServiceTrialExecutor:
                     try:
                         if int(self._wall_time()*1000)>=c.instant_ms(claim.report_deadline) or int(self._wall_time())>=expiry:
                             return PaidServiceTrialExecution('NO_DISPATCH','report_deadline')
-                        if version in ('v2', 'v3'):
+                        if version in ('v2', 'v3', 'v3_1'):
                             # Same frozen R and selected conditions after signing.
                             # Only the final seller spelling changes the envelope.
                             current=_current_v2_terms_context(self._http.fetch(request),terms,request,version=version)
@@ -194,7 +194,7 @@ def export_purchase_import_descriptor(endpoint: Any, transaction_hash: str, purc
                     purchase_terms_digest=c.digest(selected.requirements.wire()),transaction_hash=c.hash32(transaction_hash))
     else:
         request=c.validate_request(endpoint)
-        result=dict(schema_version='ln_church.paid_service_trial_sample_import_request.'+version,
+        result=dict(schema_version='ln_church.paid_service_trial_sample_import_request.'+('v3' if version == 'v3_1' else version),
                     import_request_id=request_id,request=request,request_digest=c.v2_digest(request),
                     purchase_terms=selected.wire(),purchase_terms_digest=c.purchase_terms_digest(request,selected,version),
                     transaction_hash=c.hash32(transaction_hash))

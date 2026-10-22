@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task_claim_response.v2_1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "scheduled_http_get_batch.v1"
+    },
+    "task_definition_version": {
+      "const": "1.1.0"
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "terms_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "economic_terms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "economic_terms_revision",
+        "plan_id",
+        "registration_amount_atomic",
+        "capacity_total",
+        "reward"
+      ],
+      "properties": {
+        "economic_terms_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._~-]+$"
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._~-]+$"
+        },
+        "registration_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        },
+        "capacity_total": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "reward": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "network",
+            "asset",
+            "asset_address",
+            "base_amount_atomic",
+            "reference_amount_atomic"
+          ],
+          "properties": {
+            "network": {
+              "const": "eip155:8453"
+            },
+            "asset": {
+              "const": "USDC"
+            },
+            "asset_address": {
+              "type": "string",
+              "enum": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+              ]
+            },
+            "base_amount_atomic": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 78,
+              "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+            },
+            "reference_amount_atomic": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 78,
+              "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+            }
+          }
+        }
+      }
+    },
+    "claim_token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "claim_expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scheduled_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report_close_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "manifest_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "manifest_url_not_before": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "manifest_url_expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reward_address": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "reward_address_control_verified": {
+      "const": false
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "asset",
+        "asset_address",
+        "amount_atomic"
+      ],
+      "properties": {
+        "network": {
+          "const": "eip155:8453"
+        },
+        "asset": {
+          "const": "USDC"
+        },
+        "asset_address": {
+          "type": "string",
+          "enum": [
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ]
+        },
+        "amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "economic_terms_revision",
+    "terms_digest",
+    "economic_terms",
+    "claim_token",
+    "claim_expires_at",
+    "scheduled_at",
+    "report_close_at",
+    "manifest_url",
+    "manifest_url_not_before",
+    "manifest_url_expires_at",
+    "reward_address",
+    "reward_address_control_verified",
+    "reward"
+  ]
+}

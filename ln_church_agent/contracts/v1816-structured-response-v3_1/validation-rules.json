@@ -1,0 +1,177 @@
+{
+  "schema_version": "ln_church.aps_answer_validation_rules.v1",
+  "task_type": "structured_response.v3",
+  "task_definition_version": "3.1.0",
+  "authority": {
+    "repository": "mayim-mayim/LN_Church_Development-Charter",
+    "commit": "045b5d4d09222c5efab5bfbedce9b13e06a80455",
+    "path": "handoffs/structured-response-answer-contract-20261020/implementation-specification-c1.md",
+    "sections": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "applicability": [
+    {
+      "evaluation_profile_id": "aps-blind.v1",
+      "aps_kinds": [
+        "BLIND"
+      ],
+      "items": [
+        "a1_1",
+        "a1_3"
+      ],
+      "definitions": [
+        {
+          "item_id": "a1_1",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown"
+          ]
+        },
+        {
+          "item_id": "a1_3",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown",
+            "not_performed"
+          ]
+        }
+      ],
+      "schema_refs": {
+        "a1_1": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/a1_1",
+        "a1_3": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/a1_3"
+      }
+    },
+    {
+      "evaluation_profile_id": "aps-disclosed.v1",
+      "aps_kinds": [
+        "DISCLOSED",
+        "REEVALUATION"
+      ],
+      "items": [
+        "a1_2",
+        "a1_4",
+        "category",
+        "competitors"
+      ],
+      "definitions": [
+        {
+          "item_id": "a1_2",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown"
+          ]
+        },
+        {
+          "item_id": "a1_4",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown",
+            "not_performed"
+          ]
+        },
+        {
+          "item_id": "category",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown"
+          ]
+        },
+        {
+          "item_id": "competitors",
+          "kind": "report",
+          "required": true,
+          "allowed_statuses": [
+            "answered",
+            "unknown"
+          ]
+        }
+      ],
+      "schema_refs": {
+        "a1_2": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/a1_2",
+        "a1_4": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/a1_4",
+        "category": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/category",
+        "competitors": "/agent-task-specs/structured_response.v3/3.1.0/aps-answer.schema.json#/$defs/competitors"
+      }
+    }
+  ],
+  "validation_order": [
+    "Authenticate and verify the original Task/Claim identity and saved definition/terms digests.",
+    "For an accepted identical operation, return the original receipt before new answer-shape validation; reject a different body under the same operation ID.",
+    "Validate raw/canonical JSON bounds and the saved completion envelope; reject duplicate keys, nonfinite numbers, invalid Unicode and unknown fields.",
+    "Select the exact profile/aps_kind and saved item definitions. Outside this mapping retain the existing contract; never apply these rules by ID alone.",
+    "Validate unique known item IDs, every required item and its saved allowed_statuses.",
+    "Apply each explicitly selected item schema and every finite rule below.",
+    "Canonicalize items to saved definition order; retain candidate order, duplicates and all original strings."
+  ],
+  "limits": {
+    "report_string_utf8_bytes": 4096,
+    "item_canonical_utf8_bytes": 8192,
+    "body_raw_utf8_bytes": 262144,
+    "body_canonical_utf8_bytes": 262144,
+    "shared_assumptions_total_utf8_bytes": 4096
+  },
+  "strings": {
+    "fields": [
+      "candidate.name",
+      "name",
+      "method",
+      "url"
+    ],
+    "empty_name_allowed": true,
+    "empty_method_allowed": true,
+    "reason_separate_limit": null,
+    "reason_bounded_by_item": true,
+    "nonanswered_reason": "non-whitespace string",
+    "answered_nonempty_reason_items": [
+      "category",
+      "competitors"
+    ],
+    "other_answered_reason": "string; may be empty",
+    "unicode": "Unicode scalar strings; no unpaired surrogates",
+    "schema_maxLength_is_not_byte_validation": true
+  },
+  "url": {
+    "type": [
+      "null",
+      "string"
+    ],
+    "parser": "WHATWG URL without a base",
+    "protocol": "https:",
+    "nonempty_hostname": true,
+    "allowed_userinfo": true,
+    "allowed_nondefault_ports": true,
+    "normalize": false,
+    "fetch": false,
+    "identified_url_correlation": false
+  },
+  "canonicalization": {
+    "algorithm": "RFC8785",
+    "items": "saved definition order",
+    "candidates": "preserve order and duplicates",
+    "strings": "preserve exact original"
+  },
+  "operation_preservation": {
+    "accepted_receipt_precedes_new_structure": true,
+    "change_terms": false,
+    "change_answer": false,
+    "reissue_claim": false,
+    "extend_deadline": false,
+    "create_reward": false
+  },
+  "quality": "Structure does not certify explanation, correctness, quality, eligibility or payment. Empty or insufficient methods remain visible to the existing Jev evaluation."
+}

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "ln_church.agent_task.v2_1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~-]{1,128}$"
+    },
+    "task_type": {
+      "const": "scheduled_http_get_batch.v1"
+    },
+    "task_definition_version": {
+      "const": "1.1.0"
+    },
+    "task_definition_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "economic_terms_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "terms_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "registration_amount_atomic": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78,
+      "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "asset",
+        "asset_address",
+        "base_amount_atomic",
+        "reference_amount_atomic"
+      ],
+      "properties": {
+        "network": {
+          "const": "eip155:8453"
+        },
+        "asset": {
+          "const": "USDC"
+        },
+        "asset_address": {
+          "type": "string",
+          "enum": [
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ]
+        },
+        "base_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        },
+        "reference_amount_atomic": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78,
+          "description": "Canonical uint256 decimal atomic units; validate <= 2^256-1 with integer arithmetic."
+        }
+      }
+    },
+    "plan_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._~-]+$"
+    },
+    "status": {
+      "enum": [
+        "OPEN",
+        "ESTABLISHED",
+        "CANCELLING",
+        "CANCELLED",
+        "RUNNING",
+        "CLOSED"
+      ]
+    },
+    "scheduled_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "report_close_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "capacity_total": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "capacity_remaining": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "minimum_counted_claims": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "counted_claims_current": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "successful_claims_lifetime": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "active_reservations": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "accepted_reports": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "base_reward_entitlements": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "base_rewards_paid_confirmed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "reference_bonus_state": {
+      "enum": [
+        "NOT_DUE",
+        "PENDING",
+        "AWARDED",
+        "NO_AWARD",
+        "REFERENCE_FAILED"
+      ]
+    },
+    "claimable": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "task_type",
+    "task_definition_version",
+    "task_definition_digest",
+    "economic_terms_revision",
+    "terms_digest",
+    "registration_amount_atomic",
+    "reward",
+    "plan_id",
+    "status",
+    "scheduled_at",
+    "report_close_at",
+    "capacity_total",
+    "capacity_remaining",
+    "minimum_counted_claims",
+    "counted_claims_current",
+    "successful_claims_lifetime",
+    "active_reservations",
+    "accepted_reports",
+    "base_reward_entitlements",
+    "base_rewards_paid_confirmed",
+    "reference_bonus_state",
+    "claimable"
+  ]
+}

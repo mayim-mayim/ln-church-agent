@@ -65,7 +65,7 @@ class PaidServiceTrialJournal:
     def load_claim(cls, directory: Any, task_id: str, execution_id: str) -> PaidServiceTrialClaim:
         # Read saved versions, never infer one from today's client default.
         matches = []
-        for version in ('v1', 'v2', 'v3'):
+        for version in ('v1', 'v2', 'v3', 'v3_1'):
             path, credential = cls._paths(directory, task_id, execution_id, version=version)
             if path.exists() or credential.exists():
                 with _StableLock(_validate_journal_path(str(path)+'.lock')):
@@ -88,13 +88,13 @@ class PaidServiceTrialJournal:
                     state='CLAIMED', report=None, report_sha256=None, payload_digest=None,
                     paid_dispatch_reserved=False, http_outcome='NOT_OBSERVED', http_status=None,
                     transaction_hash=None, completion_attempts=0, result=None, rejection=None)
-        if self._version in ('v2', 'v3'):
+        if self._version in ('v2', 'v3', 'v3_1'):
             data['claim'] = self._claim.model_dump(mode='json')
         return data
 
     def _validate(self, data: dict) -> dict:
         if (set(data)!=set(self._initial()) or data['schema_version']!=self._initial()['schema_version']
-                or (self._version in ('v2', 'v3') and data['claim']!=self._claim.model_dump(mode='json'))
+                or (self._version in ('v2', 'v3', 'v3_1') and data['claim']!=self._claim.model_dump(mode='json'))
                 or data['origin']!=c.PUBLIC_API_ORIGIN or data['claim_binding']!=self._binding
                 or data['state'] not in _STATES or str(uuid.UUID(data['operation_id'],version=4))!=data['operation_id']
                 or type(data['paid_dispatch_reserved']) is not bool

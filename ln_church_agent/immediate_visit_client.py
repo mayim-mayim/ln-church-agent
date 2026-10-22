@@ -48,6 +48,7 @@ def _report(claim: ImmediateVisitClaimCredential, value: Any) -> FrozenImmediate
         result = FrozenImmediateVisitReport.from_bytes(value.canonical_bytes)
         if (value.report_sha256 != result.report_sha256 or result.task_id != claim.task_id
                 or result.execution_id != claim.execution_id or result.profile_id != claim.profile_id
+                or result.report.schema_version.rsplit(".", 1)[1] != version_of(claim)
                 or result.endpoint_id not in tuple(item.endpoint_id for item in claim.endpoints)):
             raise ValueError
         return result
@@ -60,6 +61,13 @@ def _bound_response(model_type: Any, payload: Any, claim: ImmediateVisitClaimCre
     result = _model(model_type, payload)
     if not result.matches(report) or parse_timestamp(result.received_at) >= parse_timestamp(claim.report_deadline):
         raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
+    if result.schema_version.rsplit(".", 1)[1] != version_of(claim):
+        raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
+    if version_of(claim) == "v3_1" and isinstance(result, ImmediateVisitSubmissionStatus):
+        expected = {"base_approved": claim.reward.base_amount_atomic,
+                    "base_bonus_approved": claim.reward.maximum_amount_atomic}.get(result.evaluation_state, "0")
+        if result.approved_amount_atomic != expected:
+            raise ImmediateVisitTransportError("RESPONSE_BINDING_INVALID", request_bytes_sent=True)
     return result
 
 
@@ -101,10 +109,16 @@ class AgentImmediateVisitClient:
         from .offer_registration import OfferRegistrationClient
         return OfferRegistrationClient(transport=self._transport)
 
-    def prepare_registration(self, *, plan_id, repeat_policy, urls, timeout_seconds=20.0):
+    def prepare_registration(self, *, plan_id, repeat_policy, urls, economic_terms=None, timeout_seconds=20.0):
         self._require_open()
-        return self.registration_client().prepare_registration(dict(task_type="immediate_http_visit."+self.version,
-            plan_id=plan_id, repeat_policy=repeat_policy, urls=urls), timeout_seconds=timeout_seconds)
+        request = dict(task_type="immediate_http_visit."+("v3" if self.version == "v3_1" else self.version),
+                       plan_id=plan_id, repeat_policy=repeat_policy, urls=urls)
+        if self.version == "v3_1":
+            request.update(schema_version="ln_church.task_offer_create_request.immediate_visit.v3_1",
+                           task_definition_version="3.1.0", economic_terms=economic_terms)
+        elif economic_terms is not None:
+            raise ValueError("Legacy registration does not accept economic terms.")
+        return self.registration_client().prepare_registration(request, timeout_seconds=timeout_seconds)
 
     def _remaining(self, deadline: float) -> float:
         remaining = deadline - self._monotonic()
@@ -136,7 +150,7 @@ class AgentImmediateVisitClient:
                    idempotency_key: str, timeout_seconds: float = 20.0) -> ImmediateVisitClaimCredential:
         self._require_open()
         task_id = validate_task_id(task_id)
-        if self.version in ("v2", "v3"):
+        if self.version in ("v2", "v3", "v3_1"):
             from .immediate_visit_versions import load_pack
             load_pack(self.version)
         address = validate_reward_address(reward_address)

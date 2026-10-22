@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
-from typing import Any, Dict, Literal, Mapping, Optional, Tuple, Union
+from typing import Union, Any, Dict, Literal, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field_validator, model_validator
 
@@ -39,6 +39,8 @@ class _Frozen(BaseModel):
                 obj = obj.model_dump(mode="python")
             if not isinstance(obj, Mapping):
                 raise ValueError
+            if obj.get("schema_version", "").endswith(".v3_1"):
+                cls = globals().get("_V31_MODELS", {}).get(cls, cls)
             return cls(**dict(obj))
         except Exception:
             invalid = True
@@ -147,7 +149,7 @@ class ImmediateVisitTask(_OfferSnapshot):
         from .immediate_visit_contract import parse_timestamp
         from .immediate_visit_versions import version_of
         version = version_of(self)
-        if parse_timestamp(self.listing_ends_at) - parse_timestamp(self.published_at) != timedelta(hours=168 if version == "v3" else 48):
+        if parse_timestamp(self.listing_ends_at) - parse_timestamp(self.published_at) != timedelta(hours=168 if version in ("v3", "v3_1") else 48):
             raise ValueError("Invalid listing duration.")
         if version == "v3" and self.definition_url != PUBLIC_API_ORIGIN + "/agent-task-specs/immediate_http_visit.v3/3.0.0/SKILL.md":
             raise ValueError("Invalid Immediate v3 definition URL.")
@@ -169,7 +171,7 @@ class ImmediateVisitTaskPage(_Frozen):
     @model_validator(mode="after")
     def _page_version(self):
         version = self.schema_version.rsplit(".", 1)[1]
-        if any(t.task_type != "immediate_http_visit." + version for t in self.tasks):
+        if any(t.schema_version.rsplit(".", 1)[1] != version for t in self.tasks):
             raise ValueError("Cross-version page.")
         return self
 
@@ -211,6 +213,8 @@ class ImmediateVisitClaimCredential(_OfferSnapshot):
             return obj._validated_snapshot()
         if not isinstance(obj, Mapping):
             raise ValueError("Invalid immediate visit Claim credential.")
+        if obj.get("schema_version", "").endswith(".v3_1"):
+            cls = globals().get("_V31_MODELS", {}).get(cls, cls)
         return cls(**dict(obj))
 
     @field_validator("execution_id")
@@ -321,7 +325,7 @@ ImmediateVisitObservation = Union[ImmediateVisitComparableObservation, Immediate
 
 
 class ImmediateVisitCompletionReport(_Frozen):
-    schema_version: Literal["ln_church.task_completion.immediate_visit.v1", "ln_church.task_completion.immediate_visit.v2", "ln_church.task_completion.immediate_visit.v3"]
+    schema_version: Literal["ln_church.task_completion.immediate_visit.v1", "ln_church.task_completion.immediate_visit.v2", "ln_church.task_completion.immediate_visit.v3", "ln_church.task_completion.immediate_visit.v3_1"]
     task_id: str
     execution_id: str
     submission_id: str
@@ -331,7 +335,7 @@ class ImmediateVisitCompletionReport(_Frozen):
 
     @model_validator(mode="after")
     def _report_version(self):
-        if self.schema_version.rsplit(".", 1)[1] != self.profile_id.rsplit(".", 1)[1]:
+        if self.schema_version.rsplit(".", 1)[1].split("_")[0] != self.profile_id.rsplit(".", 1)[1]:
             raise ValueError("Cross-version report.")
         return self
 
@@ -432,7 +436,7 @@ class _ReceiptIdentity(_Frozen):
 
     @model_validator(mode="after")
     def _identity(self) -> "_ReceiptIdentity":
-        if self.schema_version.rsplit(".", 1)[1] != self.profile_id.rsplit(".", 1)[1]:
+        if self.schema_version.rsplit(".", 1)[1].split("_")[0] != self.profile_id.rsplit(".", 1)[1]:
             raise ValueError("Cross-version receipt.")
         validate_task_id(self.task_id)
         validate_opaque_id(self.execution_id, "execution_id")
@@ -448,7 +452,7 @@ class _ReceiptIdentity(_Frozen):
 
 
 class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1", "ln_church.task_completion_receipt.immediate_visit.v2", "ln_church.task_completion_receipt.immediate_visit.v3"]
+    schema_version: Literal["ln_church.task_completion_receipt.immediate_visit.v1", "ln_church.task_completion_receipt.immediate_visit.v2", "ln_church.task_completion_receipt.immediate_visit.v3", "ln_church.task_completion_receipt.immediate_visit.v3_1"]
     status_url: str = Field(repr=False)
     receipt_state: Literal["accepted"]
 
@@ -460,7 +464,7 @@ class ImmediateVisitCompletionReceipt(_ReceiptIdentity):
 
 
 class ImmediateVisitSubmissionStatus(_ReceiptIdentity):
-    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1", "ln_church.task_submission_status.immediate_visit.v2", "ln_church.task_submission_status.immediate_visit.v3"]
+    schema_version: Literal["ln_church.task_submission_status.immediate_visit.v1", "ln_church.task_submission_status.immediate_visit.v2", "ln_church.task_submission_status.immediate_visit.v3", "ln_church.task_submission_status.immediate_visit.v3_1"]
     evaluation_state: Literal["pending", "repeat_drop", "inconclusive", "mismatch", "base_approved", "base_bonus_approved"]
     decision_at: Optional[str]
     approved_amount_atomic: Literal["0", "7500", "15000"]
@@ -505,7 +509,7 @@ class ImmediateVisitCompletionResult(_Frozen):
     """Local finite helper result; accepted is a receipt, never inferred payment."""
     state: Literal["accepted", "unknown", "rejected"]
     receipt: Optional[ImmediateVisitCompletionReceipt] = None
-    status: Optional[ImmediateVisitSubmissionStatus] = None
+    status: Optional[Union["ImmediateVisitStatusV31", ImmediateVisitSubmissionStatus]] = None
     error_code: Optional[str] = None
     post_requests: int = Field(default=0, ge=0)
     status_requests: int = Field(default=0, ge=0)
@@ -513,7 +517,7 @@ class ImmediateVisitCompletionResult(_Frozen):
 
 class _ImmediateVisitAbandonmentResponse(_Frozen):
     """Validate the accepted Hondō response without adding a public Wire schema."""
-    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1", "ln_church.agent_task_abandon_response.immediate_visit.v2", "ln_church.agent_task_abandon_response.immediate_visit.v3"]
+    schema_version: Literal["ln_church.agent_task_abandon_response.immediate_visit.v1", "ln_church.agent_task_abandon_response.immediate_visit.v2", "ln_church.agent_task_abandon_response.immediate_visit.v3", "ln_church.agent_task_abandon_response.immediate_visit.v3_1"]
     task_id: str
     execution_id: str
     state: Literal["abandoned"]
@@ -531,3 +535,122 @@ class ImmediateVisitAbandonmentResult(_Frozen):
     task_id: str
     execution_id: str
     error_code: Optional[str] = None
+
+
+class ImmediateVisitRewardV31(ImmediateVisitReward):
+    asset_address: Literal['0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+                           '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913']
+    base_amount_atomic: str
+    bonus_amount_atomic: str
+    maximum_amount_atomic: str
+
+    @model_validator(mode='after')
+    def _amounts(self):
+        from ._contract_schema import validate_atomic_amount
+        validate_atomic_amount(self.base_amount_atomic)
+        validate_atomic_amount(self.bonus_amount_atomic, allow_zero=True)
+        validate_atomic_amount(self.maximum_amount_atomic)
+        if int(self.maximum_amount_atomic) != int(self.base_amount_atomic) + int(self.bonus_amount_atomic):
+            raise ValueError('Invalid saved Immediate reward.')
+        return self
+
+
+def _immediate_terms(value):
+    from ._contract_schema import (validate_economic_wire, validate_atomic_amount,
+                                  validate_economic_revision, ECONOMIC_PACKS)
+    validate_economic_wire('immediate', 'terms', value)
+    validate_economic_revision(value['economic_terms_revision'])
+    validate_atomic_amount(value['registration_amount_atomic'])
+    validate_atomic_amount(value['maximum_reward_principal_atomic'])
+    reward = ImmediateVisitRewardV31.model_validate(value['reward'])
+    if (value['task_definition_digest'] != ECONOMIC_PACKS['immediate']['digest']
+            or int(value['maximum_reward_principal_atomic']) != int(reward.maximum_amount_atomic) * value['capacity_total']
+            or value['urls'] != [e['url'] for e in value['endpoints']]):
+        raise ValueError('Invalid saved Immediate terms.')
+    for endpoint in value['endpoints']:
+        ImmediateVisitEndpoint.model_validate(endpoint)
+    return value
+
+
+class ImmediateVisitTaskV31(ImmediateVisitTask):
+    schema_version: Literal['ln_church.agent_task.immediate_visit.v3_1']
+    task_type: Literal['immediate_http_visit.v3']
+    profile_id: Literal['immediate_visit_utf8.v3']
+    definition_version: Literal['3.1.0']
+    reward: ImmediateVisitRewardV31
+    plan_id: str
+    registration_amount_atomic: str
+    economic_terms_revision: str
+    terms_digest: str
+
+    @model_validator(mode='after')
+    def _economic(self):
+        from ._contract_schema import validate_economic_wire, ECONOMIC_PACKS
+        from .immediate_visit_profile import jcs_bytes
+        p = self.model_dump(mode='json')
+        validate_economic_wire('immediate', 'task', p)
+        terms = {k: p[k] for k in ('task_type','plan_id','registration_amount_atomic',
+                 'capacity_total','repeat_policy','reward','economic_terms_revision',
+                 'definition_version','profile_id','endpoints')}
+        terms.update(urls=[e['url'] for e in p['endpoints']],
+                     task_definition_digest=ECONOMIC_PACKS['immediate']['digest'],
+                     maximum_reward_principal_atomic=str(int(self.reward.maximum_amount_atomic) * self.capacity_total),
+                     listing_seconds=604800, claim_seconds=600, reward_policy_id='IMMEDIATE_VISIT_REWARD_V1')
+        _immediate_terms(terms)
+        if (hashlib.sha256(jcs_bytes(terms)).hexdigest() != self.terms_digest
+                or self.capacity_total != self.capacity_reserved + self.capacity_consumed + self.capacity_available
+                or self.definition_url != PUBLIC_API_ORIGIN + '/agent-task-specs/immediate_http_visit.v3/3.1.0/SKILL.md'):
+            raise ValueError('Invalid Immediate Task binding.')
+        return self
+
+
+class ImmediateVisitClaimV31(ImmediateVisitClaimCredential):
+    schema_version: Literal['ln_church.agent_task_claim_response.immediate_visit.v3_1']
+    task_type: Literal['immediate_http_visit.v3']
+    profile_id: Literal['immediate_visit_utf8.v3']
+    reward: ImmediateVisitRewardV31
+    economic_terms_revision: str
+    terms_digest: str
+    terms_snapshot: Dict[str, Any] = Field(repr=False)
+
+    @model_validator(mode='after')
+    def _economic(self):
+        from .immediate_visit_profile import jcs_bytes
+        terms = _immediate_terms(self.terms_snapshot)
+        if (hashlib.sha256(jcs_bytes(terms)).hexdigest() != self.terms_digest
+                or any(self.model_dump(mode='json')[k] != terms[k] for k in
+                       ('task_type','profile_id','endpoints','repeat_policy','reward','economic_terms_revision'))):
+            raise ValueError('Invalid Immediate Claim binding.')
+        return self
+
+
+class ImmediateVisitPageV31(ImmediateVisitTaskPage):
+    schema_version: Literal['ln_church.agent_task_page.immediate_visit.v3_1']
+    tasks: Tuple[ImmediateVisitTaskV31, ...]
+
+
+class ImmediateVisitStatusV31(ImmediateVisitSubmissionStatus):
+    schema_version: Literal['ln_church.task_submission_status.immediate_visit.v3_1']
+    approved_amount_atomic: str
+
+    @model_validator(mode='after')
+    def _state(self):
+        from ._contract_schema import validate_atomic_amount, validate_economic_wire
+        validate_economic_wire('immediate', 'result', self.model_dump(mode='json'))
+        validate_atomic_amount(self.approved_amount_atomic, allow_zero=True)
+        approved = self.evaluation_state in ('base_approved', 'base_bonus_approved')
+        if (approved != (self.approved_amount_atomic != '0')
+                or self.bonus_approved != (self.evaluation_state == 'base_bonus_approved')
+                or (self.approved_amount_atomic == '0') != (self.payment_state == 'not_applicable')
+                or (self.evaluation_state == 'pending') != (self.decision_at is None)
+                or self.payment_state == 'paid_confirmed' and self.transaction_hash is None):
+            raise ValueError('Invalid Immediate decision.')
+        return self
+
+
+_V31_MODELS = {ImmediateVisitTask: ImmediateVisitTaskV31,
+               ImmediateVisitTaskPage: ImmediateVisitPageV31,
+               ImmediateVisitClaimCredential: ImmediateVisitClaimV31,
+               ImmediateVisitSubmissionStatus: ImmediateVisitStatusV31}
+
+ImmediateVisitCompletionResult.model_rebuild()

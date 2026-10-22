@@ -1,0 +1,121 @@
+{
+  "schema_version": "ln_church.task_definition_correction_manifest.v1",
+  "correction_digest": "497eeff577e6916c4ccc5e612ac20aca32688be29bc50f43aa6310ebed70cf0d",
+  "descriptor": {
+    "schema_version": "ln_church.task_definition_correction.v1",
+    "correction_id": "structured-response-3.0.0-answer-c1",
+    "target": {
+      "task_type": "structured_response.v3",
+      "task_definition_version": "3.0.0",
+      "task_schema_version": "ln_church.agent_task.structured_response.v3",
+      "completion_schema_version": "ln_church.task_completion.structured_response.v3",
+      "task_definition_digest": "4d2b8f711b2273fba5215bbcfd767df1145d30a91ee9ea5711437e791616b274",
+      "manifest_sha256": "42f46c805f6ef39de63e8716740697ece4c356f6197cc6129d3a40df52a26360",
+      "completion_schema_sha256": "b0e89ba35192969390e56fdeb1c9883742c132ef99db54e2f17cd9ac8a14b2f1",
+      "question_bank_sha256": "c98157b3ee1de54639074000a1d54608934162eb976d92ce2afb14793ed43bde"
+    },
+    "applicability": [
+      {
+        "evaluation_profile_id": "aps-blind.v1",
+        "aps_kinds": [
+          "BLIND"
+        ],
+        "items": [
+          "a1_1",
+          "a1_3"
+        ],
+        "definitions": [
+          {
+            "item_id": "a1_1",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown"
+            ]
+          },
+          {
+            "item_id": "a1_3",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown",
+              "not_performed"
+            ]
+          }
+        ]
+      },
+      {
+        "evaluation_profile_id": "aps-disclosed.v1",
+        "aps_kinds": [
+          "DISCLOSED",
+          "REEVALUATION"
+        ],
+        "items": [
+          "a1_2",
+          "a1_4",
+          "category",
+          "competitors"
+        ],
+        "definitions": [
+          {
+            "item_id": "a1_2",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown"
+            ]
+          },
+          {
+            "item_id": "a1_4",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown",
+              "not_performed"
+            ]
+          },
+          {
+            "item_id": "category",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown"
+            ]
+          },
+          {
+            "item_id": "competitors",
+            "kind": "report",
+            "required": true,
+            "allowed_statuses": [
+              "answered",
+              "unknown"
+            ]
+          }
+        ]
+      }
+    ],
+    "resources": [
+      {
+        "path": "/agent-task-spec-corrections/structured_response.v3/3.0.0/c1/aps-answer.schema.json",
+        "sha256": "84169870701b775697dac21ede00e4155b70cd3bfbe71a0274e7ac9565813249"
+      },
+      {
+        "path": "/agent-task-spec-corrections/structured_response.v3/3.0.0/c1/validation-rules.json",
+        "sha256": "0438a5170260942ed61fb0aa7977e7eeac0084df2aabd72d1c31d6c2793601d1"
+      },
+      {
+        "path": "/agent-task-spec-corrections/structured_response.v3/3.0.0/c1/examples.json",
+        "sha256": "20ce6b782f0222848273596a2f946e6ceec96c27b615a4fe5b3968ddbe691a02"
+      },
+      {
+        "path": "/agent-task-spec-corrections/structured_response.v3/3.0.0/c1/README.md",
+        "sha256": "931feb4a3ede8ae3e3e62790fe57516d12b1dda907020da38be08e800710d5b4"
+      }
+    ]
+  }
+}

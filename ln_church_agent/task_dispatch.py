@@ -7,6 +7,8 @@ from .task_v2_contract import decode_json_object,validate_task_id
 from .immediate_visit_profile import jcs_bytes
 
 RESPONDER_TUPLES = (
+    ('structured_response.v3','3.1.0','ln_church.agent_task.structured_response.v3_1'),
+    ('endpoint_choice_reason.v2','2.3.0','ln_church.agent_task.endpoint_choice_reason.v2_3'),
     ('structured_response.v3','3.0.0','ln_church.agent_task.structured_response.v3'),
     ('endpoint_choice_reason.v2','2.1.0','ln_church.agent_task.endpoint_choice_reason.v2_1'),
     ('endpoint_choice_reason.v2','2.0.0','ln_church.agent_task.endpoint_choice_reason.v2'),
