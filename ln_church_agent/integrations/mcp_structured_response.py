@@ -52,12 +52,23 @@ def _call(operation, definition_version=None):
 def register_tools(mcp):
     @mcp.tool()
     def structured_response_list_tasks(limit:int=25,cursor:Optional[str]=None,definition_version:str='3.0.0')->Dict[str,Any]:
-        """Read available structured response Tasks. Does not Claim or submit."""
+        """Read available structured response Tasks. Does not Claim or submit.
+
+        For Structured 3.0.0/3.1.0, read the selected Task detail and
+        https://kari.mayim-mayim.com/SKILL.md#structured-claim-guidance before
+        an explicit Claim. Tuple support does not establish personal eligibility.
+        """
         return _call(lambda c:c.list_tasks(limit=limit,cursor=cursor),definition_version)
 
     @mcp.tool()
     def structured_response_get_task(task_id:str,definition_version:str='3.0.0')->Dict[str,Any]:
-        """Read question, types, quality, reward, participation and visibility."""
+        """Read question, types, quality, reward, participation and visibility.
+
+        For Structured 3.0.0/3.1.0, review this Task's concrete conditions and
+        https://kari.mayim-mayim.com/SKILL.md#structured-claim-guidance before
+        an explicit Claim. supported/read_only/update_required indicate tuple
+        support, not personal eligibility; the Agent must review the detail.
+        """
         def read(c):
             t=c.get_task(task_id)
             return dict(task=t.model_dump(),read_only=not t.supported,update_required=t.update_required)
@@ -65,12 +76,26 @@ def register_tools(mcp):
 
     @mcp.tool()
     def structured_response_claim(task_id:str,agent_id:str,reward_address:str,idempotency_key:str,definition_version:str='3.0.0')->Dict[str,Any]:
-        """Explicitly Claim once, saving the original key/request before dispatch. No wallet signature."""
+        """Explicitly Claim once, saving the original key/request before dispatch. No wallet signature.
+
+        For Structured 3.0.0/3.1.0, first review the selected Task detail,
+        retained acceptance history for the same reward address, and
+        https://kari.mayim-mayim.com/SKILL.md#structured-claim-guidance.
+        Tuple support is not eligibility; insufficient information remains
+        unconfirmed without adding a local proof gate. The Backend decides.
+        """
         return _call(lambda c:c.claim(task_id,agent_id,reward_address,idempotency_key,journal_directory=_directory()),definition_version)
 
     @mcp.tool()
     def structured_response_recover_claim(journal_handle:str)->Dict[str,Any]:
-        """Read the saved Claim binding. A miss never makes a new Claim."""
+        """Read the saved Claim binding. A miss never makes a new Claim.
+
+        For Structured 3.0.0/3.1.0, consult the selected Task detail and
+        https://kari.mayim-mayim.com/SKILL.md#structured-claim-guidance for
+        state-specific recovery, including a known successful Claim. Keep the
+        original Task, request and key. This tool does not expose or execute
+        the new recovery actions returned by the Backend.
+        """
         return _call(lambda c:c.recover_claim(journal=_journal(journal_handle)))
 
     @mcp.tool()
